@@ -1,0 +1,124 @@
+extern crate crypto;
+use crypto::sha1::Sha1;
+use crypto::digest::Digest;
+use ntex::web::types::Query;
+use serde_xml_rs::from_str;
+use reqwest::Client;
+
+use crate::{errors::CustomError, models::wx_official::{Offical, Xml}, wx_official::auth::{fetch_set_access_token, get_access_token}};
+
+// 服务器验证
+pub async fn wx_offical_account(data: Query<Offical>) -> Result<String, CustomError> {
+    let mut hasher = Sha1::new();
+    // 获取微信服务器发送过来的数据
+    let timestamp = data.timestamp.as_ref().unwrap();
+    let nonce = data.nonce.as_ref().unwrap();
+    let signature = data.signature.as_ref().unwrap();
+    let echostr = data.echostr.as_ref().unwrap();
+
+    // 自定义的token
+    let token = "maystore";
+
+    // 进行字典序排序
+    let mut items = vec![token, nonce, timestamp];
+    items.sort();
+    let input = items.join("");
+    let input = input.as_str();
+
+    // 进行加密
+    hasher.input_str(input);
+    let result = hasher.result_str();
+    if result == signature.to_string() {
+        Ok(echostr.to_string())
+    } else {
+        Ok("".to_string())
+    }
+}
+
+// 接收消息
+pub async fn wx_offical_received(data: String) -> Result<String, CustomError> {
+    fetch_set_access_token().await?;
+    let xml: Xml = from_str(&data).unwrap();
+    let mut already_reply = false;
+    wx_offical_create_menu().await?;
+    println!("{:?}", xml);
+    let from_user_name = xml.from_user_name.unwrap_or_default();
+    let msg_type = xml.msg_type.unwrap_or_default();
+    let event = xml.event.unwrap_or_default();
+    let event_key = xml.event_key.unwrap_or_default();
+    // 点击菜单事件
+    if msg_type == "event".to_string() && event == "CLICK".to_string() && !already_reply {
+        if event_key == "BIND_PUSH_ID" {
+            let client = Client::new();
+            let token = get_access_token().await.unwrap();
+            let res = client
+                .post(format!(
+                    "https://api.weixin.qq.com/cgi-bin/message/custom/send?access_token={}",
+                    token
+                ))
+                .json(&serde_json::json!({
+                    "touser": from_user_name,
+                    "msgtype": "text",
+                    "text": {
+                        "content": from_user_name
+                    }
+                }))
+                .send()
+                .await?
+                .text()
+                .await?;
+            let response_json: Result<serde_json::Value, serde_json::Error> = serde_json::from_str(&res);
+            match response_json {
+                Ok(obj) => {
+                    if let Some(val) = obj.get("errmsg") {
+                        if let Some(s) = val.as_str() {
+                            already_reply = s == "ok".to_string();
+                            println!("response: {:?}", already_reply);
+                        }
+                    }
+                }
+                Err(_) => (),
+            };
+        }
+    }
+    Ok("".to_string())
+}
+
+// 创建菜单
+pub async fn wx_offical_create_menu() -> Result<String, CustomError> {
+    let client = Client::new();
+    let token = get_access_token().await.unwrap();
+    let json_data = serde_json::json!({
+        "button":[
+            {
+                "type":"click",
+                "name":"绑定PushId",
+                "key":"BIND_PUSH_ID"
+            },
+            {
+                "name":"菜单",
+                "sub_button":[
+                    {
+                        "type":"click",
+                        "name":"暂定",
+                        "key":"NOW_NOTHING"
+                    },
+                    {
+                        "type":"click",
+                        "name":"赞一下我们",
+                        "key":"V1001_GOOD"
+                    }
+                ]
+            }
+        ]
+    });
+    client
+        .post(format!(
+            "https://api.weixin.qq.com/cgi-bin/menu/create?access_token={}",
+            token
+        ))
+        .json(&json_data)
+        .send()
+        .await?;
+    Ok("".to_string())
+}

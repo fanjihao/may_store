@@ -1,5 +1,5 @@
 use std::fmt;
-
+use log::error as logError;
 use ntex::{
     http::{error, StatusCode},
     web::{HttpResponse, WebResponseError, DefaultError},
@@ -27,7 +27,10 @@ impl WebResponseError for CustomError {
     fn error_response(&self, _: &ntex::web::HttpRequest) -> HttpResponse {
         HttpResponse::new(self.status_code()).set_body(
             match self {
-                Self::NotFound(e) => e,
+                Self::NotFound(e) => {
+                    println!("{:?}", e);
+                    e
+                },
                 Self::InternalServerError(e) => e,
                 Self::BadRequest(e) => e,
                 Self::AuthFailed(e) => e,
@@ -53,7 +56,7 @@ impl From<sqlx::Error> for CustomError {
         match e {
             sqlx::Error::RowNotFound => Self::NotFound("找不到对应数据".into()),
             err => {
-                println!("sql error: {:?}", err);
+                println!("sql 错误: {:?}", err);
                 Self::InternalServerError("服务器内部发生错误,请联系管理员".into())
             },
         }
@@ -78,6 +81,13 @@ impl From<std::num::ParseIntError> for CustomError {
     }
 }
 
+impl From<reqwest::Error> for CustomError {
+    fn from(e: reqwest::Error) -> Self {
+        logError!(target: "reqwest", "reqwest error: {:?}", e);
+        CustomError::BadRequest(e.to_string())
+    }
+}
+
 impl From<DefaultError> for CustomError {
     fn from(value: DefaultError) -> Self {
         CustomError::BadRequest(format!("Parameter Error: {:#?}", value))
@@ -86,7 +96,7 @@ impl From<DefaultError> for CustomError {
 
 impl From<JoinError> for CustomError {
     fn from(value: JoinError) -> Self {
-        CustomError::InternalServerError(format!("tokio spawn error: {:#?}", value))
+        CustomError::InternalServerError(format!("tokio 线程错误: {:#?}", value))
     }
 }
 

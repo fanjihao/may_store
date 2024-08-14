@@ -1,15 +1,16 @@
 mod errors;
-mod models;
-mod users;
-mod upload;
 mod utils;
+mod models;
+mod upload;
+mod users;
+mod wx_official;
 
-use std::{env, sync::Arc};
 use dotenvy::dotenv;
 use errors::CustomError;
 use idgenerator::{IdGeneratorOptions, IdInstance};
-use ntex::web::{self,middleware, App, HttpServer};
+use ntex::web::{self, middleware, App, HttpServer};
 use sqlx::{postgres::PgPoolOptions, Pool, Postgres};
+use std::{env, sync::Arc};
 
 #[derive(Debug, Clone)]
 pub struct AppState {
@@ -63,7 +64,31 @@ async fn main() -> Result<(), CustomError> {
 fn route(_state: Arc<AppState>, cfg: &mut web::ServiceConfig) {
     cfg
         // 个人中心
-        .service(web::scope("/wx-register")
-            .route("", web::post().to(users::new::wx_register))); // 登录
-        
+        .service( // 注册
+            web::scope("/wx-register")
+            .route("", web::post().to(users::new::wx_register))
+        )
+        .service( // 登录
+            web::scope("/wx-login")
+            .route("", web::post().to(users::view::wx_login))
+        )
+        .service( // 用户
+            web::scope("/users")
+            .route("", web::get().to(users::view::get_user_info))
+            .route("", web::post().to(users::update::wx_change_info))
+            .route("/is-register", web::get().to(users::view::is_register))
+        )
+        .service( // 关联
+            web::scope("/invitation")
+            .route("", web::get().to(users::invitation::get_invitation)),
+        )
+        .service(
+            web::scope("/wxOffical")
+                .route("", web::get().to(wx_official::verify::wx_offical_account))
+                .route("", web::post().to(wx_official::verify::wx_offical_received)),
+        )
+        .service(
+            web::scope("/template")
+                .route("", web::post().to(wx_official::send_to_user::send_template)),
+        );
 }

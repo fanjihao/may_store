@@ -22,6 +22,38 @@ pub struct Register { // 注册结构体
     pub nick_name: Option<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct IsRegister {
+    pub user_id: Option<i32>,
+    pub role: Option<i32>,
+    pub bind_num: Option<i64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UserInfo { // 用户信息结构体
+    pub user_id: Option<i32>,
+    pub nick_name: Option<String>,
+    pub account: Option<String>,
+    pub password: Option<String>,
+    pub avatar: Option<String>,
+    pub gender: Option<i32>,
+    pub birthday: Option<chrono::NaiveDate>,
+    pub role: Option<i32>,
+    pub role_change_time: Option<chrono::DateTime<chrono::Utc>>,
+    pub love_point: Option<i32>,
+    pub token: Option<String>,
+    pub phone: Option<String>,
+    // pub correlation_id: Option<i32>,
+    // pub encounter_date: Option<chrono::NaiveDate>,
+    // pub correlation_avatar: Option<String>,
+    // pub correlation_name: Option<String>,
+    // 以下暂时空置
+    // pub open_id: Option<String>,
+    pub push_id: Option<String>,
+    pub code: Option<String>,
+    // pub session_key: Option<String>,
+}
+
 // 9.25 中间件身份验证
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UserToken {
