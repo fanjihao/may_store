@@ -76,33 +76,24 @@ pub async fn get_user_info(
 ) -> Result<Json<UserInfo>, CustomError> {
     let db_pool = &state.clone().db_pool;
 
-    let mut user: Option<UserInfo> = None;
-
     if data.account.is_none() {
-        user = Some(
-            sqlx::query_as!(
+        let info = sqlx::query_as!(
                 UserInfo,
                 "select u.* from users u where u.user_id= $1",
                 data.user_id
             )
             .fetch_one(db_pool)
-            .await?,
-        );
+            .await?;
+        Ok(Json(info))
     } else {
-        user = Some(
-            sqlx::query_as!(
-                UserInfo,
-                "select u.* from users u where u.account= $1",
-                data.account
-            )
-            .fetch_one(db_pool)
-            .await?,
-        );
-    }
-
-    match user {
-        Some(u) => Ok(Json(u)),
-        None => Err(CustomError::BadRequest("获取失败".to_string())),
+        let info = sqlx::query_as!(
+            UserInfo,
+            "select u.* from users u where u.account= $1",
+            data.account
+        )
+        .fetch_one(db_pool)
+        .await?;
+        Ok(Json(info))
     }
 }
 

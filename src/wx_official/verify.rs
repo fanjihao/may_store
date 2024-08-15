@@ -1,11 +1,13 @@
 extern crate crypto;
+use std::sync::Arc;
+
 use crypto::sha1::Sha1;
 use crypto::digest::Digest;
-use ntex::web::types::Query;
+use ntex::web::types::{Query, State};
 use serde_xml_rs::from_str;
 use reqwest::Client;
 
-use crate::{errors::CustomError, models::wx_official::{Offical, Xml}, wx_official::auth::{fetch_set_access_token, get_access_token}};
+use crate::{errors::CustomError, models::wx_official::{Offical, Xml}, wx_official::auth::{fetch_set_access_token, get_access_token}, AppState};
 
 // 服务器验证
 pub async fn wx_offical_account(data: Query<Offical>) -> Result<String, CustomError> {
@@ -36,58 +38,98 @@ pub async fn wx_offical_account(data: Query<Offical>) -> Result<String, CustomEr
 }
 
 // 接收消息
-pub async fn wx_offical_received(data: String) -> Result<String, CustomError> {
+pub async fn wx_offical_received(data: String, state: State<Arc<AppState>>) -> Result<String, CustomError> {
+    let db_pool = &state.clone().db_pool;
+
     fetch_set_access_token().await?;
     let xml: Xml = from_str(&data).unwrap();
     let mut already_reply = false;
-    wx_offical_create_menu().await?;
-    println!("{:?}", xml);
     let from_user_name = xml.from_user_name.unwrap_or_default();
-    let msg_type = xml.msg_type.unwrap_or_default();
-    let event = xml.event.unwrap_or_default();
-    let event_key = xml.event_key.unwrap_or_default();
-    // 点击菜单事件
-    if msg_type == "event".to_string() && event == "CLICK".to_string() && !already_reply {
-        if event_key == "BIND_PUSH_ID" {
-            let client = Client::new();
-            let token = get_access_token().await.unwrap();
-            let res = client
-                .post(format!(
-                    "https://api.weixin.qq.com/cgi-bin/message/custom/send?access_token={}",
-                    token
-                ))
-                .json(&serde_json::json!({
-                    "touser": from_user_name,
-                    "msgtype": "text",
-                    "text": {
-                        "content": from_user_name
-                    }
-                }))
-                .send()
-                .await?
-                .text()
+    // let msg_type = xml.msg_type.unwrap_or_default();
+    // let event = xml.event.unwrap_or_default();
+    // let event_key = xml.event_key.unwrap_or_default();
+    let content = xml.content.unwrap_or_default();
+
+    if content.starts_with("绑定") && !already_reply {
+        let account = content.split(" ").skip(1).next();
+        let result = match account {
+            Some(account) => {
+                let sum = sqlx::query!(
+                    "SELECT COUNT(*) FROM users WHERE account = $1",
+                    account,
+                )
+                .fetch_one(db_pool)
                 .await?;
-            let response_json: Result<serde_json::Value, serde_json::Error> = serde_json::from_str(&res);
-            match response_json {
-                Ok(obj) => {
-                    if let Some(val) = obj.get("errmsg") {
-                        if let Some(s) = val.as_str() {
-                            already_reply = s == "ok".to_string();
-                            println!("response: {:?}", already_reply);
-                        }
+            
+                if sum.count.unwrap() > 0_i64 {
+                    sqlx::query!(
+                        "UPDATE users SET push_id = $1 WHERE account = $2",
+                        from_user_name,
+                        account,
+                    )
+                    .execute(db_pool)
+                    .await?;
+                    "绑定成功"
+                } else {
+                    "该账户不存在"
+                }
+            },
+            None => "解析账号失败"
+        };
+
+        let client = Client::new();
+        let token = get_access_token().await.unwrap();
+        let res = client
+            .post(format!(
+                "https://api.weixin.qq.com/cgi-bin/message/custom/send?access_token={}",
+                token
+            ))
+            .json(&serde_json::json!({
+                "touser": from_user_name,
+                "msgtype": "text",
+                "text": {
+                    "content": result
+                }
+            }))
+            .send()
+            .await?
+            .text()
+            .await?;
+        let response_json: Result<serde_json::Value, serde_json::Error> = serde_json::from_str(&res);
+        match response_json {
+            Ok(obj) => {
+                if let Some(val) = obj.get("errmsg") {
+                    if let Some(s) = val.as_str() {
+                        already_reply = s == "ok".to_string();
+                        println!("response: {:?}", already_reply);
                     }
                 }
-                Err(_) => (),
-            };
-        }
+            }
+            Err(_) => (),
+        };
     }
+    // // 点击菜单事件
+    // if msg_type == "event".to_string() && event == "CLICK".to_string() && !already_reply {
+    //     if event_key == "BIND_PUSH_ID" {
+    //     }
+    // }
     Ok("".to_string())
 }
 
 // 创建菜单
 pub async fn wx_offical_create_menu() -> Result<String, CustomError> {
     let client = Client::new();
-    let token = get_access_token().await.unwrap();
+    let token = get_access_token().await;
+    let token = match token {
+        Some(token) => {
+            token
+        },
+        None => {
+            fetch_set_access_token().await?;
+            let new_token = get_access_token().await.unwrap();
+            new_token
+        }
+    };
     let json_data = serde_json::json!({
         "button":[
             {

@@ -105,3 +105,9 @@ impl From<idgenerator::error::OptionError> for CustomError {
         CustomError::BadRequest(format!("id生成器初始化失败: {:#?}", value))
     }
 }
+
+impl From<serde_json::Error> for CustomError {
+    fn from(value: serde_json::Error) -> Self {
+        CustomError::BadRequest(format!("json 数据解析失败: {:#?}", value))
+    }
+}

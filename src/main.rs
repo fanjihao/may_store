@@ -80,7 +80,8 @@ fn route(_state: Arc<AppState>, cfg: &mut web::ServiceConfig) {
         )
         .service( // 关联
             web::scope("/invitation")
-            .route("", web::get().to(users::invitation::get_invitation)),
+            .route("", web::get().to(users::invitation::get_invitation))
+            .route("", web::post().to(users::invitation::new_invitation)),
         )
         .service(
             web::scope("/wxOffical")
@@ -88,7 +89,15 @@ fn route(_state: Arc<AppState>, cfg: &mut web::ServiceConfig) {
                 .route("", web::post().to(wx_official::verify::wx_offical_received)),
         )
         .service(
+            web::scope("/create-menu")
+                .route("", web::get().to(wx_official::verify::wx_offical_create_menu)),
+        )
+        .service(
             web::scope("/template")
                 .route("", web::post().to(wx_official::send_to_user::send_template)),
+        )
+        .service(
+            web::scope("/weather")
+                .route("", web::get().to(wx_official::send_to_user::get_weather)),
         );
 }

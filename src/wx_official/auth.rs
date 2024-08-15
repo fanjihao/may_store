@@ -57,7 +57,8 @@ pub async fn fetch_set_access_token() -> Result<(), CustomError> {
                         token = t;
                     }
                 }
-                set_access_token(token.to_string(), time::Duration::from_secs(7200));
+                println!("token : {}",token);
+                set_access_token(token.to_string(), time::Duration::from_secs(7200)).await;
                 Ok(())
             }
             Err(_) => Err(CustomError::BadRequest("access_token 获取失败".to_string())),
