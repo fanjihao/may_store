@@ -1,4 +1,4 @@
-use crate::{errors::CustomError, models::wx_official::TemplateMessage, utils::BAIDU_AK};
+use crate::{errors::CustomError, models::wx_official::TemplateMessage, utils::{APP_ID, BAIDU_AK}};
 use ntex::web::{
     types::Json,
     HttpResponse, Responder,
@@ -16,35 +16,31 @@ pub async fn send_template(data: Json<TemplateMessage>) -> Result<impl Responder
         let json_data = serde_json::json!({
             "touser": data.push_id,
             "template_id": data.template_id,
-            "url": "",
+            "url": "http://weixin.qq.com/download",
             "topcolor":"#FF0000",
             "data":{
-                "date": {
-                    "value": "2024-08-15",
-                    "color":"#173177"
+                "date":{
+                    "value": data.date,
+                    "color":"#f5f5f5"
                 },
                 "city":{
-                    "value": "成都市",
+                    "value": data.city,
                     "color":"#173177"
                 },
-                "weather":{
-                    "value": "阴",
+                "weather": {
+                    "value": data.weather,
                     "color":"#173177"
                 },
-                "low":{
-                    "value": "22°",
+                "low": {
+                    "value": data.low,
                     "color":"#173177"
                 },
-                "low":{
-                    "value": "33°",
+                "high": {
+                    "value": data.high,
                     "color":"#173177"
                 },
-                "loveDays":{
-                    "value": 898,
-                    "color":"#173177"
-                },
-                "birthdays":{
-                    "value": 323,
+                "loveDays": {
+                    "value": data.love_days,
                     "color":"#173177"
                 },
             }

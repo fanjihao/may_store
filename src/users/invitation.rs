@@ -63,14 +63,14 @@ pub async fn new_invitation(
     ).fetch_one(db_pool).await?;
 
     let _ = send_template(Json(TemplateMessage {
-        template_id: "q5FAhgoNR7Va3e_F8wq5IEKHaxz-ebnHUTpfaU0JepM".to_string(),
+        template_id: "-rnlOjKqvvuhIjKysIrTlzW0x-M_iryCNjQvLT58VuQ".to_string(),
         push_id: record.push_id.expect("no push id"),
-        date: Some("()".to_string()),
-        city: Some("()".to_string()),
-        weather: Some("()".to_string()),
-        low: Some("()".to_string()),
-        high: Some("()".to_string()),
-        love_days: Some("()".to_string()),
+        date: Some("2024年8月16日".to_string()),
+        city: Some("成都市".to_string()),
+        weather: Some("多云".to_string()),
+        low: Some("23°".to_string()),
+        high: Some("33°".to_string()),
+        love_days: Some("899天".to_string()),
         birthdays: Some("()".to_string()),
     })).await;
     Ok(HttpResponse::Created().body("发送成功"))
