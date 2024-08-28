@@ -1,15 +1,14 @@
 use std::sync::Arc;
 
 use ntex::web::{
-    types::{Json, Query, State},
-    Responder, HttpResponse
+    types::{Json, Path, Query, State}, HttpResponse, Responder
 };
 
 use crate::{
     errors::CustomError, models::{
         invitation::Invitation,
-        users::{UserInfo, UserToken}, wx_official::TemplateMessage,
-    }, wx_official::send_to_user::send_template, AppState
+        users::{UserInfo, UserToken}
+    }, AppState
 };
 
 pub async fn get_invitation(
@@ -22,19 +21,19 @@ pub async fn get_invitation(
     let ship = sqlx::query_as!(
         Invitation,
         "SELECT
-                s.*,
-                wu.nick_name as send_name, wu.avatar as send_avatar, wu.role as send_role,
-                rece.nick_name as bind_name, rece.avatar as bind_avatar, rece.role as bind_role
-            FROM
-                user_ships s
-                LEFT JOIN users wu ON s.user_id = wu.user_id
-                LEFT JOIN users rece ON s.bind_id = rece.user_id
-            WHERE (s.ship_status = 0 OR s.ship_status = 1 ) AND (s.bind_id = $1 OR s.user_id = $1)",
+            s.*,
+            wu.nick_name as send_name, wu.avatar as send_avatar, wu.role as send_role,
+            rece.nick_name as bind_name, rece.avatar as bind_avatar, rece.role as bind_role
+        FROM
+            user_ships s
+            LEFT JOIN users wu ON s.user_id = wu.user_id
+            LEFT JOIN users rece ON s.bind_id = rece.user_id
+        WHERE s.bind_id = $1 OR s.user_id = $1
+        ORDER BY bind_date DESC",
         data.user_id
     )
     .fetch_all(db_pool)
     .await?;
-    // let records = sqlx::query!("SELECT COUNT(*) FROM msgs m WHERE m.recv_user_id = $1 AND m.msg_type = 8 AND m.msg_status = 2 AND m.is_del = 0", data.user_id).fetch_one(db_pool).await?;
 
     Ok(Json(ship))
 }
@@ -47,31 +46,80 @@ pub async fn new_invitation(
     let db_pool = &state.clone().db_pool;
 
     let date = chrono::Utc::now();
-    println!("{:?}", data);
-    sqlx::query!(
-        "INSERT INTO user_ships (user_id, bind_id, bind_date) VALUES ($1, $2, $3)",
-        data.user_id,
-        data.bind_id,
-        date.date_naive()
-    )
-    .execute(db_pool)
-    .await?;
 
     let record = sqlx::query!(
-        "SELECT * FROM users WHERE user_id = $1",
+        "SELECT COUNT(*) FROM user_ships WHERE ship_status = 1 AND (bind_id = $1 OR user_id = $1)",
         data.bind_id
     ).fetch_one(db_pool).await?;
 
-    let _ = send_template(Json(TemplateMessage {
-        template_id: "-rnlOjKqvvuhIjKysIrTlzW0x-M_iryCNjQvLT58VuQ".to_string(),
-        push_id: record.push_id.expect("no push id"),
-        date: Some("2024年8月16日".to_string()),
-        city: Some("成都市".to_string()),
-        weather: Some("多云".to_string()),
-        low: Some("23°".to_string()),
-        high: Some("33°".to_string()),
-        love_days: Some("899天".to_string()),
-        birthdays: Some("()".to_string()),
-    })).await;
-    Ok(HttpResponse::Created().body("发送成功"))
+    let count = match record.count {
+        Some(count) => {
+            count
+        },
+        None => 0
+    };
+    if count > 0_i64 {
+        Err(CustomError::BadRequest("该用户已存在绑定关系".to_string()))
+    } else {
+        sqlx::query!(
+            "INSERT INTO user_ships (user_id, bind_id, bind_date) VALUES ($1, $2, $3)",
+            data.user_id,
+            data.bind_id,
+            date.date_naive()
+        )
+        .execute(db_pool)
+        .await?;
+    
+        let _record = sqlx::query!(
+            "SELECT * FROM users WHERE user_id = $1",
+            data.bind_id
+        ).fetch_one(db_pool).await?;
+    
+        // let _ = send_template(Json(TemplateMessage {
+        //     template_id: "-rnlOjKqvvuhIjKysIrTlzW0x-M_iryCNjQvLT58VuQ".to_string(),
+        //     push_id: record.push_id.expect("no push id"),
+        //     date: Some("2024年8月16日".to_string()),
+        //     city: Some("成都市".to_string()),
+        //     weather: Some("多云".to_string()),
+        //     low: Some("23°".to_string()),
+        //     high: Some("33°".to_string()),
+        //     love_days: Some("899天".to_string()),
+        //     birthdays: Some("()".to_string()),
+        // })).await;
+        Ok(HttpResponse::Created().body("发送成功"))
+    }
+}
+
+pub async fn confirm_invitation(
+    _: UserToken,
+    id: Path<(i32,)>,
+    state: State<Arc<AppState>>
+) -> Result<impl Responder, CustomError> {
+    let db_pool = &state.clone().db_pool;
+
+    let date = chrono::Utc::now();
+    sqlx::query!(
+        "UPDATE user_ships SET ship_status = 1, update_date = $2 WHERE ship_id = $1", 
+        id.0,
+        date
+    ).execute(db_pool)
+    .await?;
+
+    Ok(HttpResponse::Created().body("绑定成功"))
+}
+
+pub async fn cancel_invitation(
+    _: UserToken,
+    id: Path<(i32,)>,
+    state: State<Arc<AppState>>
+) -> Result<impl Responder, CustomError> {
+    let db_pool = &state.clone().db_pool;
+
+    sqlx::query!(
+        "DELETE FROM user_ships WHERE ship_id = $1", 
+        id.0
+    ).execute(db_pool)
+    .await?;
+
+    Ok(HttpResponse::Created().body("删除成功"))
 }

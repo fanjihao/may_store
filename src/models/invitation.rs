@@ -1,3 +1,4 @@
+use chrono::Utc;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -13,4 +14,5 @@ pub struct Invitation {
     pub bind_avatar: Option<String>,
     pub bind_name: Option<String>,
     pub bind_role: Option<i32>,
+    pub update_date: Option<chrono::DateTime<Utc>>,
 }

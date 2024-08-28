@@ -32,5 +32,7 @@ futures = "0.3"
 serde-xml-rs = "0.6.0" ## xml
 qiniu-sdk = "0.2.3" ##七牛云
 qiniu-upload-manager = "0.2.3"
+qiniu-upload-token = { version = "0.2.4", features = ["async"] }
 lazy_static = "1.4"
 rust-crypto = "0.2.36"  # 加密
+rand = "0.8.5" # 随机

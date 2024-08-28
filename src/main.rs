@@ -3,6 +3,7 @@ mod utils;
 mod models;
 mod upload;
 mod users;
+mod foods;
 mod wx_official;
 
 use dotenvy::dotenv;
@@ -81,9 +82,23 @@ fn route(_state: Arc<AppState>, cfg: &mut web::ServiceConfig) {
         .service( // 关联
             web::scope("/invitation")
             .route("", web::get().to(users::invitation::get_invitation))
-            .route("", web::post().to(users::invitation::new_invitation)),
+            .route("", web::post().to(users::invitation::new_invitation))
+            .route("/{id}", web::put().to(users::invitation::confirm_invitation))
+            .route("/{id}", web::delete().to(users::invitation::cancel_invitation)),
+        )
+        .service( // 上传
+            web::scope("/upload")
+            .route("", web::post().to(upload::upload::upload_file))
         )
         .service(
+            web::scope("/upload-token")
+            .route("", web::get().to(upload::upload::get_qiniu_token))
+        )
+        .service( // 菜品
+            web::scope("/food")
+            .route("/apply", web::get().to(foods::view::apply_record))
+        )
+        .service( // 公众号
             web::scope("/wxOffical")
                 .route("", web::get().to(wx_official::verify::wx_offical_account))
                 .route("", web::post().to(wx_official::verify::wx_offical_received)),

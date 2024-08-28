@@ -4,6 +4,7 @@ use ntex::{
     http::{error, StatusCode},
     web::{HttpResponse, WebResponseError, DefaultError},
 };
+use qiniu_upload_token::ToStringError;
 use tokio::task::JoinError;
 
 #[derive(Debug, Clone)]
@@ -109,5 +110,11 @@ impl From<idgenerator::error::OptionError> for CustomError {
 impl From<serde_json::Error> for CustomError {
     fn from(value: serde_json::Error) -> Self {
         CustomError::BadRequest(format!("json 数据解析失败: {:#?}", value))
+    }
+}
+
+impl From<ToStringError> for CustomError {
+    fn from(value: ToStringError) -> Self {
+        CustomError::BadRequest(format!("七牛云转str失败: {:#?}", value))
     }
 }
