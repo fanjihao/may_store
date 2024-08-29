@@ -99,6 +99,5 @@ pub async fn get_qiniu_token(_: UserToken) -> Result<String, CustomError> {
     let provider = upload_policy.into_dynamic_upload_token_provider(credential);
     let token_string = provider.async_to_token_string(Default::default()).await?;
 
-    println!("upload_token: {:?}", token_string);
-    Ok("()".to_string())
+    Ok(token_string.to_string())
 }

@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
-use ntex::web::types::{Json, Query, State};
+use ntex::web::{types::{Json, Query, State}, Responder};
 
-use crate::{errors::CustomError, models::{foods::{FoodApply, FoodApplyStruct}, users::UserToken}, AppState};
+use crate::{errors::CustomError, models::{foods::{FoodApply, FoodApplyStruct, ShowClass}, users::UserToken}, AppState};
 
 
 pub async fn apply_record(
@@ -12,10 +12,24 @@ pub async fn apply_record(
 ) -> Result<Json<Vec<FoodApplyStruct>>, CustomError> {
     let db_pool = &state.clone().db_pool;
 
+    let user = sqlx::query!("SELECT u.* FROM users u WHERE u.user_id=$1", data.user_id)
+        .fetch_one(db_pool)
+        .await?;
+
+    let mut user_ids: Vec<i32> = Vec::new();
+    // if user.user_id == 1 {
+        user_ids.push(user.user_id);
+    // } else {
+    //     user_ids.push(user.user_id);
+    //     user_ids.push(user.role);
+    // }
+
+    let status: Vec<i32> = data.status.split(",").map(|s| s.trim().parse().unwrap()).collect();
     let food_by_status = sqlx::query!(
-        "SELECT f.*, fc.class_name FROM foods f LEFT JOIN food_class fc ON fc.class_id = f.food_types WHERE f.food_status = $1 AND f.user_id = $2;",
-        data.status,
-        data.user_id
+        "SELECT f.*, fc.class_name FROM foods f LEFT JOIN food_class fc ON fc.class_id = f.food_types 
+        WHERE f.food_status = ANY($1::int[]) AND f.user_id = ANY($2::int[]) ORDER BY f.create_time DESC;",
+        &status,
+        &user_ids
     )
     .fetch_all(db_pool)
     .await?
@@ -39,4 +53,21 @@ pub async fn apply_record(
     .collect::<Vec<FoodApplyStruct>>();
 
     Ok(Json(food_by_status))
+}
+
+pub async fn all_food_class(
+    _: UserToken,
+    c: Query<ShowClass>,
+    state: State<Arc<AppState>>,
+) -> Result<impl Responder, CustomError> {
+    let db_pool = &state.clone().db_pool;
+    let user_id = c.user_id.unwrap_or_default() as i32;
+    let class = sqlx::query_as!(ShowClass,
+        "SELECT f.* FROM food_class f LEFT JOIN users u ON f.user_id = u.user_id WHERE u.user_id = $1",
+        user_id
+    )
+    .fetch_all(db_pool)
+    .await?;
+
+    Ok(Json(class))
 }
