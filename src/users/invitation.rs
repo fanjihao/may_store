@@ -1,12 +1,10 @@
 use std::sync::Arc;
-
 use ntex::web::{
     types::{Json, Path, Query, State}, HttpResponse, Responder
 };
-
 use crate::{
     errors::CustomError, models::{
-        invitation::Invitation,
+        invitation::{BindStruct, Invitation},
         users::{UserInfo, UserToken}
     }, AppState
 };
@@ -93,18 +91,35 @@ pub async fn new_invitation(
 pub async fn confirm_invitation(
     _: UserToken,
     id: Path<(i32,)>,
+    data: Json<BindStruct>,
     state: State<Arc<AppState>>
 ) -> Result<impl Responder, CustomError> {
     let db_pool = &state.clone().db_pool;
+    let mut transaction = db_pool.begin().await?;
 
     let date = chrono::Utc::now();
     sqlx::query!(
         "UPDATE user_ships SET ship_status = 1, update_date = $2 WHERE ship_id = $1", 
         id.0,
         date
-    ).execute(db_pool)
+    ).execute(&mut *transaction)
     .await?;
 
+    sqlx::query!(
+        "UPDATE users SET associate_id = $1 WHERE user_id = $2", 
+        data.bind_id,
+        data.user_id
+    ).execute(&mut *transaction)
+    .await?;
+
+    sqlx::query!(
+        "UPDATE users SET associate_id = $1 WHERE user_id = $2", 
+        data.user_id,
+        data.bind_id
+    ).execute(&mut *transaction)
+    .await?;
+
+    transaction.commit().await?;
     Ok(HttpResponse::Created().body("绑定成功"))
 }
 

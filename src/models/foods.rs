@@ -5,7 +5,16 @@ use serde::{Deserialize, Serialize};
 pub struct FoodApply {
     pub user_id: i32,
     pub status: String,
-    pub food_type: Option<i32>
+    pub food_type: Option<i32>,
+    pub food_id: Option<i32>,
+    pub food_status: Option<i32>
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UpdateFood {
+    pub food_id: i32,
+    pub food_status: i32,
+    pub msg: Option<String>
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

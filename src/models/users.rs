@@ -43,7 +43,7 @@ pub struct UserInfo { // 用户信息结构体
     pub love_point: Option<i32>,
     pub token: Option<String>,
     pub phone: Option<String>,
-    // pub correlation_id: Option<i32>,
+    pub associate_id: Option<i32>,
     // pub encounter_date: Option<chrono::NaiveDate>,
     // pub correlation_avatar: Option<String>,
     // pub correlation_name: Option<String>,

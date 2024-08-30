@@ -16,3 +16,9 @@ pub struct Invitation {
     pub bind_role: Option<i32>,
     pub update_date: Option<chrono::DateTime<Utc>>,
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BindStruct {
+    pub bind_id: i32,
+    pub user_id: i32
+}

@@ -98,7 +98,7 @@ fn route(_state: Arc<AppState>, cfg: &mut web::ServiceConfig) {
             web::scope("/food")
             .route("/records", web::get().to(foods::view::apply_record))
             .route("/apply", web::post().to(foods::new::new_food_apply))
-            .route("/revoke/{id}", web::post().to(foods::update::revoke_record))
+            .route("/update", web::post().to(foods::update::update_record))
             .route("/delete/{id}", web::delete().to(foods::update::delete_record))
         )
         .service( // 菜品类型
