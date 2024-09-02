@@ -1,9 +1,18 @@
 use std::sync::Arc;
 
-use ntex::web::{types::{Json, Query, State}, Responder};
-
-use crate::{errors::CustomError, models::{foods::{FoodApply, FoodApplyStruct, ShowClass}, users::UserToken}, AppState};
-
+use ntex::web::{
+    types::{Json, Query, State},
+    Responder,
+};
+use sqlx::Row;
+use crate::{
+    errors::CustomError,
+    models::{
+        foods::{DishesByType, FoodApply, FoodApplyStruct, ShowClass},
+        users::UserToken,
+    },
+    AppState,
+};
 
 pub async fn apply_record(
     _: UserToken,
@@ -18,13 +27,17 @@ pub async fn apply_record(
 
     let mut user_ids: Vec<i32> = Vec::new();
     // if user.user_id == 1 {
-        user_ids.push(user.user_id);
+    user_ids.push(user.user_id);
     // } else {
     //     user_ids.push(user.user_id);
     //     user_ids.push(user.role);
     // }
 
-    let status: Vec<i32> = data.status.split(",").map(|s| s.trim().parse().unwrap()).collect();
+    let status: Vec<i32> = data
+        .status
+        .split(",")
+        .map(|s| s.trim().parse().unwrap())
+        .collect();
     let food_by_status = sqlx::query!(
         "SELECT f.*, fc.class_name FROM foods f LEFT JOIN food_class fc ON fc.class_id = f.food_types 
         WHERE f.food_status = ANY($1::int[]) AND f.user_id = ANY($2::int[]) ORDER BY f.create_time DESC;",
@@ -70,4 +83,65 @@ pub async fn all_food_class(
     .await?;
 
     Ok(Json(class))
+}
+
+pub async fn get_foods(
+    data: Json<DishesByType>,
+    state: State<Arc<AppState>>,
+) -> Result<Json<Vec<FoodApplyStruct>>, CustomError> {
+    let db_pool = &state.clone().db_pool;
+
+    let mut sql = String::from("SELECT * FROM foods WHERE user_id = $1");
+
+    if let Some(a_id) = data.associate_id {
+        sql.push_str(" OR user_id = ");
+        sql.push_str(&a_id.to_string());
+    }
+
+    if let Some(mark) = data.is_mark {
+        sql.push_str(" AND is_mark = ");
+        sql.push_str(&mark.to_string());
+    } else if let Some(types) = data.food_types {
+        sql.push_str(" AND food_types = ");
+        sql.push_str(&types.to_string());
+    }
+
+    sql.push_str(" AND food_status IN (0, 3)");
+
+    if let Some(tags_str) = &data.tags {
+        let tags_list: Vec<&str> = tags_str.split(',').collect();
+        let like_conditions: Vec<String> = tags_list
+            .iter()
+            .map(|tag| format!("food_tags LIKE '%{}%'", tag))
+            .collect();
+
+        let like_query = like_conditions.join(" OR ");
+        sql.push_str(" AND (");
+        sql.push_str(&like_query);
+        sql.push(')');
+    }
+
+    let row = sqlx::query(&sql).bind(data.user_id).fetch_all(db_pool).await?;
+
+    let foods: Vec<FoodApplyStruct> = row
+        .into_iter()
+        .map(|row| FoodApplyStruct {
+            food_id: row.get("food_id"),
+            food_name: row.get("food_name"),
+            food_photo: row.get("food_photo"),
+            class_name: None,
+            food_reason: row.get("food_reason"),
+            create_time: row.get("create_time"),
+            finish_time: row.get("finish_time"),
+            is_mark: row.get("is_mark"),
+            is_del: row.get("is_del"),
+            user_id: row.get("user_id"),
+            food_status: row.get("food_status"),
+            food_types: row.get("food_types"),
+            food_tags: row.get("food_tags"),
+            apply_remarks: row.get("apply_remarks"),
+        })
+        .collect();
+
+    Ok(Json(foods))
 }

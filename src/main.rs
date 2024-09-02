@@ -101,6 +101,10 @@ fn route(_state: Arc<AppState>, cfg: &mut web::ServiceConfig) {
             .route("/update", web::post().to(foods::update::update_record))
             .route("/delete/{id}", web::delete().to(foods::update::delete_record))
         )
+        .service( // 菜品
+            web::scope("/dishes")
+            .route("", web::get().to(foods::view::get_foods))
+        )
         .service( // 菜品类型
             web::scope("/foodclass")
             .route("", web::get().to(foods::view::all_food_class))
