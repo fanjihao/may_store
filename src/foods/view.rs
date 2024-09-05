@@ -1,18 +1,18 @@
 use std::sync::Arc;
 
-use ntex::web::{
-    types::{Json, Query, State},
-    Responder,
-};
-use sqlx::Row;
 use crate::{
     errors::CustomError,
     models::{
-        foods::{DishesByType, FoodApply, FoodApplyStruct, ShowClass},
+        foods::{DishesByType, FoodApply, FoodApplyStruct, FoodTags, ShowClass},
         users::UserToken,
     },
     AppState,
 };
+use ntex::web::{
+    types::{Json, Path, Query, State},
+    Responder,
+};
+use sqlx::Row;
 
 pub async fn apply_record(
     _: UserToken,
@@ -91,7 +91,7 @@ pub async fn get_foods(
 ) -> Result<Json<Vec<FoodApplyStruct>>, CustomError> {
     let db_pool = &state.clone().db_pool;
 
-    let mut sql = String::from("SELECT * FROM foods WHERE user_id = $1");
+    let mut sql = String::from("SELECT * FROM foods WHERE (user_id = $1");
 
     if let Some(a_id) = data.associate_id {
         sql.push_str(" OR user_id = ");
@@ -99,10 +99,10 @@ pub async fn get_foods(
     }
 
     if let Some(mark) = data.is_mark {
-        sql.push_str(" AND is_mark = ");
+        sql.push_str(") AND is_mark = ");
         sql.push_str(&mark.to_string());
     } else if let Some(types) = data.food_types {
-        sql.push_str(" AND food_types = ");
+        sql.push_str(") AND food_types = ");
         sql.push_str(&types.to_string());
     }
 
@@ -120,8 +120,11 @@ pub async fn get_foods(
         sql.push_str(&like_query);
         sql.push(')');
     }
-
-    let row = sqlx::query(&sql).bind(data.user_id).fetch_all(db_pool).await?;
+    println!("sql: ---{}", sql);
+    let row = sqlx::query(&sql)
+        .bind(data.user_id)
+        .fetch_all(db_pool)
+        .await?;
 
     let foods: Vec<FoodApplyStruct> = row
         .into_iter()
@@ -144,4 +147,19 @@ pub async fn get_foods(
         .collect();
 
     Ok(Json(foods))
+}
+
+pub async fn get_tags(data: Query<DishesByType>, state: State<Arc<AppState>>) -> Result<impl Responder, CustomError> {
+    let db_pool = &state.clone().db_pool;
+
+    let records = sqlx::query_as!(
+        FoodTags,
+        "SELECT *
+        FROM food_tags
+        WHERE (user_id = $1 OR user_id = $2)",
+        data.user_id,
+        data.associate_id
+    ).fetch_all(db_pool).await?;
+
+    Ok(Json(records))
 }

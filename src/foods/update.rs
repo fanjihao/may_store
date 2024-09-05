@@ -43,3 +43,19 @@ pub async fn delete_record(
 
     Ok(HttpResponse::Created().body("删除成功"))
 }
+
+pub async fn favorite_dishes(
+    id: Path<(i32,)>,
+    state: State<Arc<AppState>>,
+) -> Result<impl Responder, CustomError> {
+    let db_pool = &state.clone().db_pool;
+
+    sqlx::query!(
+        "UPDATE foods SET is_mark = CASE WHEN is_mark = 1 THEN 0 ELSE 1 END WHERE food_id = $1",
+        id.0
+    )
+    .execute(db_pool)
+    .await?;
+
+    Ok(HttpResponse::Created().body("操作成功"))
+}

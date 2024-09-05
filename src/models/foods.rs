@@ -55,6 +55,12 @@ pub struct ShowClass {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FoodTags {
+    pub tag_id: Option<i32>,
+    pub tag_name: Option<String>,
+    pub user_id: Option<i32>,
+}
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DishesByType {
     pub user_id: i32,
     pub associate_id: Option<i32>,

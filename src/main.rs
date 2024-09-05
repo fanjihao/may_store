@@ -100,14 +100,19 @@ fn route(_state: Arc<AppState>, cfg: &mut web::ServiceConfig) {
             .route("/apply", web::post().to(foods::new::new_food_apply))
             .route("/update", web::post().to(foods::update::update_record))
             .route("/delete/{id}", web::delete().to(foods::update::delete_record))
+            .route("/mark/{id}", web::put().to(foods::update::favorite_dishes))
         )
         .service( // 菜品
             web::scope("/dishes")
-            .route("", web::get().to(foods::view::get_foods))
+            .route("", web::post().to(foods::view::get_foods))
         )
         .service( // 菜品类型
             web::scope("/foodclass")
             .route("", web::get().to(foods::view::all_food_class))
+        )
+        .service( // 菜品标签
+            web::scope("/foodtag")
+            .route("", web::get().to(foods::view::get_tags))
         )
         .service( // 公众号
             web::scope("/wxOffical")
