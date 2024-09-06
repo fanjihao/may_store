@@ -44,7 +44,7 @@ pub async fn wx_login(
         let _response_json: Result<Value, serde_json::Error> = serde_json::from_str(&login);
 
         let user_id = row.user_id; // Replace with the actual user ID
-        let expiration_time = chrono::Utc::now().timestamp() + (3600 * 24 * 7); // Expiry in 1 hour
+        let expiration_time = chrono::Local::now().timestamp() + (3600 * 24 * 7); // Expiry in 1 hour
 
         let claims = UserToken {
             user_id: user_id,

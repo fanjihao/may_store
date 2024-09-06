@@ -4,6 +4,7 @@ mod models;
 mod upload;
 mod users;
 mod foods;
+mod orders;
 mod wx_official;
 
 use dotenvy::dotenv;
@@ -113,6 +114,11 @@ fn route(_state: Arc<AppState>, cfg: &mut web::ServiceConfig) {
         .service( // 菜品标签
             web::scope("/foodtag")
             .route("", web::get().to(foods::view::get_tags))
+        )
+        .service( // 订单
+            web::scope("/orders")
+            .route("", web::get().to(orders::view::get_orders))
+            .route("", web::post().to(orders::new::create_order))
         )
         .service( // 公众号
             web::scope("/wxOffical")

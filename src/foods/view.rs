@@ -9,7 +9,7 @@ use crate::{
     AppState,
 };
 use ntex::web::{
-    types::{Json, Path, Query, State},
+    types::{Json, Query, State},
     Responder,
 };
 use sqlx::Row;
