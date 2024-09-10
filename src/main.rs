@@ -119,6 +119,8 @@ fn route(_state: Arc<AppState>, cfg: &mut web::ServiceConfig) {
             web::scope("/orders")
             .route("", web::get().to(orders::view::get_orders))
             .route("", web::post().to(orders::new::create_order))
+            .route("", web::put().to(orders::update::update_order))
+            .route("/{id}", web::delete().to(orders::delete::delete_order))
         )
         .service( // 公众号
             web::scope("/wxOffical")

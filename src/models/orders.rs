@@ -13,7 +13,11 @@ pub struct OrderListOut {
     pub finish_time: Option<chrono::DateTime<chrono::Utc>>,
     pub remarks: Option<String>,
     pub is_del: Option<i32>,
-    pub order_detail: Option<Vec<OrderDetailListOut>>
+    pub order_detail: Option<Vec<OrderDetailListOut>>,
+    pub revoke_time: Option<chrono::DateTime<chrono::Utc>>,
+    pub approval_time: Option<chrono::DateTime<chrono::Utc>>,
+    pub approval_feedback: Option<String>,
+    pub finish_feedback: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -39,4 +43,18 @@ pub struct OrderDto {
     pub goal_time: Option<chrono::DateTime<chrono::Utc>>,
     pub remarks: Option<String>,
     pub order_child: String
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UpdateOrder {
+    pub status: i32,
+    pub id: i32,
+    pub child_status: Option<i32>,
+    pub user_id: Option<i32>,
+    pub approval_feedback: Option<String>,
+    pub finish_feedback: Option<String>,
+    pub points: Option<i32>,
+    pub transaction_type: Option<String>,
+    pub balance: Option<i32>,
+    pub description: Option<String>,
 }

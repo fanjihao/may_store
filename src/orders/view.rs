@@ -20,7 +20,8 @@ pub async fn get_orders(
          LEFT JOIN orders_d od ON o.order_id = od.order_id
 	     LEFT JOIN foods f ON f.food_id = od.food_id 
          WHERE (o.recv_user_id = $1 OR o.create_user_id = $1)
-         AND (o.order_status = COALESCE($2, o.order_status) OR $2 IS NULL);",
+         AND (o.order_status = COALESCE($2, o.order_status) OR $2 IS NULL)
+         AND o.is_del = 0;",
         data.user_id,
         data.status
     )
@@ -46,6 +47,10 @@ pub async fn get_orders(
             finish_time: row.finish_time,
             remarks: row.remarks,
             is_del: row.is_del,
+            revoke_time: row.revoke_time,
+            approval_time: row.approval_time,
+            approval_feedback: row.approval_feedback,
+            finish_feedback: row.finish_feedback,
             order_detail: Some(Vec::new()),
         });
 
