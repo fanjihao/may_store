@@ -44,6 +44,10 @@ pub struct FoodApplyStruct {
     pub is_del: Option<i32>,
     pub user_id: Option<i32>,
     pub apply_remarks: Option<String>,
+    pub last_order_time: Option<chrono::DateTime<chrono::Utc>>,
+    pub last_complete_time: Option<chrono::DateTime<chrono::Utc>>,
+    pub total_order_count: Option<i64>,
+    pub completed_order_count: Option<i64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

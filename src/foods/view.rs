@@ -62,6 +62,10 @@ pub async fn apply_record(
         is_mark: i.is_mark,
         user_id: i.user_id,
         apply_remarks: i.apply_remarks.clone(),
+        last_order_time: None,
+        last_complete_time: None,
+        total_order_count: None,
+        completed_order_count: None
     })
     .collect::<Vec<FoodApplyStruct>>();
 
@@ -91,28 +95,40 @@ pub async fn get_foods(
 ) -> Result<Json<Vec<FoodApplyStruct>>, CustomError> {
     let db_pool = &state.clone().db_pool;
 
-    let mut sql = String::from("SELECT * FROM foods WHERE (user_id = $1");
+    let mut sql = String::from(
+        "SELECT 
+            f.*,
+            MAX ( o.create_date ) AS last_order_time,
+            MAX ( o.finish_time ) AS last_complete_time,
+            COUNT ( od.order_id ) AS total_order_count,
+            SUM ( CASE WHEN o.order_status = 3 THEN 1 ELSE 0 END ) AS completed_order_count
+        FROM 
+            foods f
+            LEFT JOIN orders_d od ON f.food_id = od.food_id
+            LEFT JOIN orders o ON od.order_id = o.order_id
+        WHERE (f.user_id = $1"
+    );
 
     if let Some(a_id) = data.associate_id {
-        sql.push_str(" OR user_id = ");
+        sql.push_str(" OR f.user_id = ");
         sql.push_str(&a_id.to_string());
     }
 
     if let Some(mark) = data.is_mark {
-        sql.push_str(") AND is_mark = ");
+        sql.push_str(") AND f.is_mark = ");
         sql.push_str(&mark.to_string());
     } else if let Some(types) = data.food_types {
-        sql.push_str(") AND food_types = ");
+        sql.push_str(") AND f.food_types = ");
         sql.push_str(&types.to_string());
     }
 
-    sql.push_str(" AND food_status IN (0, 3)");
+    sql.push_str(" AND f.food_status IN (0, 3)");
 
     if let Some(tags_str) = &data.tags {
         let tags_list: Vec<&str> = tags_str.split(',').collect();
         let like_conditions: Vec<String> = tags_list
             .iter()
-            .map(|tag| format!("food_tags LIKE '%{}%'", tag))
+            .map(|tag| format!("f.food_tags LIKE '%{}%'", tag))
             .collect();
 
         let like_query = like_conditions.join(" OR ");
@@ -120,6 +136,7 @@ pub async fn get_foods(
         sql.push_str(&like_query);
         sql.push(')');
     }
+    sql.push_str(" GROUP BY f.food_id ORDER BY last_order_time DESC;");
     println!("sql: ---{}", sql);
     let row = sqlx::query(&sql)
         .bind(data.user_id)
@@ -143,6 +160,10 @@ pub async fn get_foods(
             food_types: row.get("food_types"),
             food_tags: row.get("food_tags"),
             apply_remarks: row.get("apply_remarks"),
+            last_order_time: row.get("last_order_time"),
+            last_complete_time: row.get("last_complete_time"),
+            total_order_count: row.get("total_order_count"),
+            completed_order_count: row.get("completed_order_count")
         })
         .collect();
 
