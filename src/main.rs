@@ -11,6 +11,7 @@ use dotenvy::dotenv;
 use errors::CustomError;
 use idgenerator::{IdGeneratorOptions, IdInstance};
 use ntex::web::{self, middleware, App, HttpServer};
+use orders::update::check_order_expiration;
 use sqlx::{postgres::PgPoolOptions, Pool, Postgres};
 use std::{env, sync::Arc};
 
@@ -40,7 +41,7 @@ async fn main() -> Result<(), CustomError> {
             .connect(&db_url)
             .await?,
     });
-    let _app_state_clone = Arc::clone(&app_state);
+    let app_state_clone = Arc::clone(&app_state);
 
     let server = HttpServer::new(move || {
         App::new()
@@ -55,10 +56,10 @@ async fn main() -> Result<(), CustomError> {
     let server_handle = tokio::spawn(server);
 
     // 定时任务：每分钟检查订单失效时间
-    // let task = tokio::spawn(check_order_expiration(app_state_clone));
+    let task = tokio::spawn(check_order_expiration(app_state_clone));
 
     // 等待 HTTP 服务器和定时任务完成
-    let _ = tokio::try_join!(server_handle)?;
+    let _ = tokio::try_join!(server_handle, task)?;
 
     Ok(())
 }
@@ -118,6 +119,7 @@ fn route(_state: Arc<AppState>, cfg: &mut web::ServiceConfig) {
         .service( // 订单
             web::scope("/orders")
             .route("", web::get().to(orders::view::get_orders))
+            .route("/{id}", web::get().to(orders::view::get_order_detail))
             .route("", web::post().to(orders::new::create_order))
             .route("", web::put().to(orders::update::update_order))
             .route("/{id}", web::delete().to(orders::delete::delete_order))
