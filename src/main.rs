@@ -5,6 +5,7 @@ mod upload;
 mod users;
 mod foods;
 mod orders;
+mod wishes;
 mod wx_official;
 
 use dotenvy::dotenv;
@@ -123,6 +124,14 @@ fn route(_state: Arc<AppState>, cfg: &mut web::ServiceConfig) {
             .route("", web::post().to(orders::new::create_order))
             .route("", web::put().to(orders::update::update_order))
             .route("/{id}", web::delete().to(orders::delete::delete_order))
+        )
+        .service( // 心愿兑换
+            web::scope("/wishes")
+            .route("", web::get().to(wishes::view::all_wishes))
+            .route("", web::post().to(wishes::new::new_wishes))
+            .route("", web::put().to(wishes::update::clock_in_wish))
+            .route("/unlocked", web::put().to(wishes::update::update_wish_status))
+            .route("/{id}", web::delete().to(wishes::delete::delete_wishes))
         )
         .service( // 公众号
             web::scope("/wxOffical")

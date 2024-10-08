@@ -3,5 +3,6 @@ pub mod upload;
 pub mod invitation;
 pub mod foods;
 pub mod orders;
+pub mod wishes;
 
 pub mod wx_official;

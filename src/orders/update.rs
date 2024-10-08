@@ -117,6 +117,15 @@ pub async fn log_points_transaction(
     )
     .execute(&mut **transaction)
     .await?;
+
+    sqlx::query!(
+        "UPDATE users SET love_point = $2 WHERE user_id = $1",
+        user_id,
+        balance,
+    )
+    .execute(&mut **transaction)
+    .await?;
+
     Ok(())
 }
 
