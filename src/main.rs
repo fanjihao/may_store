@@ -6,6 +6,7 @@ mod users;
 mod foods;
 mod orders;
 mod wishes;
+mod dashboard;
 mod wx_official;
 
 use dotenvy::dotenv;
@@ -124,6 +125,12 @@ fn route(_state: Arc<AppState>, cfg: &mut web::ServiceConfig) {
             .route("", web::post().to(orders::new::create_order))
             .route("", web::put().to(orders::update::update_order))
             .route("/{id}", web::delete().to(orders::delete::delete_order))
+        )
+        .service( // 订单
+            web::scope("/dashboard")
+            .route("/ranking", web::get().to(dashboard::view::order_ranking))
+            .route("/collect", web::get().to(dashboard::view::order_collect))
+            .route("/today-order", web::get().to(dashboard::view::today_order))
         )
         .service( // 心愿兑换
             web::scope("/wishes")

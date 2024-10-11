@@ -106,7 +106,7 @@ pub async fn get_foods(
             foods f
             LEFT JOIN orders_d od ON f.food_id = od.food_id
             LEFT JOIN orders o ON od.order_id = o.order_id
-        WHERE (f.user_id = $1"
+        WHERE (f.user_id = $1",
     );
 
     if let Some(a_id) = data.associate_id {
@@ -163,14 +163,17 @@ pub async fn get_foods(
             last_order_time: row.get("last_order_time"),
             last_complete_time: row.get("last_complete_time"),
             total_order_count: row.get("total_order_count"),
-            completed_order_count: row.get("completed_order_count")
+            completed_order_count: row.get("completed_order_count"),
         })
         .collect();
 
     Ok(Json(foods))
 }
 
-pub async fn get_tags(data: Query<DishesByType>, state: State<Arc<AppState>>) -> Result<impl Responder, CustomError> {
+pub async fn get_tags(
+    data: Query<DishesByType>,
+    state: State<Arc<AppState>>,
+) -> Result<impl Responder, CustomError> {
     let db_pool = &state.clone().db_pool;
 
     let records = sqlx::query_as!(
@@ -180,7 +183,9 @@ pub async fn get_tags(data: Query<DishesByType>, state: State<Arc<AppState>>) ->
         WHERE (user_id = $1 OR user_id = $2)",
         data.user_id,
         data.associate_id
-    ).fetch_all(db_pool).await?;
+    )
+    .fetch_all(db_pool)
+    .await?;
 
     Ok(Json(records))
 }
