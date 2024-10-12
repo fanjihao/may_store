@@ -131,6 +131,7 @@ fn route(_state: Arc<AppState>, cfg: &mut web::ServiceConfig) {
             .route("/ranking", web::get().to(dashboard::view::order_ranking))
             .route("/collect", web::get().to(dashboard::view::order_collect))
             .route("/today-order", web::get().to(dashboard::view::today_order))
+            .route("/today-points", web::get().to(dashboard::view::today_points))
         )
         .service( // 心愿兑换
             web::scope("/wishes")

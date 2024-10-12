@@ -9,6 +9,13 @@ pub struct OrderCollectOut {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TodayPointsOut {
+    pub deduct_sum: Option<i64>,
+    pub earn_sum: Option<i64>,
+    pub today_sum: Option<i64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OrderRankingDto {
     pub user_id: i32,
     pub role: Option<i32>,
