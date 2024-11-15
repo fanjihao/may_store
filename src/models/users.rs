@@ -3,18 +3,19 @@ use ntex::{
     web::{ErrorRenderer, FromRequest, HttpRequest},
 };
 use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
 use crate::{errors::CustomError, utils::TOKEN_SECRET_KEY};
 use jsonwebtoken::{decode, Algorithm, DecodingKey, Validation};
 use std::future::Future;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct Login { // 登录结构体
     pub account: Option<String>,
     pub password: Option<String>,
     pub code: Option<String>
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct Register { // 注册结构体
     pub account: Option<String>,
     pub password: Option<String>,
@@ -29,7 +30,7 @@ pub struct IsRegister {
     pub bind_num: Option<i64>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct UserInfo { // 用户信息结构体
     pub user_id: Option<i32>,
     pub nick_name: Option<String>,
@@ -74,6 +75,7 @@ impl<E: ErrorRenderer> FromRequest<E> for UserToken {
 
         // Cookies 中的 access token
         let access_token = req.cookie("ACCESS_TOKEN");
+        println!("ACCESS_TOKEN cookie: {:?}", access_token);
 
         let fut = async move {
             let access_token = match access_token {

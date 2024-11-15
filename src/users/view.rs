@@ -14,6 +14,16 @@ use ntex::web::{
 use serde_json::Value;
 use sqlx::Row;
 
+
+#[utoipa::path(
+    post,
+    path = "/wx-login",
+    request_body = Login,
+    responses(
+        (status = 201, description = "successfully", body = Login),
+        (status = 400, description = "Todo already exists", body = CustomError, example = json!(CustomError::BadRequest("参数错误".to_string())))
+    )
+)]
 pub async fn wx_login(
     user: Json<Login>,
     state: State<Arc<AppState>>,
@@ -68,6 +78,24 @@ pub async fn wx_login(
     }
 }
 
+#[utoipa::path(
+    get,
+    path = "/users",
+    operation_id = "get_user_info",
+    params(
+        ("user_id" = Option<i32>, Query, description = "用户Id"),
+        ("account" = Option<String>, Query, description = "用户账号")
+    ),
+    tag = "用户",
+    responses(
+        (status = 201, body = UserInfo),
+        (status = 400, body = CustomError, example = json!(CustomError::BadRequest("参数错误".to_string()))),
+        (status = 401, body = CustomError, example = json!(CustomError::AuthFailed("token 失效".to_string())))
+    ),
+    security(
+        ("cookie_auth" = [])
+    )
+)]
 // 获取用户信息
 pub async fn get_user_info(
     _: UserToken,

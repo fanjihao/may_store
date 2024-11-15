@@ -4,7 +4,20 @@ use ntex::web::{types::{Json, State}, Responder, HttpResponse};
 
 use crate::{errors::CustomError, models::users::{UserInfo, UserToken}, AppState};
 
-
+#[utoipa::path(
+    post,
+    path = "/users",
+    operation_id = "wx_change_info",
+    tag = "用户",
+    request_body = UserInfo,
+    responses(
+        (status = 201, body = UserInfo),
+        (status = 400, body = CustomError, example = json!(CustomError::BadRequest("参数错误".to_string())))
+    ),
+    security(
+        ("cookie_auth" = [])
+    )
+)]
 pub async fn wx_change_info(
     _: UserToken,
     data: Json<UserInfo>,

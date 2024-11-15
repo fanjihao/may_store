@@ -5,9 +5,11 @@ use ntex::{
     web::{HttpResponse, WebResponseError, DefaultError},
 };
 use qiniu_upload_token::ToStringError;
+use serde::Serialize;
 use tokio::task::JoinError;
+use utoipa::ToSchema;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, ToSchema)]
 pub enum CustomError {
     NotFound(String),
     InternalServerError(String),
