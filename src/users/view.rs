@@ -125,6 +125,23 @@ pub async fn get_user_info(
     }
 }
 
+#[utoipa::path(
+    get,
+    path = "/users/is-register",
+    operation_id = "is_register",
+    params(
+        ("account" = Option<String>, Query, description = "用户账号")
+    ),
+    tag = "用户",
+    responses(
+        (status = 201, body = IsRegister),
+        (status = 400, body = CustomError, example = json!(CustomError::BadRequest("参数错误".to_string()))),
+        (status = 401, body = CustomError, example = json!(CustomError::AuthFailed("token 失效".to_string())))
+    ),
+    security(
+        ("cookie_auth" = [])
+    )
+)]
 pub async fn is_register(
     user: Query<Register>,
     state: State<Arc<AppState>>,

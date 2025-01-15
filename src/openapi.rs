@@ -16,7 +16,13 @@ pub async fn openapi_json() -> HttpResponse {
 }
 
 pub async fn serve_swagger(req: HttpRequest) -> HttpResponse {
-    let config = Arc::new(Config::from("/api-doc/openapi.json"));
+    let mut config = Config::from("/api-doc/openapi.json");
+    
+    // 设置 Swagger UI 的配置
+    config = config.persist_authorization(true);
+        
+    let config = Arc::new(config);
+    
     let path = req.uri().path();
     let tail = path.strip_prefix("/swagger-ui/")
         .unwrap_or_default();
@@ -37,7 +43,8 @@ pub async fn serve_swagger(req: HttpRequest) -> HttpResponse {
 use crate::users::{
     view::*,
     new::*,
-    update::*
+    update::*,
+    invitation::*,
 };
 
 #[derive(OpenApi)]
@@ -46,11 +53,16 @@ use crate::users::{
         wx_login,
         wx_register,
         wx_change_info,
-        get_user_info
+        get_user_info,
+        is_register,
+        get_invitation,
+        new_invitation
     ),
     components(
         schemas(models::users::Login, CustomError),
-        schemas(models::users::UserInfo, CustomError)
+        schemas(models::users::UserInfo, CustomError),
+        schemas(models::users::IsRegister, CustomError),
+        schemas(models::invitation::Invitation, CustomError)
     ),
     modifiers(&SecurityAddon),
     tags(
@@ -69,7 +81,7 @@ impl Modify for SecurityAddon {
             "cookie_auth",
             SecurityScheme::ApiKey(
                 ApiKey::Header(
-                    ApiKeyValue::new("Cookie")
+                    ApiKeyValue::new("Authorization")
                 )
             )
         );

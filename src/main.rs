@@ -41,7 +41,7 @@ async fn main() -> Result<(), CustomError> {
     // state
     let app_state: Arc<AppState> = Arc::new(AppState {
         db_pool: PgPoolOptions::new()
-            .max_connections(100)
+            .max_connections(10)
             .connect(&db_url)
             .await?,
     });
@@ -53,6 +53,7 @@ async fn main() -> Result<(), CustomError> {
             .wrap(middleware::Logger::default())
             .configure(|cfg| routes::route(Arc::clone(&app_state), cfg))
     })
+    .workers(4)
     .bind("0.0.0.0:9831")?
     .run();
 

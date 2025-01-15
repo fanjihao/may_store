@@ -1,5 +1,5 @@
 use ntex::{
-    http::{Payload,HttpMessage},
+    http::Payload,
     web::{ErrorRenderer, FromRequest, HttpRequest},
 };
 use serde::{Deserialize, Serialize};
@@ -10,8 +10,11 @@ use std::future::Future;
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct Login { // 登录结构体
+    /// 用户账号
     pub account: Option<String>,
+    /// 用户密码
     pub password: Option<String>,
+    /// 登录code
     pub code: Option<String>
 }
 
@@ -23,7 +26,7 @@ pub struct Register { // 注册结构体
     pub nick_name: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct IsRegister {
     pub user_id: Option<i32>,
     pub role: Option<i32>,
@@ -74,20 +77,25 @@ impl<E: ErrorRenderer> FromRequest<E> for UserToken {
         //     .clone();
 
         // Cookies 中的 access token
-        let access_token = req.cookie("ACCESS_TOKEN");
-        println!("ACCESS_TOKEN cookie: {:?}", access_token);
+        let access_token = req.headers().get("Authorization");
 
         let fut = async move {
             let access_token = match access_token {
-                Some(c) => c,
+                Some(c) => c.to_str(),
                 None => return Err(CustomError::AuthFailed("No login authorization".into())),
+            };
+
+            let access_token = if let Ok(str) = access_token {
+                str.to_string()
+            } else {
+                String::new()
             };
 
             // 设置JWT解码参数
             let decoding_key = DecodingKey::from_secret(TOKEN_SECRET_KEY.as_ref());
             let validation = Validation::new(Algorithm::HS256);
             let token_data = match decode::<UserToken>(
-                &access_token.value().to_string(),
+                &access_token,
                 &decoding_key,
                 &validation,
             ) {

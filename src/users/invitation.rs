@@ -9,6 +9,21 @@ use crate::{
     }, AppState
 };
 
+#[utoipa::path(
+    get,
+    path = "/invitation",
+    params(
+        ("user_id" = Option<i32>, Query, description = "用户Id"),
+    ),
+    tag = "用户",
+    responses(
+        (status = 201, body = Vec<Invitation>),
+        (status = 400, body = CustomError, example = json!(CustomError::BadRequest("参数错误".to_string())))
+    ),
+    security(
+        ("cookie_auth" = [])
+    )
+)]
 pub async fn get_invitation(
     _: UserToken,
     data: Query<UserInfo>,
@@ -36,6 +51,20 @@ pub async fn get_invitation(
     Ok(Json(ship))
 }
 
+
+#[utoipa::path(
+    post,
+    path = "/invitation",
+    request_body = Invitation,
+    tag = "用户",
+    responses(
+        (status = 201, body = String),
+        (status = 400, body = CustomError, example = json!(CustomError::BadRequest("参数错误".to_string())))
+    ),
+    security(
+        ("cookie_auth" = [])
+    )
+)]
 pub async fn new_invitation(
     _: UserToken,
     data: Json<Invitation>,
