@@ -14,6 +14,22 @@ use ntex::web::{
 };
 use sqlx::Row;
 
+#[utoipa::path(
+    get,
+    path = "/food/records",
+    params(
+        ("user_id" = i32, Query, description = "用户ID"),
+        ("status" = String, Query, description = "状态列表，用逗号分隔")
+    ),
+    tag = "菜品",
+    responses(
+        (status = 200, body = Vec<FoodApplyStruct>),
+        (status = 400, body = CustomError, example = json!(CustomError::BadRequest("参数错误".to_string())))
+    ),
+    security(
+        ("cookie_auth" = [])
+    )
+)]
 pub async fn apply_record(
     _: UserToken,
     data: Query<FoodApply>,
@@ -72,6 +88,21 @@ pub async fn apply_record(
     Ok(Json(food_by_status))
 }
 
+#[utoipa::path(
+    get,
+    path = "/foodclass",
+    params(
+        ("user_id" = Option<i32>, Query, description = "用户ID")
+    ),
+    tag = "菜品",
+    responses(
+        (status = 200, body = Vec<ShowClass>),
+        (status = 400, body = CustomError, example = json!(CustomError::BadRequest("参数错误".to_string())))
+    ),
+    security(
+        ("cookie_auth" = [])
+    )
+)]
 pub async fn all_food_class(
     _: UserToken,
     c: Query<ShowClass>,
@@ -89,6 +120,16 @@ pub async fn all_food_class(
     Ok(Json(class))
 }
 
+#[utoipa::path(
+    post,
+    path = "/dishes",
+    request_body = DishesByType,
+    tag = "菜品",
+    responses(
+        (status = 200, body = Vec<FoodApplyStruct>),
+        (status = 400, body = CustomError, example = json!(CustomError::BadRequest("参数错误".to_string())))
+    )
+)]
 pub async fn get_foods(
     data: Json<DishesByType>,
     state: State<Arc<AppState>>,
@@ -170,6 +211,22 @@ pub async fn get_foods(
     Ok(Json(foods))
 }
 
+#[utoipa::path(
+    get,
+    path = "/foodtag",
+    params(
+        ("user_id" = i32, Query, description = "用户ID"),
+        ("associate_id" = Option<i32>, Query, description = "关联用户ID")
+    ),
+    tag = "菜品",
+    responses(
+        (status = 200, body = Vec<FoodTags>),
+        (status = 400, body = CustomError, example = json!(CustomError::BadRequest("参数错误".to_string())))
+    ),
+    security(
+        ("cookie_auth" = [])
+    )
+)]
 pub async fn get_tags(
     data: Query<DishesByType>,
     state: State<Arc<AppState>>,

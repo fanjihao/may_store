@@ -1,5 +1,4 @@
 use std::{sync::Arc, time::Duration};
-
 use ntex::{
     util::{stream_recv, BytesMut},
     web::{
@@ -16,11 +15,28 @@ use tokio::fs;
 
 use crate::{
     errors::CustomError,
-    models::users::UserToken,
+    models::{upload::UploadFile, users::UserToken},
     utils::{ACCESS_KEY, BUCKET_NAME, DOMAIN_NAME, SECRET_KEY},
     AppState,
 };
 
+#[utoipa::path(
+    post,
+    path = "/upload",
+    tag = "上传",
+    request_body(
+        description = "上传文件",
+        content_type = "multipart/form-data",
+        content = inline(UploadFile),
+        example = json!({
+            "file": "binary_data"
+        })
+    ),
+    responses(
+        (status = 200, body = (i32, String), description = "上传成功，返回图片ID和URL"),
+        (status = 400, body = CustomError, description = "上传失败")
+    )
+)]
 pub async fn upload_file(
     mut payload: Payload,
     state: State<Arc<AppState>>,
@@ -28,6 +44,7 @@ pub async fn upload_file(
 ) -> Result<impl Responder, CustomError> {
     let db_pool = &state.clone().db_pool;
     let mut bytes: BytesMut = BytesMut::new();
+    println!("start");
 
     let content_disposition = req
         .headers()
@@ -37,10 +54,10 @@ pub async fn upload_file(
         .and_then(|s| s.split('=').nth(1))
         .map(|filename| filename.trim_matches('"').to_string());
 
-    println!("upload: {:?}", content_disposition);
+    println!("upload: {:?}", req.headers());
     let filename = match content_disposition {
         Some(str) => str,
-        None => "".to_string(),
+        None => "default.jpg".to_string(),
     };
     // payload 传入的是一个连续的stream
     while let Some(item) = stream_recv(&mut payload).await {

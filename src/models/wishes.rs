@@ -1,7 +1,7 @@
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
+use utoipa::ToSchema;
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct WishedListOut {
     pub id: Option<i32>,
     pub wish_name: Option<String>,
@@ -15,7 +15,7 @@ pub struct WishedListOut {
     pub exchange_status: Option<i32>
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct WishCostDto {
     pub id: i32,
     pub user_id: Option<i32>

@@ -3,6 +3,16 @@ use std::sync::Arc;
 use ntex::web::{types::{Json, State}, Responder, HttpResponse};
 use crate::{errors::CustomError, models::{foods::NewFood, users::UserToken}, AppState};
 
+#[utoipa::path(
+    post,
+    path = "/food/apply",
+    tag = "菜品",
+    request_body = NewFood,
+    responses(
+        (status = 200, body = String),
+        (status = 400, body = CustomError)
+    )
+)]
 pub async fn new_food_apply(
     _: UserToken,
     data: Json<NewFood>,

@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
 
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct FoodApply {
     pub user_id: i32,
     pub status: String,
@@ -10,14 +10,14 @@ pub struct FoodApply {
     pub food_status: Option<i32>
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct UpdateFood {
     pub food_id: i32,
     pub food_status: i32,
     pub msg: Option<String>
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct NewFood {
     pub user_id: i32,
     pub food_name: String,
@@ -28,7 +28,7 @@ pub struct NewFood {
     pub food_reason: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct FoodApplyStruct {
     pub food_id: Option<i32>,
     pub food_name: String,
@@ -50,7 +50,7 @@ pub struct FoodApplyStruct {
     pub completed_order_count: Option<i64>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct ShowClass {
     pub create_time: Option<chrono::DateTime<chrono::Utc>>,
     pub class_id: Option<i32>,
@@ -58,13 +58,13 @@ pub struct ShowClass {
     pub user_id: Option<i32>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct FoodTags {
     pub tag_id: Option<i32>,
     pub tag_name: Option<String>,
     pub user_id: Option<i32>,
 }
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct DishesByType {
     pub user_id: i32,
     pub associate_id: Option<i32>,

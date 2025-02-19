@@ -8,6 +8,18 @@ use crate::{
     AppState,
 };
 
+#[utoipa::path(
+    get,
+    path = "/orders",
+    params(
+        ("status", Query, description = "订单状态"),
+        ("user_id", Query, description = "用户ID")
+    ),
+    tag = "订单",
+    responses(
+        (status = 200, body = Vec<OrderListOut>, description = "获取订单列表")
+    )
+)]
 pub async fn get_orders(
     state: State<Arc<AppState>>,
     data: Query<OrderListDto>,
@@ -68,6 +80,14 @@ pub async fn get_orders(
     Ok(Json(order_list))
 }
 
+#[utoipa::path(
+    get,
+    path = "/orders/{id}",
+    tag = "订单",
+    responses(
+        (status = 200, body = OrderOut, description = "获取订单详情")
+    )
+)]
 pub async fn get_order_detail(
     state: State<Arc<AppState>>,
     id: Path<(i32,)>,

@@ -18,7 +18,7 @@ pub struct Invitation {
     pub update_date: Option<chrono::DateTime<Utc>>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct BindStruct {
     pub bind_id: i32,
     pub user_id: i32

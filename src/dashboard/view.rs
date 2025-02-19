@@ -11,6 +11,15 @@ use crate::{
 use ntex::web::types::{Json, Query, State};
 use sqlx::Row;
 
+#[utoipa::path(
+    get,
+    path = "/dashboard/ranking",
+    tag = "用户",
+    responses(
+        (status = 200, body = Vec<FoodApplyStruct>),
+        (status = 400, body = CustomError)
+    )
+)]
 pub async fn order_ranking(
     data: Query<OrderRankingDto>,
     state: State<Arc<AppState>>,
@@ -75,6 +84,15 @@ pub async fn order_ranking(
     }
 }
 
+#[utoipa::path(
+    get,
+    path = "/dashboard/collect",
+    tag = "用户",
+    responses(
+        (status = 200, body = OrderCollectOut),
+        (status = 400, body = CustomError)
+    )
+)]
 pub async fn order_collect(
     data: Query<OrderRankingDto>,
     state: State<Arc<AppState>>,
@@ -101,6 +119,15 @@ pub async fn order_collect(
     }))
 }
 
+#[utoipa::path(
+    get,
+    path = "/dashboard/today-order",
+    tag = "用户",
+    responses(
+        (status = 200, body = Vec<TodayOrderOut>),
+        (status = 400, body = CustomError)
+    )
+)]
 pub async fn today_order(
     data: Query<OrderRankingDto>,
     state: State<Arc<AppState>>,
@@ -172,6 +199,15 @@ pub async fn today_order(
     }
 }
 
+#[utoipa::path(
+    get,
+    path = "/dashboard/today-points",
+    tag = "用户",
+    responses(
+        (status = 200, body = TodayPointsOut),
+        (status = 400, body = CustomError)
+    )
+)]
 pub async fn today_points(
     data: Query<OrderRankingDto>,
     state: State<Arc<AppState>>,

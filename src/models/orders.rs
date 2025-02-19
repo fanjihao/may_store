@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct OrderListOut {
     pub order_id: Option<i32>,
     pub order_no: Option<String>,
@@ -16,7 +17,7 @@ pub struct OrderListOut {
 }
 
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct OrderOut {
     pub order_id: Option<i32>,
     pub order_no: Option<String>,
@@ -38,7 +39,7 @@ pub struct OrderOut {
     pub points: Option<i32>
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct OrderDetailListOut {
     pub order_d_id: Option<i32>,
     pub order_id: Option<i32>,
@@ -48,13 +49,13 @@ pub struct OrderDetailListOut {
     pub user_id: Option<i32>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct OrderListDto {
     pub status: Option<String>,
     pub user_id: Option<i32>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct OrderDto {
     pub user_id: i32,
     pub recv_id: Option<i32>,
@@ -63,7 +64,7 @@ pub struct OrderDto {
     pub order_child: String
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct UpdateOrder {
     pub status: i32,
     pub id: i32,

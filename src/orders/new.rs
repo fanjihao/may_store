@@ -8,6 +8,15 @@ use ntex::web::{
 
 use crate::{errors::CustomError, models::orders::OrderDto, AppState};
 
+#[utoipa::path(
+    post,
+    path = "/orders",
+    request_body = OrderDto,
+    tag = "订单",
+    responses(
+        (status = 200, body = String, description = "创建成功")
+    )
+)]
 pub async fn create_order(
     state: State<Arc<AppState>>,
     data: Json<OrderDto>,

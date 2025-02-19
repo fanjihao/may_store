@@ -11,6 +11,19 @@ use crate::{
     AppState,
 };
 
+#[utoipa::path(
+    put,
+    path = "/food/update",
+    request_body = UpdateFood,
+    tag = "菜品",
+    responses(
+        (status = 201, body = String, description = "操作成功"),
+        (status = 400, body = CustomError, example = json!(CustomError::BadRequest("参数错误".to_string())))
+    ),
+    security(
+        ("cookie_auth" = [])
+    )
+)]
 pub async fn update_record(
     _: UserToken,
     data: Json<UpdateFood>,
@@ -30,6 +43,21 @@ pub async fn update_record(
     Ok(HttpResponse::Created().body("操作成功"))
 }
 
+#[utoipa::path(
+    delete,
+    path = "/food/delete/{id}",
+    params(
+        ("id" = i32, Path, description = "菜品ID")
+    ),
+    tag = "菜品",
+    responses(
+        (status = 201, body = String, description = "删除成功"),
+        (status = 400, body = CustomError, example = json!(CustomError::BadRequest("参数错误".to_string())))
+    ),
+    security(
+        ("cookie_auth" = [])
+    )
+)]
 pub async fn delete_record(
     _: UserToken,
     id: Path<(i32,)>,
@@ -44,6 +72,21 @@ pub async fn delete_record(
     Ok(HttpResponse::Created().body("删除成功"))
 }
 
+#[utoipa::path(
+    put,
+    path = "/food/mark/{id}",
+    params(
+        ("id" = i32, Path, description = "菜品ID")
+    ),
+    tag = "菜品",
+    responses(
+        (status = 201, body = String, description = "操作成功"),
+        (status = 400, body = CustomError, example = json!(CustomError::BadRequest("参数错误".to_string())))
+    ),
+    security(
+        ("cookie_auth" = [])
+    )
+)]
 pub async fn favorite_dishes(
     id: Path<(i32,)>,
     state: State<Arc<AppState>>,

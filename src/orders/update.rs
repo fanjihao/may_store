@@ -7,6 +7,15 @@ use tokio::time;
 
 use crate::{errors::CustomError, models::orders::UpdateOrder, AppState};
 
+#[utoipa::path(
+    put,
+    path = "/orders",
+    tag = "订单",
+    request_body = UpdateOrder,
+    responses(
+        (status = 200, body = String, description = "操作成功")
+    )
+)]
 pub async fn update_order(
     data: Json<UpdateOrder>,
     state: State<Arc<AppState>>,

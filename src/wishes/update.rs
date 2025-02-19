@@ -4,7 +4,15 @@ use ntex::web::{types::{Json, State}, HttpResponse, Responder};
 
 use crate::{errors::CustomError, models::wishes::{WishCostDto, WishedListOut}, orders::update::log_points_transaction, AppState};
 
-
+#[utoipa::path(
+    put,
+    path = "/wishes",
+    request_body = WishedListOut,
+    tag = "心愿",
+    responses(
+        (status = 200, body = String, description = "更新成功")
+    )
+)]
 pub async fn clock_in_wish(
     state: State<Arc<AppState>>,
     data: Json<WishedListOut>
@@ -23,6 +31,15 @@ pub async fn clock_in_wish(
     Ok(HttpResponse::Created().body("更新成功"))
 }
 
+#[utoipa::path(
+    post,
+    path = "/wishes/unlocked",
+    request_body = WishCostDto,
+    tag = "心愿",
+    responses(
+        (status = 200, body = String, description = "更新成功")
+    )
+)]
 pub async fn update_wish_status(
     state: State<Arc<AppState>>,
     data: Json<WishCostDto>

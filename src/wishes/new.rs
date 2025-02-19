@@ -4,7 +4,15 @@ use ntex::web::{types::{Json, State}, Responder, HttpResponse};
 
 use crate::{errors::CustomError, models::wishes::WishedListOut, AppState};
 
-
+#[utoipa::path(
+    post,
+    path = "/wishes",
+    request_body = WishedListOut,
+    tag = "心愿",
+    responses(
+        (status = 200, body = String, description = "添加成功")
+    )
+)]
 pub async fn new_wishes(
     state: State<Arc<AppState>>,
     data: Json<WishedListOut>

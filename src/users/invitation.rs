@@ -117,6 +117,22 @@ pub async fn new_invitation(
     }
 }
 
+#[utoipa::path(
+    put,
+    path = "/invitation/{id}",
+    params(
+        ("id" = i32, Path, description = "邀请ID"),
+    ),
+    request_body = BindStruct,
+    tag = "用户",
+    responses(
+        (status = 201, body = String),
+        (status = 400, body = CustomError, example = json!(CustomError::BadRequest("参数错误".to_string())))
+    ),
+    security(
+        ("cookie_auth" = [])
+    )
+)]
 pub async fn confirm_invitation(
     _: UserToken,
     id: Path<(i32,)>,
@@ -152,6 +168,21 @@ pub async fn confirm_invitation(
     Ok(HttpResponse::Created().body("绑定成功"))
 }
 
+#[utoipa::path(
+    delete,
+    path = "/invitation/{id}",
+    params(
+        ("id" = i32, Path, description = "邀请ID"),
+    ),
+    tag = "用户",
+    responses(
+        (status = 201, body = String),
+        (status = 400, body = CustomError, example = json!(CustomError::BadRequest("参数错误".to_string())))
+    ),
+    security(
+        ("cookie_auth" = [])
+    )
+)]
 pub async fn cancel_invitation(
     _: UserToken,
     id: Path<(i32,)>,

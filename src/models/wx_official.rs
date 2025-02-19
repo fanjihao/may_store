@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
+use utoipa::ToSchema;
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct MsgTemplate {
     pub ship_id: Option<i32>,
     pub user_id: Option<i32>,
@@ -19,7 +19,7 @@ pub struct MsgTemplate {
     pub msg_food_repeal: Option<i32>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct TemplateMessage {
     pub template_id: String,
     pub push_id: String,
@@ -58,7 +58,7 @@ impl TemplateMessage {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct Offical {
     pub signature: Option<String>,
     pub timestamp: Option<String>,
@@ -66,7 +66,7 @@ pub struct Offical {
     pub echostr: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct Xml {
     #[serde(rename = "ToUserName")]
     pub to_user_name: Option<String>,
