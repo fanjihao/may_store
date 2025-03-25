@@ -1,6 +1,6 @@
 use std::{collections::HashMap, sync::Arc};
 
-use ntex::web::types::{Json, Path, Query, State};
+use ntex::web::{types::{Json, Path, Query, State}, Responder};
 
 use crate::{
     errors::CustomError,
@@ -154,4 +154,25 @@ pub async fn get_order_detail(
     } else {
         Err(CustomError::BadRequest("获取详情失败".to_string()))
     }
+}
+
+#[utoipa::path(
+    get,
+    path = "/orders/incomplete/{id}",
+    tag = "未完成订单",
+    responses(
+        (status = 200, body = i32, description = "获取订单详情")
+    )
+)]
+pub async fn get_incomplete_order(state: State<Arc<AppState>>, id: Path<(i32,)>) -> Result<impl Responder, CustomError> {
+    let db_pool = &state.clone().db_pool;
+
+    let result = sqlx::query!("SELECT COUNT(*)   
+        FROM orders   
+        WHERE order_status NOT IN (0, 1)   
+        AND recv_user_id = $1", id.0)
+        .fetch_one(db_pool)
+        .await?;
+
+    Ok(Json(result.count))
 }

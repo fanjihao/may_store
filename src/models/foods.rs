@@ -63,6 +63,7 @@ pub struct FoodTags {
     pub tag_id: Option<i32>,
     pub tag_name: Option<String>,
     pub user_id: Option<i32>,
+    pub sort: Option<i32>,
 }
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct DishesByType {

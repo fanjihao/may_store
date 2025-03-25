@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use ntex::web::{types::{Json, State}, Responder, HttpResponse};
-use crate::{errors::CustomError, models::{foods::NewFood, users::UserToken}, AppState};
+use crate::{errors::CustomError, models::{foods::{FoodTags, NewFood}, users::UserToken}, AppState};
 
 #[utoipa::path(
     post,
@@ -33,4 +33,30 @@ pub async fn new_food_apply(
     ).execute(db_pool).await?;
 
     Ok(HttpResponse::Created().body("申请成功"))
+}
+
+#[utoipa::path(
+    post,
+    path = "/food/tags",
+    tag = "菜品",
+    request_body = FoodTags,
+    responses(
+        (status = 201, body = String),
+        (status = 400, body = CustomError)
+    )
+)]
+pub async fn create_tags(
+    _: UserToken,
+    data: Json<FoodTags>,
+    state: State<Arc<AppState>>
+) -> Result<impl Responder, CustomError> {
+    let db_pool = &state.clone().db_pool;
+
+    sqlx::query!(
+        "INSERT INTO food_tags (tag_name, user_id, sort) VALUES ($1, $2, (SELECT COALESCE(MAX(sort), 0) + 1 FROM food_tags WHERE user_id = $2))",
+        data.tag_name,
+        data.user_id
+    ).execute(db_pool).await?;
+
+    Ok(HttpResponse::Created().body("创建成功"))
 }

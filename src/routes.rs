@@ -61,6 +61,8 @@ pub fn route(_state: Arc<AppState>, cfg: &mut web::ServiceConfig) {
         .service( // 菜品标签
             web::scope("/foodtag")
             .route("", web::get().to(foods::view::get_tags))
+            .route("", web::post().to(foods::new::create_tags))
+            .route("/{id}", web::delete().to(foods::update::delete_tags))
         )
         .service( // 订单
             web::scope("/orders")
@@ -69,6 +71,7 @@ pub fn route(_state: Arc<AppState>, cfg: &mut web::ServiceConfig) {
             .route("", web::post().to(orders::new::create_order))
             .route("", web::put().to(orders::update::update_order))
             .route("/{id}", web::delete().to(orders::delete::delete_order))
+            .route("/incomplete/{id}", web::get().to(orders::view::get_incomplete_order))
         )
         .service( // 订单
             web::scope("/dashboard")

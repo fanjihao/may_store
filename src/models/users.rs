@@ -78,7 +78,6 @@ impl<E: ErrorRenderer> FromRequest<E> for UserToken {
 
         // Cookies 中的 access token
         let access_token = req.headers().get("Authorization");
-
         let fut = async move {
             let access_token = match access_token {
                 Some(c) => c.to_str(),
@@ -92,7 +91,7 @@ impl<E: ErrorRenderer> FromRequest<E> for UserToken {
             };
 
             // 设置JWT解码参数
-            let decoding_key = DecodingKey::from_secret(TOKEN_SECRET_KEY.as_ref());
+            let decoding_key = DecodingKey::from_secret(TOKEN_SECRET_KEY);
             let validation = Validation::new(Algorithm::HS256);
             let token_data = match decode::<UserToken>(
                 &access_token,

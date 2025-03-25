@@ -164,7 +164,7 @@ pub async fn is_register(
 
         return Ok(Json(IsRegister {
             user_id: Some(user_row.user_id),
-            role: Some(user_row.role.expect("获取权限失败")),
+            role: Some(user_row.role),
             bind_num: Some(bind_sum),
         }));
     }

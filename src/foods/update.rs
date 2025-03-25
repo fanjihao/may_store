@@ -102,3 +102,33 @@ pub async fn favorite_dishes(
 
     Ok(HttpResponse::Created().body("操作成功"))
 }
+
+#[utoipa::path(
+    delete,
+    path = "/foodtag/{id}",
+    params(
+        ("id" = i32, Path, description = "标签ID")
+    ),
+    tag = "菜品",
+    responses(
+        (status = 201, body = String, description = "删除成功"),
+        (status = 400, body = CustomError, example = json!(CustomError::BadRequest("参数错误".to_string())))
+    ),
+    security(
+        ("cookie_auth" = [])
+    )
+)]
+pub async fn delete_tags(
+    _: UserToken,
+    id: Path<(i32,)>,
+    state: State<Arc<AppState>>,
+) -> Result<impl Responder, CustomError> {
+    let db_pool = &state.clone().db_pool;
+
+    println!("id: {:?}", id.0);
+    sqlx::query!("DELETE FROM food_tags WHERE tag_id = $1", id.0)
+        .execute(db_pool)
+        .await?;
+
+    Ok(HttpResponse::Created().body("删除成功"))
+}

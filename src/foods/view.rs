@@ -105,14 +105,11 @@ pub async fn apply_record(
 )]
 pub async fn all_food_class(
     _: UserToken,
-    c: Query<ShowClass>,
     state: State<Arc<AppState>>,
 ) -> Result<impl Responder, CustomError> {
     let db_pool = &state.clone().db_pool;
-    let user_id = c.user_id.unwrap_or_default() as i32;
     let class = sqlx::query_as!(ShowClass,
-        "SELECT f.* FROM food_class f LEFT JOIN users u ON f.user_id = u.user_id WHERE u.user_id = $1",
-        user_id
+        "SELECT f.* FROM food_class f",
     )
     .fetch_all(db_pool)
     .await?;
@@ -237,9 +234,8 @@ pub async fn get_tags(
         FoodTags,
         "SELECT *
         FROM food_tags
-        WHERE (user_id = $1 OR user_id = $2)",
-        data.user_id,
-        data.associate_id
+        WHERE user_id = $1 ORDER BY sort ASC",
+        data.user_id
     )
     .fetch_all(db_pool)
     .await?;
