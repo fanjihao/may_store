@@ -12,19 +12,19 @@
 # RUN cargo build --release
 
 # # Run the binary
-# CMD ["./target/release/store-rust"]
+# CMD ["./target/release/may-store"]
 
 ## 查看镜像
 # docker ps -a
 ## 传输文件
-# docker cp 72be1c824770:/target/x86_64-unknown-linux-gnu/release/store-rust /rust-app
+# docker cp 72be1c824770:/target/x86_64-unknown-linux-gnu/release/may-store /rust-app
 
 # 第一阶段：使用Rust工具链构建Rust应用
 FROM rust:latest as builder
 
 # 设置CARGO_HOME环境变量，指定Rust的依赖项源
 ENV CARGO_HOME=/usr/local/cargo
-ENV DATABASE_URL=postgres://postgres:root@117.72.9.23:5432/demo
+ENV DATABASE_URL=postgres://postgres:root@124.223.60.157:5432/store
 
 WORKDIR /app
 
@@ -57,13 +57,13 @@ EXPOSE 9831
 WORKDIR /app
 
 # 从第一阶段中复制可执行文件
-COPY --from=builder /app/target/release/store-rust .
+COPY --from=builder /app/target/release/may-store .
 COPY --from=builder /app/static .
 COPY --from=builder /app/Cargo.lock .
 COPY --from=builder /app/Cargo.toml .
 
-ENV DATABASE_URL=postgres://postgres:root@117.72.9.23:5432/demo
+ENV DATABASE_URL=postgres://postgres:root@124.223.60.157:5432/store
 
 # 设置启动命令
-CMD ["./store-rust"]
+CMD ["./may-store"]
 

@@ -175,7 +175,7 @@ pub async fn get_foods(
         sql.push(')');
     }
     sql.push_str(" GROUP BY f.food_id ORDER BY last_order_time DESC;");
-    println!("sql: ---{}", sql);
+    // println!("sql: ---{}", sql);
     let row = sqlx::query(&sql)
         .bind(data.user_id)
         .fetch_all(db_pool)
@@ -234,8 +234,9 @@ pub async fn get_tags(
         FoodTags,
         "SELECT *
         FROM food_tags
-        WHERE user_id = $1 ORDER BY sort ASC",
-        data.user_id
+        WHERE (user_id = $1 OR user_id = $2) ORDER BY sort ASC",
+        data.user_id,
+        data.associate_id
     )
     .fetch_all(db_pool)
     .await?;

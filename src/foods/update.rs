@@ -7,7 +7,7 @@ use ntex::web::{
 
 use crate::{
     errors::CustomError,
-    models::{foods::UpdateFood, users::UserToken},
+    models::{foods::{FoodTags, UpdateFood}, users::UserToken},
     AppState,
 };
 
@@ -131,4 +131,26 @@ pub async fn delete_tags(
         .await?;
 
     Ok(HttpResponse::Created().body("删除成功"))
+}
+
+pub async fn update_tags_sort(
+    _: UserToken,
+    data: Json<Vec<FoodTags>>,
+    state: State<Arc<AppState>>,
+) -> Result<impl Responder, CustomError> {
+    let db_pool = &state.clone().db_pool;
+    let mut transaction = db_pool.begin().await?;
+
+    for record in data.iter() {
+        sqlx::query!(
+            "UPDATE food_tags SET sort = $2 WHERE tag_id = $1",
+            record.tag_id,
+            record.sort
+        )
+        .execute(&mut *transaction)
+        .await?;
+    }
+
+    transaction.commit().await?;
+    Ok(HttpResponse::Created().body("操作成功"))
 }
