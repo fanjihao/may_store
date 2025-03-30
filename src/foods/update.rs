@@ -13,7 +13,7 @@ use crate::{
 
 #[utoipa::path(
     put,
-    path = "/food/update",
+    path = "/food/update_status",
     request_body = UpdateFood,
     tag = "菜品",
     responses(
@@ -24,7 +24,7 @@ use crate::{
         ("cookie_auth" = [])
     )
 )]
-pub async fn update_record(
+pub async fn update_record_status(
     _: UserToken,
     data: Json<UpdateFood>,
     state: State<Arc<AppState>>,
@@ -36,6 +36,40 @@ pub async fn update_record(
         data.food_id,
         data.food_status,
         data.msg
+    )
+    .execute(db_pool)
+    .await?;
+
+    Ok(HttpResponse::Created().body("操作成功"))
+}
+
+#[utoipa::path(
+    put,
+    path = "/food/update",
+    request_body = UpdateFood,
+    tag = "菜品",
+    responses(
+        (status = 201, body = String, description = "操作成功"),
+        (status = 400, body = CustomError, example = json!(CustomError::BadRequest("参数错误".to_string())))
+    ),
+    security(
+        ("cookie_auth" = [])
+    )
+)]
+pub async fn food_update(
+    _: UserToken,
+    data: Json<UpdateFood>,
+    state: State<Arc<AppState>>,
+) -> Result<impl Responder, CustomError> {
+    let db_pool = &state.clone().db_pool;
+
+    sqlx::query!(
+        "UPDATE foods SET food_name = $2, food_types = $3, food_photo = $4, food_tags = $5 WHERE food_id = $1",
+        data.food_id,
+        data.food_name,
+        data.food_types,
+        data.food_photo,
+        data.food_tags
     )
     .execute(db_pool)
     .await?;

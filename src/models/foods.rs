@@ -13,8 +13,12 @@ pub struct FoodApply {
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct UpdateFood {
     pub food_id: i32,
-    pub food_status: i32,
-    pub msg: Option<String>
+    pub food_status: Option<i32>,
+    pub msg: Option<String>,
+    pub food_name: Option<String>,
+    pub food_photo: Option<String>,
+    pub food_tags: Option<String>,
+    pub food_types: Option<i32>
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]

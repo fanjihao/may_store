@@ -23,41 +23,12 @@ pub struct MsgTemplate {
 pub struct TemplateMessage {
     pub template_id: String,
     pub push_id: String,
-    pub date: Option<String>,
-    pub city: Option<String>,
-    pub weather: Option<String>,
-    pub low: Option<String>,
-    pub high: Option<String>,
-    pub love_days: Option<String>,
-    pub birthdays: Option<String>,
+    pub new_order: String,
+    pub order_no: String,
+    pub date_time: String,
+    pub foods: String,
+    pub order_status: String,
 }
-
-impl TemplateMessage {
-    pub fn send_template(
-        template_id: String,
-        push_id: String,
-        date: Option<String>,
-        city: Option<String>,
-        weather: Option<String>,
-        low: Option<String>,
-        high: Option<String>,
-        love_days: Option<String>,
-        birthdays: Option<String>,
-    ) -> Self {
-        Self {
-            template_id: template_id,
-            push_id: push_id,
-            date: date,
-            city: city,
-            weather: weather,
-            low: low,
-            high: high,
-            love_days: love_days,
-            birthdays: birthdays,
-        }
-    }
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct Offical {
     pub signature: Option<String>,

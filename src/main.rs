@@ -54,7 +54,7 @@ async fn main() -> Result<(), CustomError> {
             .configure(|cfg| routes::route(Arc::clone(&app_state), cfg))
     })
     .workers(4)
-    .bind("0.0.0.0:9831")?
+    .bind("0.0.0.0:9800")?
     .run();
 
     // 启动 HTTP 服务器

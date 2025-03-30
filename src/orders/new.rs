@@ -1,12 +1,13 @@
 use std::sync::Arc;
 
+use chrono::Local;
 use ntex::web::{
     types::{Json, State},
     HttpResponse,
     Responder,
 };
 
-use crate::{errors::CustomError, models::orders::OrderDto, AppState};
+use crate::{errors::CustomError, models::{orders::OrderDto, wx_official::TemplateMessage}, wx_official::send_to_user::send_template, AppState};
 
 #[utoipa::path(
     post,
@@ -64,6 +65,25 @@ pub async fn create_order(
     // 执行查询
     sqlx::query(&query).execute(&mut *transaction).await?;
     transaction.commit().await?;
+
+    let record = sqlx::query!(
+        "SELECT * FROM users WHERE user_id = $1",
+        data.recv_id
+    ).fetch_one(db_pool).await?;
+
+    let tp_record = sqlx::query!(
+        "SELECT * FROM templates WHERE templates.types = 'orders'"
+    ).fetch_one(db_pool).await?;
+
+    let _ = send_template(Json(TemplateMessage {
+        template_id: tp_record.template_id,
+        push_id: record.push_id.expect("no push id"),
+        new_order: "提醒您有一条新订单！".to_string(),
+        order_no: order_no.clone(),
+        date_time: Local::now().format("%Y-%m-%d %H:%M:%S").to_string(),
+        foods: "".to_string(),
+        order_status: "待接单".to_string(),
+    })).await;
 
     Ok(HttpResponse::Created().body("创建成功"))
 }

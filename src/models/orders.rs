@@ -61,13 +61,15 @@ pub struct OrderDto {
     pub recv_id: Option<i32>,
     pub goal_time: Option<chrono::DateTime<chrono::Utc>>,
     pub remarks: Option<String>,
-    pub order_child: String
+    pub order_child: String,
+    pub foods: Option<String>
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct UpdateOrder {
     pub status: i32,
     pub id: i32,
+    pub order_no: Option<String>,
     pub child_status: Option<i32>,
     pub user_id: Option<i32>,
     pub approval_feedback: Option<String>,

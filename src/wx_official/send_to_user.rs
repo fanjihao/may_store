@@ -13,57 +13,46 @@ pub async fn send_template(data: Json<TemplateMessage>) -> Result<impl Responder
     fetch_set_access_token().await?;
     let client = Client::new();
     if let Some(val) = get_access_token().await {
-        match weather_handler().await {  
-            Ok(value) => {
-                let json_data = serde_json::json!({
-                    "touser": data.push_id,
-                    "template_id": data.template_id,
-                    "url": "http://weixin.qq.com/download",
-                    "topcolor":"#FF0000",
-                    "data":{
-                        "date":{
-                            "value": value.get("result").unwrap().get("forecasts").unwrap().get(0).unwrap().get("date").unwrap(),
-                            "color":"#f5f5f5"
-                        },
-                        "city":{
-                            "value": value.get("result").unwrap().get("location").unwrap().get("city").unwrap(),
-                            "color":"#173177"
-                        },
-                        "weather": {
-                            "value": value.get("result").unwrap().get("forecasts").unwrap().get(0).unwrap().get("text_day").unwrap(),
-                            "color":"#173177"
-                        },
-                        "low": {
-                            "value": value.get("result").unwrap().get("forecasts").unwrap().get(0).unwrap().get("low").unwrap(),
-                            "color":"#173177"
-                        },
-                        "high": {
-                            "value": value.get("result").unwrap().get("forecasts").unwrap().get(0).unwrap().get("high").unwrap(),
-                            "color":"#173177"
-                        },
-                        "loveDays": {
-                            "value": data.love_days,
-                            "color":"#173177"
-                        },
-                    }
-                });
-                let resp = client
-                    .post(format!(
-                        "https://api.weixin.qq.com/cgi-bin/message/template/send?access_token={}",
-                        val
-                    ))
-                    .json(&json_data)
-                    .send()
-                    .await?;
-                let response_text = resp.text().await?;
-                println!("Response: {}", response_text);
-            
-                Ok(HttpResponse::Created().body("发送成功"))
-            },  
-            Err(_) => {  
-                Err(CustomError::BadRequest("error".to_string()))  
-            },  
-        }  
+        let json_data = serde_json::json!({
+            "touser": data.push_id,
+            "template_id": data.template_id,
+            "url": "http://weixin.qq.com/download",
+            "topcolor":"#FF0000",
+            "data":{
+                "new_order":{
+                    "value": data.new_order.clone(),
+                    "color":"#173177"
+                },
+                "order_no":{
+                    "value": data.order_no.clone(),
+                    "color":"#173177"
+                },
+                "date_time": {
+                    "value": data.date_time.clone(),
+                    "color":"#173177"
+                },
+                "foods": {
+                    "value": data.foods.clone(),
+                    "color":"#173177"
+                },
+                "order_status": {
+                    "value": data.order_status.clone(),
+                    "color":"#173177"
+                },
+            }
+        });
+        let resp = client
+            .post(format!(
+                "https://api.weixin.qq.com/cgi-bin/message/template/send?access_token={}",
+                val
+            ))
+            .json(&json_data)
+            .send()
+            .await?;
+        let response_text = resp.text().await?;
+        println!("Response: {}", response_text);
+    
+        Ok(HttpResponse::Created().body("发送成功"))
     } else {
         Ok(HttpResponse::Created().body("NO access_token"))
     }
