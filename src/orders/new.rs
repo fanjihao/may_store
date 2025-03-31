@@ -6,8 +6,8 @@ use ntex::web::{
     HttpResponse,
     Responder,
 };
-
-use crate::{errors::CustomError, models::{orders::OrderDto, wx_official::TemplateMessage}, wx_official::send_to_user::send_template, AppState};
+use sqlx::Row;
+use crate::{errors::CustomError, models::{orders::OrderDto, users:: UserToken, wx_official::TemplateMessage}, wx_official::send_to_user::send_template, AppState};
 
 #[utoipa::path(
     post,
@@ -19,6 +19,7 @@ use crate::{errors::CustomError, models::{orders::OrderDto, wx_official::Templat
     )
 )]
 pub async fn create_order(
+    user_token: UserToken,
     state: State<Arc<AppState>>,
     data: Json<OrderDto>,
 ) -> Result<impl Responder, CustomError> {
@@ -66,24 +67,35 @@ pub async fn create_order(
     sqlx::query(&query).execute(&mut *transaction).await?;
     transaction.commit().await?;
 
-    let record = sqlx::query!(
-        "SELECT * FROM users WHERE user_id = $1",
-        data.recv_id
-    ).fetch_one(db_pool).await?;
+    if !user_token.user_info.clone().unwrap().push_id.is_none() {
+        let tp_record = sqlx::query!(
+            "SELECT * FROM templates WHERE templates.types = 'orders'"
+        ).fetch_one(db_pool).await?;
 
-    let tp_record = sqlx::query!(
-        "SELECT * FROM templates WHERE templates.types = 'orders'"
-    ).fetch_one(db_pool).await?;
-
-    let _ = send_template(Json(TemplateMessage {
-        template_id: tp_record.template_id,
-        push_id: record.push_id.expect("no push id"),
-        new_order: "提醒您有一条新订单！".to_string(),
-        order_no: order_no.clone(),
-        date_time: Local::now().format("%Y-%m-%d %H:%M:%S").to_string(),
-        foods: "".to_string(),
-        order_status: "待接单".to_string(),
-    })).await;
+        let query = format!(
+            "SELECT food_name FROM foods WHERE food_id = ANY($1)"
+        );
+    
+        let result: Vec<String> = sqlx::query(&query)
+            .bind(food_ids)  // 将所有 food_ids 绑定到查询中
+            .fetch_all(db_pool)
+            .await?
+            .into_iter()
+            .map(|row| row.get("food_name"))
+            .collect();
+        
+        let food_names = result.join(", ");
+    
+        let _ = send_template(Json(TemplateMessage {
+            template_id: tp_record.template_id,
+            push_id: user_token.user_info.clone().unwrap().push_id.expect("no push id"),
+            msg_title: format!("您有一条新订单！"),
+            order_no: order_no.clone(),
+            date_time: Local::now().format("%Y-%m-%d %H:%M:%S").to_string(),
+            foods: food_names,
+            order_status: "待接单".to_string(),
+        })).await;
+    }
 
     Ok(HttpResponse::Created().body("创建成功"))
 }

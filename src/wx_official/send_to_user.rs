@@ -19,8 +19,8 @@ pub async fn send_template(data: Json<TemplateMessage>) -> Result<impl Responder
             "url": "http://weixin.qq.com/download",
             "topcolor":"#FF0000",
             "data":{
-                "new_order":{
-                    "value": data.new_order.clone(),
+                "msg_title":{
+                    "value": data.msg_title.clone(),
                     "color":"#173177"
                 },
                 "order_no":{
@@ -50,7 +50,7 @@ pub async fn send_template(data: Json<TemplateMessage>) -> Result<impl Responder
             .send()
             .await?;
         let response_text = resp.text().await?;
-        println!("Response: {}", response_text);
+        println!("Send Template Message Response: {}", response_text);
     
         Ok(HttpResponse::Created().body("发送成功"))
     } else {

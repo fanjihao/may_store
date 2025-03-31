@@ -23,7 +23,7 @@ pub struct MsgTemplate {
 pub struct TemplateMessage {
     pub template_id: String,
     pub push_id: String,
-    pub new_order: String,
+    pub msg_title: String,
     pub order_no: String,
     pub date_time: String,
     pub foods: String,

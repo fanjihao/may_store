@@ -5,6 +5,7 @@ use ntex::{
     web::{HttpResponse, WebResponseError, DefaultError},
 };
 use qiniu_upload_token::ToStringError;
+use redis::RedisError;
 use serde::Serialize;
 use tokio::task::JoinError;
 use utoipa::ToSchema;
@@ -15,6 +16,7 @@ pub enum CustomError {
     InternalServerError(String),
     BadRequest(String),
     AuthFailed(String),
+    RedisError(String)
 }
 
 impl WebResponseError for CustomError {
@@ -24,6 +26,7 @@ impl WebResponseError for CustomError {
             Self::InternalServerError(_) => StatusCode::INTERNAL_SERVER_ERROR,
             Self::BadRequest(_) => StatusCode::BAD_REQUEST,
             Self::AuthFailed(_) => StatusCode::UNAUTHORIZED,
+            Self::RedisError(_) => StatusCode::BAD_REQUEST,
         }
     }
 
@@ -37,6 +40,7 @@ impl WebResponseError for CustomError {
                 Self::InternalServerError(e) => e,
                 Self::BadRequest(e) => e,
                 Self::AuthFailed(e) => e,
+                Self::RedisError(e) => e,
             }
             .into(),
         )
@@ -50,6 +54,7 @@ impl fmt::Display for CustomError {
             CustomError::BadRequest(e) => write!(f, "{e}"),
             CustomError::AuthFailed(e) => write!(f, "{e}"),
             CustomError::InternalServerError(e) => write!(f, "{e}"),
+            CustomError::RedisError(e) => write!(f, "{e}"),
         }
     }
 }
@@ -119,4 +124,11 @@ impl From<ToStringError> for CustomError {
     fn from(value: ToStringError) -> Self {
         CustomError::BadRequest(format!("七牛云转str失败: {:#?}", value))
     }
+}
+
+impl From<RedisError> for CustomError {
+    fn from(value: RedisError) -> Self {
+        CustomError::BadRequest(format!("redis 连接失败: {:#?}", value))
+    }
+    
 }

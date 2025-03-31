@@ -25,11 +25,13 @@ use crate::{
     )
 )]
 pub async fn get_invitation(
-    _: UserToken,
+    user_token: UserToken,
     data: Query<UserInfo>,
     state: State<Arc<AppState>>,
 ) -> Result<impl Responder, CustomError> {
     let db_pool = &state.clone().db_pool;
+    println!("user_token: {:?}", user_token);
+
 
     let ship = sqlx::query_as!(
         Invitation,

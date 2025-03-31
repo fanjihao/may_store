@@ -1,4 +1,5 @@
 mod errors;
+mod cache;
 mod utils;
 mod models;
 mod upload;
@@ -18,10 +19,12 @@ use ntex::web::{middleware, App, HttpServer};
 use orders::update::check_order_expiration;
 use sqlx::{postgres::PgPoolOptions, Pool, Postgres};
 use std::{env, sync::Arc};
+use cache::RedisCache;
 
 #[derive(Debug, Clone)]
 pub struct AppState {
     pub db_pool: Pool<Postgres>,
+    pub redis_cache: Arc<RedisCache>,  // 添加Redis缓存
 }
 
 #[ntex::main]
@@ -37,13 +40,23 @@ async fn main() -> Result<(), CustomError> {
     let _ = IdInstance::init(options)?;
 
     let db_url = env::var("DATABASE_URL").expect("Please set DATABASE_URL");
+    let redis_url = env::var("REDIS_URL").expect("Please set REDIS_URL");
 
+    // 初始化Redis缓存
+    let redis_cache = match RedisCache::new(&redis_url) {
+        Ok(cache) => Arc::new(cache),
+        Err(err) => {
+            eprintln!("Failed to connect to Redis: {}", err);
+            return Err(CustomError::RedisError(err.to_string()));
+        }
+    };
     // state
     let app_state: Arc<AppState> = Arc::new(AppState {
         db_pool: PgPoolOptions::new()
             .max_connections(10)
             .connect(&db_url)
             .await?,
+        redis_cache
     });
     let app_state_clone = Arc::clone(&app_state);
 
@@ -54,7 +67,7 @@ async fn main() -> Result<(), CustomError> {
             .configure(|cfg| routes::route(Arc::clone(&app_state), cfg))
     })
     .workers(4)
-    .bind("0.0.0.0:9800")?
+    .bind("0.0.0.0:9831")?
     .run();
 
     // 启动 HTTP 服务器

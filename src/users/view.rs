@@ -34,7 +34,7 @@ pub async fn wx_login(
     let pwd = user.password.clone();
     let code = user.code.clone().unwrap_or_default();
 
-    let row = sqlx::query!("SELECT u.* FROM users u WHERE u.account=$1", account)
+    let row = sqlx::query_as!(UserInfo, "SELECT u.* FROM users u WHERE u.account=$1", account)
         .fetch_one(db_pool)
         .await?;
 
@@ -53,13 +53,13 @@ pub async fn wx_login(
         .await?;
         let _response_json: Result<Value, serde_json::Error> = serde_json::from_str(&login);
 
-        let user_id = row.user_id; // Replace with the actual user ID
+        let user_id = row.user_id.unwrap(); // Replace with the actual user ID
         let expiration_time = chrono::Local::now().timestamp() + (3600 * 24 * 7); // Expiry in 1 hour
 
         let claims = UserToken {
-            user_id: user_id,
+            user_id,
             exp: Some(expiration_time),
-            // access_token: "".to_string()
+            user_info: Some(row.clone()),
         };
         let encoding_key = EncodingKey::from_secret(TOKEN_SECRET_KEY);
         let token = encode(&Header::default(), &claims, &encoding_key).expect("Token 解析失败");
@@ -71,6 +71,9 @@ pub async fn wx_login(
         )
         .fetch_one(db_pool)
         .await?;
+
+        // 将用户信息存入Redis缓存
+        let _ = state.redis_cache.set_user(&user_new, 3600).await;
 
         Ok(Json((user_new, token)))
     } else {
