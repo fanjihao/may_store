@@ -15,6 +15,74 @@ use crate::{
     AppState,
 };
 
+#[derive(Debug, Copy, Clone, PartialEq)]
+enum OrderStatus {
+    Pending = 0,
+    Accepted = 1,
+    Expired = 2,
+    Completed = 3,
+    Incomplete = 4,
+    Rejected = 7,
+}
+
+impl OrderStatus {
+    fn from_i32(value: i32) -> Option<Self> {
+        match value {
+            0 => Some(Self::Pending),
+            1 => Some(Self::Accepted),
+            2 => Some(Self::Expired),
+            3 => Some(Self::Completed),
+            4 => Some(Self::Incomplete),
+            7 => Some(Self::Rejected),
+            _ => None,
+        }
+    }
+
+    fn message_title(&self) -> String {
+        match self {
+            Self::Accepted => "您的订单已被接单".to_string(),
+            Self::Rejected => "您的订单已被拒绝".to_string(),
+            Self::Completed => "您的订单已被标记为完成".to_string(),
+            Self::Incomplete => "您的订单已被标记为未完成".to_string(),
+            _ => "订单状态已改动".to_string(),
+        }
+    }
+
+    fn template_status(&self) -> &'static str {
+        match self {
+            Self::Accepted => "已接单",
+            Self::Rejected => "已拒绝",
+            Self::Completed => "已完成",
+            Self::Incomplete => "未完成",
+            _ => "未完成",
+        }
+    }
+}
+
+struct PointsOperation {
+    points: i32,
+    transaction_type: &'static str,
+    description: &'static str,
+}
+
+impl PointsOperation {
+    fn for_status(status: OrderStatus, points: i32) -> Option<Self> {
+        match status {
+            OrderStatus::Completed => Some(Self {
+                points,
+                transaction_type: "earn",
+                description: "订单完成获得",
+            }),
+            OrderStatus::Incomplete => Some(Self {
+                points,
+                transaction_type: "deduct",
+                description: "订单未完成扣除",
+            }),
+            _ => None,
+        }
+    }
+}
+
 #[utoipa::path(
     put,
     path = "/orders",
@@ -32,145 +100,184 @@ pub async fn update_order(
     let db_pool = &state.clone().db_pool;
     let mut transaction = db_pool.begin().await?;
 
-    let order_record = sqlx::query!("SELECT * FROM orders o WHERE o.order_id = $1", data.id)
-        .fetch_one(&mut *transaction)
-        .await?;
+    let (order_no, food_names) = tokio::try_join!(
+        sqlx::query_scalar!(
+            "SELECT order_no FROM orders WHERE order_id = $1",
+            data.id
+        )
+        .fetch_one(db_pool),
+        sqlx::query_scalar!(
+            "SELECT string_agg(f.food_name, ', ') 
+            FROM orders_d d 
+            LEFT JOIN foods f ON d.food_id = f.food_id 
+            WHERE d.order_id = $1
+            GROUP BY d.order_id",
+            data.id
+        )
+        .fetch_one(db_pool)
+    )?;
 
-    let mut msg_title = String::new();
-    if data.status == 7 || data.status == 1 {
-        msg_title = format!("您的订单已被拒绝");
-        // 接单或拒绝
-        let mut status = 0;
-        if data.status == 1 {
-            status = 1;
-            msg_title = format!("您的订单已被接单");
+    // 获取订单状态
+    let status = OrderStatus::from_i32(data.status)
+        .ok_or_else(|| CustomError::BadRequest("Invalid order status".into()))?;
+    
+    // 更新订单状态
+    match status {
+        OrderStatus::Accepted | OrderStatus::Rejected => {
+            let approval_status = if matches!(status, OrderStatus::Accepted) { 1 } else { 0 };
+            sqlx::query!(
+                "UPDATE orders SET order_status = $1, approval_feedback = $3, approval_time = $4, approval_status = $5 WHERE order_id = $2",
+                data.status,
+                data.id,
+                data.approval_feedback,
+                Local::now(),
+                approval_status
+            )
+            .execute(&mut *transaction)
+            .await?;
+        
+            let desc = if data.status == 1 {
+                "接受了"
+            } else {
+                "拒绝了"
+            };
+            let actions = format!("xxx {} 订单{} [ {} ]", desc, order_no.clone().unwrap_or_default(), food_names.clone().unwrap_or_default());
+            insert_footprints(
+                &mut transaction,
+                data.ship_id.unwrap(),
+                &food_names.clone().unwrap_or_default(),
+                &order_no.clone().unwrap_or_default(),
+                &actions
+            )
+            .await?;
+        },
+        OrderStatus::Completed | OrderStatus::Incomplete => {
+            let finish_status = if matches!(status, OrderStatus::Completed) { 1 } else { 0 };
+            
+            // 更新订单状态
+            sqlx::query!(
+                "UPDATE orders SET order_status = $1, finish_feedback = $3, finish_time = $4, finish_status = $5 WHERE order_id = $2",
+                data.status,
+                data.id,
+                data.finish_feedback,
+                Local::now(),
+                finish_status
+            )
+            .execute(&mut *transaction)
+            .await?;
+
+            let desc = if data.status == 3 {
+                "完成了"
+            } else {
+                "未完成"
+            };
+            let actions = format!("xxx {} 订单{} [ {} ]", desc, order_no.clone().unwrap_or_default(), food_names.clone().unwrap_or_default());
+            insert_footprints(
+                &mut transaction,
+                data.ship_id.unwrap(),
+                &food_names.clone().unwrap_or_default(),
+                &order_no.clone().unwrap_or_default(),
+                &actions
+            )
+            .await?;
+
+            // 处理积分
+            if let (Some(user_id), Some(points)) = (data.user_id, data.points) {
+                let row = sqlx::query!(
+                    "SELECT love_point FROM users WHERE user_id = $1",
+                    user_id
+                )
+                .fetch_one(&mut *transaction)
+                .await?;
+
+                let current_points = row.love_point.unwrap_or(0);
+                let balance = match status {
+                    OrderStatus::Completed => current_points + points,
+                    _ => current_points - points
+                };
+
+                if let Some(points_op) = PointsOperation::for_status(status, points) {
+                    log_points_transaction(
+                        &mut transaction,
+                        user_id,
+                        points,
+                        points_op.transaction_type,
+                        balance,
+                        points_op.description,
+                        data.id,
+                    )
+                    .await?;
+                }
+            }
+        },
+        _ => {
+            let actions = format!("xxx 撤回了 订单{} [ {} ]", order_no.clone().unwrap_or_default(), food_names.clone().unwrap_or_default());
+            insert_footprints(
+                &mut transaction,
+                data.ship_id.unwrap(),
+                &food_names.clone().unwrap_or_default(),
+                &order_no.clone().unwrap_or_default(),
+                &actions
+            )
+            .await?;
+
+            sqlx::query!(
+                "UPDATE orders SET order_status = $1, revoke_time = $3 WHERE order_id = $2",
+                data.status,
+                data.id,
+                Local::now()
+            )
+            .execute(&mut *transaction)
+            .await?;
         }
-        sqlx::query!(
-            "UPDATE orders SET order_status = $1, approval_feedback = $3, approval_time = $4, approval_status = $5 WHERE order_id = $2",
-            data.status,
-            data.id,
-            data.approval_feedback,
-            chrono::Local::now(),
-            status
-        )
-        .execute(&mut *transaction)
-        .await?;
-    } else if data.status == 3 || data.status == 4 {
-        // 完成或未完成
-        let mut status = 0;
-        msg_title = format!("您的订单已被标记为未完成");
-        if data.status == 3 {
-            status = 1;
-            msg_title = format!("您的订单已被标记为完成");
-        }
-        let row = sqlx::query!(
-            "SELECT love_point FROM users WHERE user_id = $1",
-            data.user_id
-        )
-        .fetch_one(&mut *transaction)
-        .await?;
-
-        sqlx::query!(
-            "UPDATE orders SET order_status = $1, finish_feedback = $3, finish_time = $4, finish_status = $5 WHERE order_id = $2",
-            data.status,
-            data.id,
-            data.finish_feedback,
-            chrono::Local::now(),
-            status
-        )
-        .execute(&mut *transaction)
-        .await?;
-
-        let balance = row.love_point.unwrap_or(0) + data.points.unwrap();
-        let mut transaction_type = "earn";
-        if data.status == 4 {
-            transaction_type = "deduct";
-        }
-
-        let mut description = "订单完成获得";
-        if data.status == 4 {
-            description = "订单未完成扣除";
-        }
-
-        sqlx::query!(
-            "UPDATE users SET love_point = $1 WHERE user_id = $2",
-            balance,
-            data.user_id,
-        )
-        .execute(&mut *transaction)
-        .await?;
-
-        log_points_transaction(
-            &mut transaction,
-            data.user_id.unwrap(),
-            data.points.unwrap(),
-            transaction_type,
-            balance,
-            description,
-            data.id,
-        )
-        .await?;
-    } else {
-        msg_title = "订单状态已改动".to_string();
-        sqlx::query!(
-            "UPDATE orders SET order_status = $1, revoke_time = $3 WHERE order_id = $2",
-            data.status,
-            data.id,
-            chrono::Local::now()
-        )
-        .execute(&mut *transaction)
-        .await?;
     }
+
     transaction.commit().await?;
 
-    if !user_token.user_info.clone().unwrap().push_id.is_none() {
-        let tp_record = sqlx::query!("SELECT * FROM templates WHERE templates.types = 'orders'")
+    // 发送通知
+    if let Some(user_info) = user_token.user_info {
+        if let Some(push_id) = user_info.push_id {
+            // 发送通知
+            let template_id = sqlx::query_scalar!(
+                "SELECT template_id FROM templates WHERE types = 'orders'"
+            )
             .fetch_one(db_pool)
             .await?;
 
-        let query = format!("SELECT food_name FROM orders_d d LEFT JOIN foods f ON d.food_id = f.food_id WHERE d.order_id = $1");
-
-        let result: Vec<String> = sqlx::query(&query)
-            .bind(order_record.order_id)
-            .fetch_all(db_pool)
-            .await?
-            .into_iter()
-            .map(|row| row.get("food_name"))
-            .collect();
-
-        let food_names = result.join(", ");
-
-        let tp_status;
-        if data.status == 1 {
-            tp_status = "已接单";
-        } else if data.status == 7 {
-            tp_status = "已拒绝";
-        } else if data.status == 3 {
-            tp_status = "已完成";
-        } else if data.status == 4 {
-            tp_status = "未完成";
-        } else {
-            tp_status = "未完成";
+            send_template(Json(TemplateMessage {
+                template_id,
+                push_id: push_id.to_string(),
+                msg_title: status.message_title(),
+                order_no: order_no.expect("REASON"),
+                date_time: Local::now().format("%Y-%m-%d %H:%M:%S").to_string(),
+                foods: food_names.unwrap_or_default(),
+                order_status: status.template_status().to_string(),
+            }))
+            .await?;
         }
-
-        let _ = send_template(Json(TemplateMessage {
-            template_id: tp_record.template_id.clone(),
-            push_id: user_token
-                .user_info
-                .clone()
-                .unwrap()
-                .push_id
-                .expect("no push id"),
-            msg_title,
-            order_no: order_record.order_no.clone().expect("REASON"),
-            date_time: Local::now().format("%Y-%m-%d %H:%M:%S").to_string(),
-            foods: food_names,
-            order_status: tp_status.to_string(),
-        }))
-        .await;
     }
 
     Ok(HttpResponse::Created().body("操作成功"))
+}
+
+pub async fn insert_footprints(
+    transaction: &mut Transaction<'_, Postgres>,
+    ship_id: i32,
+    foods: &str,
+    order_no: &str,
+    actions: &str,
+) -> Result<(), CustomError> {
+    sqlx::query!(
+        "INSERT INTO footprints (ship_id, foods, order_no, action) VALUES ($1, $2, $3, $4)",
+        ship_id,
+        foods,
+        order_no,
+        actions
+    )
+    .execute(&mut **transaction)
+    .await?;
+
+    Ok(())
 }
 
 pub async fn log_points_transaction(
