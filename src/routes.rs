@@ -59,6 +59,10 @@ pub fn route(_state: Arc<AppState>, cfg: &mut web::ServiceConfig) {
             web::scope("/foodclass")
             .route("", web::get().to(foods::view::all_food_class))
         )
+        .service( // 足迹
+            web::scope("/footprints")
+            .route("/{id}", web::get().to(orders::footprints::footprints_list))
+        )
         .service( // 菜品标签
             web::scope("/foodtag")
             .route("", web::get().to(foods::view::get_tags))

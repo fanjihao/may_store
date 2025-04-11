@@ -9,6 +9,8 @@ use ntex::web::{
 use sqlx::Row;
 use crate::{errors::CustomError, models::{orders::OrderDto, users:: UserToken, wx_official::TemplateMessage}, wx_official::send_to_user::send_template, AppState};
 
+use super::update::insert_footprints;
+
 #[utoipa::path(
     post,
     path = "/orders",
@@ -65,26 +67,38 @@ pub async fn create_order(
 
     // 执行查询
     sqlx::query(&query).execute(&mut *transaction).await?;
+
+    
+    let query = format!(
+        "SELECT food_name FROM foods WHERE food_id = ANY($1)"
+    );
+
+    let result: Vec<String> = sqlx::query(&query)
+        .bind(food_ids)  // 将所有 food_ids 绑定到查询中
+        .fetch_all(&mut *transaction)
+        .await?
+        .into_iter()
+        .map(|row| row.get("food_name"))
+        .collect();
+    
+    let food_names = result.join(", ");
+
+    let actions = format!("xxx 创建了 订单{} [ {} ]", &order_no, &food_names);
+    insert_footprints(
+        &mut transaction,
+        data.ship_id.unwrap(),
+        &food_names,
+        &order_no,
+        &actions
+    )
+    .await?;
+
     transaction.commit().await?;
 
     if !user_token.user_info.clone().unwrap().push_id.is_none() {
         let tp_record = sqlx::query!(
             "SELECT * FROM templates WHERE templates.types = 'orders'"
         ).fetch_one(db_pool).await?;
-
-        let query = format!(
-            "SELECT food_name FROM foods WHERE food_id = ANY($1)"
-        );
-    
-        let result: Vec<String> = sqlx::query(&query)
-            .bind(food_ids)  // 将所有 food_ids 绑定到查询中
-            .fetch_all(db_pool)
-            .await?
-            .into_iter()
-            .map(|row| row.get("food_name"))
-            .collect();
-        
-        let food_names = result.join(", ");
     
         let _ = send_template(Json(TemplateMessage {
             template_id: tp_record.template_id,
