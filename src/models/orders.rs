@@ -60,6 +60,7 @@ pub struct OrderListDto {
 pub struct OrderDto {
     pub user_id: i32,
     pub recv_id: Option<i32>,
+    pub ship_id: Option<i32>,
     pub goal_time: Option<DateTime<Utc>>,
     pub remarks: Option<String>,
     pub order_child: String,
@@ -84,9 +85,10 @@ pub struct UpdateOrder {
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct OrderFootprint {
+    pub id: Option<i32>,
     pub ship_id: Option<i32>,
     pub action: Option<String>,
-    pub order_id: Option<i32>,
+    pub order_no: Option<String>,
     pub foods: Option<String>,
     pub create_at: Option<DateTime<Utc>>
 }

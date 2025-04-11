@@ -171,7 +171,7 @@ pub async fn update_order(
             } else {
                 "未完成"
             };
-            let actions = format!("xxx {} 订单{} [ {} ]", desc, order_no.clone().unwrap_or_default(), food_names.clone().unwrap_or_default());
+            let actions = format!("xxx 将订单{} [ {} ] 标记为 {}", order_no.clone().unwrap_or_default(), food_names.clone().unwrap_or_default(), desc);
             insert_footprints(
                 &mut transaction,
                 data.ship_id.unwrap(),
