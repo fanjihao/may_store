@@ -90,6 +90,7 @@ use crate::upload::upload::*;
         order_collect,
         order_ranking,
         today_order,
+        lottery,
         // orders
         delete_order,
         create_order,

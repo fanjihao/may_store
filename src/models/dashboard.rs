@@ -30,3 +30,17 @@ pub struct TodayOrderOut {
     pub food_name: Option<String>,
     pub food_photo: Option<String>,
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct LotteryDto {
+    /// 用户ID，用于按用户筛选菜品（例如只获取自己的菜品）
+    pub user_id: i32,
+    /// 需要抽取的菜品类型数组（一个类型返回一个随机菜品）
+    pub food_types: Vec<i32>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct LotteryItemOut {
+    pub food_type: i32,
+    pub food: Option<crate::models::foods::FoodApplyStruct>,
+}

@@ -85,6 +85,7 @@ pub fn route(_state: Arc<AppState>, cfg: &mut web::ServiceConfig) {
             .route("/collect", web::get().to(dashboard::view::order_collect))
             .route("/today-order", web::get().to(dashboard::view::today_order))
             .route("/today-points", web::get().to(dashboard::view::today_points))
+            .route("/lottery", web::post().to(dashboard::view::lottery))
         )
         .service( // 心愿兑换
             web::scope("/wishes")
