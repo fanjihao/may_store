@@ -46,7 +46,7 @@ CREATE TABLE users (
     email VARCHAR(128),
     role user_role_enum NOT NULL DEFAULT 'ORDERING',
     love_point INT NOT NULL DEFAULT 0,
-    avatar VARCHAR(256),
+    avatar VARCHAR(256) NOT NULL DEFAULT 'https://img95.699pic.com/xsj/0f/d0/fo.jpg',
     phone VARCHAR(32),
     associate_id BIGINT,
     status SMALLINT NOT NULL DEFAULT 1,

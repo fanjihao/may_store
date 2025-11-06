@@ -49,13 +49,11 @@ pub async fn register(
 
     // 插入并返回所需列
     let inserted = sqlx::query_as::<_, UserRecord>(
-        "INSERT INTO users (username, email, avatar, password_hash, password_algo, gender, birthday, phone_verified, login_method, role, love_point, status, is_temp_password)
-         VALUES ($1, $2, $3, $4, $5, $6, NULL, FALSE, $7, $8, 0, 1, FALSE)
-         RETURNING user_id, username, email, role, love_point, avatar, phone, associate_id, status, created_at, updated_at, gender, birthday, phone_verified, login_method, last_login_at, password_hash, password_algo, password_updated_at, is_temp_password"
+        "INSERT INTO users (username, password_hash, password_algo, gender, birthday, phone_verified, login_method, role, love_point, status, is_temp_password)
+         VALUES ($1, $2, $3, $4, NULL, FALSE, $5, $6, 0, 1, FALSE)
+         RETURNING user_id, username, email, role, love_point, avatar, phone, associate_id, status, created_at, updated_at, password_hash, password_algo, gender, birthday, phone_verified, login_method, last_login_at, password_updated_at, is_temp_password, push_id, last_role_switch_at"
     )
         .bind(&data.username)
-        .bind(&data.email)
-        .bind(&data.avatar)
         .bind(&pwd_hash)
         .bind(&algo)
         .bind(GenderEnum::UNKNOWN)

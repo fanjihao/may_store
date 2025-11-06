@@ -42,7 +42,7 @@ pub async fn change_info(
 
     // 先读取用户
     let rec = sqlx::query_as::<_, UserRecord>(
-        "SELECT user_id, username, email, role, love_point, avatar, phone, associate_id, status, created_at, updated_at, gender, birthday, phone_verified, login_method, last_login_at, password_hash, password_algo, password_updated_at, is_temp_password FROM users WHERE username = $1"
+        "SELECT user_id, username, email, role, love_point, avatar, phone, associate_id, status, created_at, updated_at, gender, birthday, phone_verified, login_method, last_login_at, password_hash, password_algo, password_updated_at, is_temp_password, push_id, last_role_switch_at FROM users WHERE username = $1"
     )
         .bind(&data.username)
         .fetch_optional(db_pool)
@@ -88,7 +88,7 @@ pub async fn change_info(
 
     // 重新取更新后的公开信息
     let updated = sqlx::query_as::<_, UserRecord>(
-        "SELECT user_id, username, email, role, love_point, avatar, phone, associate_id, status, created_at, updated_at, gender, birthday, phone_verified, login_method, last_login_at, password_hash, password_algo, password_updated_at, is_temp_password FROM users WHERE username = $1"
+        "SELECT user_id, username, email, role, love_point, avatar, phone, associate_id, status, created_at, updated_at, gender, birthday, phone_verified, login_method, last_login_at, password_hash, password_algo, password_updated_at, is_temp_password, push_id, last_role_switch_at FROM users WHERE username = $1"
     )
         .bind(&data.username)
         .fetch_one(db_pool)

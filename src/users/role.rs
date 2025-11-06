@@ -39,12 +39,12 @@ pub async fn switch_role(
     let db = &state.db_pool;
     // 查找目标 group: 如果提供 group_id 则验证；否则自动找一个 pair 组
     let group_row_opt = if let Some(gid) = body.group_id {
-        sqlx::query("SELECT group_id, group_type FROM association_groups WHERE group_id=$1")
+        sqlx::query("SELECT group_id, group_type::TEXT AS group_type FROM association_groups WHERE group_id=$1")
             .bind(gid)
             .fetch_optional(db)
             .await?
     } else {
-        sqlx::query("SELECT g.group_id, g.group_type FROM association_groups g JOIN association_group_members m ON g.group_id=m.group_id WHERE m.user_id=$1 AND g.group_type='PAIR' LIMIT 1")
+        sqlx::query("SELECT g.group_id, g.group_type::TEXT AS group_type FROM association_groups g JOIN association_group_members m ON g.group_id=m.group_id WHERE m.user_id=$1 AND g.group_type='PAIR' LIMIT 1")
             .bind(token.user_id)
             .fetch_optional(db).await?
     };
@@ -52,13 +52,13 @@ pub async fn switch_role(
         return Err(CustomError::BadRequest("未找到可用的PAIR关联组".into()));
     };
     let group_id: i64 = group_row.get("group_id");
-    let gtype: String = group_row.get("group_type");
+    let gtype: String = group_row.try_get::<String, _>("group_type").unwrap_or_else(|_| "".into());
     if gtype != "PAIR" {
         return Err(CustomError::BadRequest("仅支持PAIR类型组内角色互换".into()));
     }
 
-    // 取组内两个成员
-    let members = sqlx::query("SELECT user_id, role_in_group FROM association_group_members WHERE group_id=$1 ORDER BY user_id")
+    // 取组内两个成员（枚举列转 TEXT 避免解码 panic）
+    let members = sqlx::query("SELECT user_id, role_in_group::TEXT AS role_in_group FROM association_group_members WHERE group_id=$1 ORDER BY user_id")
         .bind(group_id)
         .fetch_all(db).await?;
     if members.len() != 2 {
@@ -120,7 +120,7 @@ pub async fn switch_role(
     let mut tx = db.begin().await?;
     // 更新组内角色
     sqlx::query(
-        "UPDATE association_group_members SET role_in_group=$3 WHERE group_id=$1 AND user_id=$2",
+        "UPDATE association_group_members SET role_in_group=$3::group_member_role_enum WHERE group_id=$1 AND user_id=$2",
     )
     .bind(group_id)
     .bind(token.user_id)
@@ -128,7 +128,7 @@ pub async fn switch_role(
     .execute(&mut *tx)
     .await?;
     sqlx::query(
-        "UPDATE association_group_members SET role_in_group=$3 WHERE group_id=$1 AND user_id=$2",
+        "UPDATE association_group_members SET role_in_group=$3::group_member_role_enum WHERE group_id=$1 AND user_id=$2",
     )
     .bind(group_id)
     .bind(cp_uid)
@@ -137,14 +137,14 @@ pub async fn switch_role(
     .await?;
     // 更新全局用户角色
     sqlx::query(
-        "UPDATE users SET role=$2, last_role_switch_at=NOW(), updated_at=NOW() WHERE user_id=$1",
+        "UPDATE users SET role=$2::user_role_enum, last_role_switch_at=NOW(), updated_at=NOW() WHERE user_id=$1",
     )
     .bind(token.user_id)
     .bind(new_self_role)
     .execute(&mut *tx)
     .await?;
     sqlx::query(
-        "UPDATE users SET role=$2, last_role_switch_at=NOW(), updated_at=NOW() WHERE user_id=$1",
+        "UPDATE users SET role=$2::user_role_enum, last_role_switch_at=NOW(), updated_at=NOW() WHERE user_id=$1",
     )
     .bind(cp_uid)
     .bind(new_cp_role)
