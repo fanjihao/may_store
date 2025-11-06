@@ -14,6 +14,7 @@ use utoipa::ToSchema;
 pub enum CustomError {
     NotFound(String),
     InternalServerError(String),
+    InternalError(String),
     BadRequest(String),
     AuthFailed(String),
     RedisError(String)
@@ -24,6 +25,7 @@ impl WebResponseError for CustomError {
         match self {
             Self::NotFound(_) => StatusCode::NOT_FOUND,
             Self::InternalServerError(_) => StatusCode::INTERNAL_SERVER_ERROR,
+            Self::InternalError(_) => StatusCode::INTERNAL_SERVER_ERROR,
             Self::BadRequest(_) => StatusCode::BAD_REQUEST,
             Self::AuthFailed(_) => StatusCode::UNAUTHORIZED,
             Self::RedisError(_) => StatusCode::BAD_REQUEST,
@@ -38,6 +40,7 @@ impl WebResponseError for CustomError {
                     e
                 },
                 Self::InternalServerError(e) => e,
+                Self::InternalError(e) => e,
                 Self::BadRequest(e) => e,
                 Self::AuthFailed(e) => e,
                 Self::RedisError(e) => e,
@@ -54,6 +57,7 @@ impl fmt::Display for CustomError {
             CustomError::BadRequest(e) => write!(f, "{e}"),
             CustomError::AuthFailed(e) => write!(f, "{e}"),
             CustomError::InternalServerError(e) => write!(f, "{e}"),
+            CustomError::InternalError(e) => write!(f, "{e}"),
             CustomError::RedisError(e) => write!(f, "{e}"),
         }
     }

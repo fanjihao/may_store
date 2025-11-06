@@ -1,30 +1,30 @@
-mod errors;
 mod cache;
-mod utils;
+mod errors;
 mod models;
-mod upload;
+mod openapi;
+mod routes;
+mod utils;
+
+mod wx_official;
 mod users;
 mod foods;
 mod orders;
-mod wishes;
-mod dashboard;
-mod wx_official;
-mod openapi;
-mod routes;
+mod services; // 新增服务模块用于通知推送
+mod wishes; // 心愿与兑换模块
+mod dashboard; // 看板与组活动
 
+use cache::RedisCache;
 use dotenvy::dotenv;
 use errors::CustomError;
 use idgenerator::{IdGeneratorOptions, IdInstance};
 use ntex::web::{middleware, App, HttpServer};
-use orders::update::check_order_expiration;
 use sqlx::{postgres::PgPoolOptions, Pool, Postgres};
 use std::{env, sync::Arc};
-use cache::RedisCache;
 
 #[derive(Debug, Clone)]
 pub struct AppState {
     pub db_pool: Pool<Postgres>,
-    pub redis_cache: Arc<RedisCache>,  // 添加Redis缓存
+    pub redis_cache: Arc<RedisCache>, // 添加Redis缓存
 }
 
 #[ntex::main]
@@ -56,7 +56,7 @@ async fn main() -> Result<(), CustomError> {
             .max_connections(10)
             .connect(&db_url)
             .await?,
-        redis_cache
+        redis_cache,
     });
     let app_state_clone = Arc::clone(&app_state);
 
@@ -73,12 +73,11 @@ async fn main() -> Result<(), CustomError> {
     // 启动 HTTP 服务器
     let server_handle = tokio::spawn(server);
 
-    // 定时任务：每分钟检查订单失效时间
-    let task = tokio::spawn(check_order_expiration(app_state_clone));
+    // 定时任务：每分钟检查订单失效时间（30分钟未接单自动过期）
+    let expiration_handle = tokio::spawn(orders::expiration::run_expiration_worker(app_state_clone));
 
     // 等待 HTTP 服务器和定时任务完成
-    let _ = tokio::try_join!(server_handle, task)?;
+    let _ = tokio::try_join!(server_handle, expiration_handle)?;
 
     Ok(())
 }
-

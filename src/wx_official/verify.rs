@@ -1,16 +1,21 @@
 extern crate crypto;
 use std::sync::Arc;
 
-use crypto::sha1::Sha1;
 use crypto::digest::Digest;
+use crypto::sha1::Sha1;
 use ntex::web::types::{Query, State};
-use serde_xml_rs::from_str;
 use reqwest::Client;
+use serde_xml_rs::from_str;
 
-use crate::{errors::CustomError, models::wx_official::{Offical, Xml}, wx_official::auth::{fetch_set_access_token, get_access_token}, AppState};
+use crate::{
+    errors::CustomError,
+    models::wx_official::{Offical, Xml},
+    wx_official::auth::{fetch_set_access_token, get_access_token},
+    AppState,
+};
 
 // 服务器验证
-pub async fn wx_offical_account(data: Query<Offical>) -> Result<String, CustomError> {
+pub async fn wx_offical_username(data: Query<Offical>) -> Result<String, CustomError> {
     let mut hasher = Sha1::new();
     // 获取微信服务器发送过来的数据
     let timestamp = data.timestamp.as_ref().unwrap();
@@ -38,7 +43,10 @@ pub async fn wx_offical_account(data: Query<Offical>) -> Result<String, CustomEr
 }
 
 // 接收消息
-pub async fn wx_offical_received(data: String, state: State<Arc<AppState>>) -> Result<String, CustomError> {
+pub async fn wx_offical_received(
+    data: String,
+    state: State<Arc<AppState>>,
+) -> Result<String, CustomError> {
     let db_pool = &state.clone().db_pool;
 
     fetch_set_access_token().await?;
@@ -51,21 +59,18 @@ pub async fn wx_offical_received(data: String, state: State<Arc<AppState>>) -> R
     let content = xml.content.unwrap_or_default();
 
     if content.starts_with("绑定") && !already_reply {
-        let account = content.split(" ").skip(1).next();
-        let result = match account {
-            Some(account) => {
-                let sum = sqlx::query!(
-                    "SELECT COUNT(*) FROM users WHERE account = $1",
-                    account,
-                )
-                .fetch_one(db_pool)
-                .await?;
-            
+        let username = content.split(" ").skip(1).next();
+        let result = match username {
+            Some(username) => {
+                let sum = sqlx::query!("SELECT COUNT(*) FROM users WHERE username = $1", username,)
+                    .fetch_one(db_pool)
+                    .await?;
+
                 if sum.count.unwrap() > 0_i64 {
                     sqlx::query!(
-                        "UPDATE users SET push_id = $1 WHERE account = $2",
+                        "UPDATE users SET push_id = $1 WHERE username = $2",
                         from_user_name,
-                        account,
+                        username,
                     )
                     .execute(db_pool)
                     .await?;
@@ -73,8 +78,8 @@ pub async fn wx_offical_received(data: String, state: State<Arc<AppState>>) -> R
                 } else {
                     "该账户不存在"
                 }
-            },
-            None => "解析账号失败"
+            }
+            None => "解析账号失败",
         };
 
         let client = Client::new();
@@ -95,7 +100,8 @@ pub async fn wx_offical_received(data: String, state: State<Arc<AppState>>) -> R
             .await?
             .text()
             .await?;
-        let response_json: Result<serde_json::Value, serde_json::Error> = serde_json::from_str(&res);
+        let response_json: Result<serde_json::Value, serde_json::Error> =
+            serde_json::from_str(&res);
         match response_json {
             Ok(obj) => {
                 if let Some(val) = obj.get("errmsg") {
@@ -121,9 +127,7 @@ pub async fn wx_offical_create_menu() -> Result<String, CustomError> {
     let client = Client::new();
     let token = get_access_token().await;
     let token = match token {
-        Some(token) => {
-            token
-        },
+        Some(token) => token,
         None => {
             fetch_set_access_token().await?;
             let new_token = get_access_token().await.unwrap();

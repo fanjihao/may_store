@@ -1,421 +1,199 @@
-use chrono::{DateTime, Duration, Local, Utc};
-use ntex::web::{
-    types::{Json, State},
-    HttpResponse, Responder,
-};
+use chrono::Utc;
+use ntex::web::{types::{Json, State}, HttpResponse, Responder};
 use sqlx::Row;
-use sqlx::{Postgres, Transaction};
 use std::sync::Arc;
-use tokio::time;
-
 use crate::{
     errors::CustomError,
-    models::{orders::UpdateOrder, users::UserToken, wx_official::TemplateMessage},
-    wx_official::send_to_user::send_template,
-    AppState,
+    models::{
+        orders::{OrderStatusUpdateInput, OrderStatusEnum, OrderRecord, OrderItemRecord, OrderItemOut, OrderStatusHistoryOut, OrderOutNew},
+        users::UserToken,
+    },
+    AppState
 };
-
-#[derive(Debug, Copy, Clone, PartialEq)]
-enum OrderStatus {
-    Pending = 0,
-    Accepted = 1,
-    Expired = 2,
-    Completed = 3,
-    Incomplete = 4,
-    Rejected = 7,
-}
-
-impl OrderStatus {
-    fn from_i32(value: i32) -> Option<Self> {
-        match value {
-            0 => Some(Self::Pending),
-            1 => Some(Self::Accepted),
-            2 => Some(Self::Expired),
-            3 => Some(Self::Completed),
-            4 => Some(Self::Incomplete),
-            7 => Some(Self::Rejected),
-            _ => None,
-        }
-    }
-
-    fn message_title(&self) -> String {
-        match self {
-            Self::Accepted => "您的订单已被接单".to_string(),
-            Self::Rejected => "您的订单已被拒绝".to_string(),
-            Self::Completed => "您的订单已被标记为完成".to_string(),
-            Self::Incomplete => "您的订单已被标记为未完成".to_string(),
-            _ => "订单状态已改动".to_string(),
-        }
-    }
-
-    fn template_status(&self) -> &'static str {
-        match self {
-            Self::Accepted => "已接单",
-            Self::Rejected => "已拒绝",
-            Self::Completed => "已完成",
-            Self::Incomplete => "未完成",
-            _ => "未完成",
-        }
-    }
-}
-
-struct PointsOperation {
-    points: i32,
-    transaction_type: &'static str,
-    description: &'static str,
-}
-
-impl PointsOperation {
-    fn for_status(status: OrderStatus, points: i32) -> Option<Self> {
-        match status {
-            OrderStatus::Completed => Some(Self {
-                points,
-                transaction_type: "earn",
-                description: "订单完成获得",
-            }),
-            OrderStatus::Incomplete => Some(Self {
-                points,
-                transaction_type: "deduct",
-                description: "订单未完成扣除",
-            }),
-            _ => None,
-        }
-    }
-}
 
 #[utoipa::path(
     put,
-    path = "/orders",
+    path = "/orders/status",
     tag = "订单",
-    request_body = UpdateOrder,
-    responses(
-        (status = 200, body = String, description = "操作成功")
-    )
+    request_body = OrderStatusUpdateInput,
+    responses((status = 200, body = OrderOutNew))
 )]
-pub async fn update_order(
+pub async fn update_order_status(
     user_token: UserToken,
-    data: Json<UpdateOrder>,
     state: State<Arc<AppState>>,
+    data: Json<OrderStatusUpdateInput>,
 ) -> Result<impl Responder, CustomError> {
-    let db_pool = &state.clone().db_pool;
-    let mut transaction = db_pool.begin().await?;
+    let db = &state.db_pool;
+    let mut tx = db.begin().await?;
 
-    let (order_no, food_names) = tokio::try_join!(
-        sqlx::query_scalar!(
-            "SELECT order_no FROM orders WHERE order_id = $1",
-            data.id
-        )
-        .fetch_one(db_pool),
-        sqlx::query_scalar!(
-            "SELECT string_agg(f.food_name, ', ') 
-            FROM orders_d d 
-            LEFT JOIN foods f ON d.food_id = f.food_id 
-            WHERE d.order_id = $1
-            GROUP BY d.order_id",
-            data.id
-        )
-        .fetch_one(db_pool)
-    )?;
+    // 当前订单
+    let current: Option<OrderRecord> = sqlx::query_as::<_, OrderRecord>(
+        "SELECT order_id, user_id, receiver_id, group_id, status, goal_time, points_cost, points_reward, cancel_reason, reject_reason, last_status_change_at, created_at, updated_at FROM orders WHERE order_id=$1 FOR UPDATE"
+    )
+    .bind(data.order_id)
+    .fetch_optional(&mut *tx)
+    .await?;
+    let mut order = match current { Some(o) => o, None => { tx.rollback().await.ok(); return Err(CustomError::BadRequest("订单不存在".into())); } };
+    let from_status = order.status;
 
-    // 获取订单状态
-    let status = OrderStatus::from_i32(data.status)
-        .ok_or_else(|| CustomError::BadRequest("Invalid order status".into()))?;
-    
-    // 更新订单状态
-    match status {
-        OrderStatus::Accepted | OrderStatus::Rejected => {
-            let approval_status = if matches!(status, OrderStatus::Accepted) { 1 } else { 0 };
-            sqlx::query!(
-                "UPDATE orders SET order_status = $1, approval_feedback = $3, approval_time = $4, approval_status = $5 WHERE order_id = $2",
-                data.status,
-                data.id,
-                data.approval_feedback,
-                Local::now(),
-                approval_status
+    if order.status == data.to_status { tx.rollback().await.ok(); return Err(CustomError::BadRequest("状态未变化".into())); }
+    if !order.status.can_transition(data.to_status) { tx.rollback().await.ok(); return Err(CustomError::BadRequest("非法状态流转".into())); }
+
+    // 更新 order 主表
+    match data.to_status {
+        OrderStatusEnum::REJECTED => {
+            sqlx::query(
+                "UPDATE orders SET status=$2, reject_reason=$3, last_status_change_at=NOW(), updated_at=NOW() WHERE order_id=$1"
             )
-            .execute(&mut *transaction)
+            .bind(order.order_id)
+            .bind(data.to_status)
+            .bind(&data.remark)
+            .execute(&mut *tx)
             .await?;
-        
-            let desc = if data.status == 1 {
-                "接受了"
-            } else {
-                "拒绝了"
-            };
-            let actions = format!("xxx {} 订单{} [ {} ]", desc, order_no.clone().unwrap_or_default(), food_names.clone().unwrap_or_default());
-            insert_footprints(
-                &mut transaction,
-                data.ship_id.unwrap(),
-                &food_names.clone().unwrap_or_default(),
-                &order_no.clone().unwrap_or_default(),
-                &actions
+            order.reject_reason = data.remark.clone();
+        }
+        OrderStatusEnum::CANCELLED => {
+            sqlx::query(
+                "UPDATE orders SET status=$2, cancel_reason=$3, last_status_change_at=NOW(), updated_at=NOW() WHERE order_id=$1"
             )
+            .bind(order.order_id)
+            .bind(data.to_status)
+            .bind(&data.remark)
+            .execute(&mut *tx)
             .await?;
-        },
-        OrderStatus::Completed | OrderStatus::Incomplete => {
-            let finish_status = if matches!(status, OrderStatus::Completed) { 1 } else { 0 };
-            
-            // 更新订单状态
-            sqlx::query!(
-                "UPDATE orders SET order_status = $1, finish_feedback = $3, finish_time = $4, finish_status = $5 WHERE order_id = $2",
-                data.status,
-                data.id,
-                data.finish_feedback,
-                Local::now(),
-                finish_status
-            )
-            .execute(&mut *transaction)
-            .await?;
-
-            let desc = if data.status == 3 {
-                "完成了"
-            } else {
-                "未完成"
-            };
-            let actions = format!("xxx 将订单{} [ {} ] 标记为 {}", order_no.clone().unwrap_or_default(), food_names.clone().unwrap_or_default(), desc);
-            insert_footprints(
-                &mut transaction,
-                data.ship_id.unwrap(),
-                &food_names.clone().unwrap_or_default(),
-                &order_no.clone().unwrap_or_default(),
-                &actions
-            )
-            .await?;
-
-            // 处理积分
-            if let (Some(user_id), Some(points)) = (data.user_id, data.points) {
-                let row = sqlx::query!(
-                    "SELECT love_point FROM users WHERE user_id = $1",
-                    user_id
-                )
-                .fetch_one(&mut *transaction)
-                .await?;
-
-                let current_points = row.love_point.unwrap_or(0);
-                let balance = match status {
-                    OrderStatus::Completed => current_points + points,
-                    _ => current_points - points
-                };
-
-                if let Some(points_op) = PointsOperation::for_status(status, points) {
-                    log_points_transaction(
-                        &mut transaction,
-                        user_id,
-                        points,
-                        points_op.transaction_type,
-                        balance,
-                        points_op.description,
-                        data.id,
-                    )
-                    .await?;
-                }
-            }
-        },
+            order.cancel_reason = data.remark.clone();
+        }
         _ => {
-            let actions = format!("xxx 撤回了 订单{} [ {} ]", order_no.clone().unwrap_or_default(), food_names.clone().unwrap_or_default());
-            insert_footprints(
-                &mut transaction,
-                data.ship_id.unwrap(),
-                &food_names.clone().unwrap_or_default(),
-                &order_no.clone().unwrap_or_default(),
-                &actions
+            sqlx::query(
+                "UPDATE orders SET status=$2, last_status_change_at=NOW(), updated_at=NOW() WHERE order_id=$1"
             )
-            .await?;
-
-            sqlx::query!(
-                "UPDATE orders SET order_status = $1, revoke_time = $3 WHERE order_id = $2",
-                data.status,
-                data.id,
-                Local::now()
-            )
-            .execute(&mut *transaction)
+            .bind(order.order_id)
+            .bind(data.to_status)
+            .execute(&mut *tx)
             .await?;
         }
     }
+    order.status = data.to_status;
+    order.last_status_change_at = Some(Utc::now());
 
-    transaction.commit().await?;
-
-    // 发送通知
-    if let Some(user_info) = user_token.user_info {
-        if let Some(push_id) = user_info.push_id {
-            // 发送通知
-            let template_id = sqlx::query_scalar!(
-                "SELECT template_id FROM templates WHERE types = 'orders'"
-            )
-            .fetch_one(db_pool)
-            .await?;
-
-            send_template(Json(TemplateMessage {
-                template_id,
-                push_id: push_id.to_string(),
-                msg_title: status.message_title(),
-                order_no: order_no.expect("REASON"),
-                date_time: Local::now().format("%Y-%m-%d %H:%M:%S").to_string(),
-                foods: food_names.unwrap_or_default(),
-                order_status: status.template_status().to_string(),
-            }))
-            .await?;
+    // 积分奖励处理（完成时）
+    if data.to_status == OrderStatusEnum::FINISHED {
+        if let Some(points) = data.points_reward.or(Some(order.points_reward)).filter(|p| *p > 0) {
+            // 获取当前积分并更新
+            if let Ok(user_row) = sqlx::query("SELECT love_point FROM users WHERE user_id=$1")
+                .bind(order.user_id)
+                .fetch_one(&mut *tx)
+                .await {
+                let current_lp: i32 = user_row.get("love_point");
+                let balance_after = current_lp + points;
+                sqlx::query("INSERT INTO point_transactions (user_id, amount, type, ref_type, ref_id, balance_after) VALUES ($1,$2,'FINISH_REWARD',1,$3,$4)")
+                    .bind(order.user_id)
+                    .bind(points)
+                    .bind(order.order_id)
+                    .bind(balance_after)
+                    .execute(&mut *tx)
+                    .await?;
+                sqlx::query("UPDATE users SET love_point=$2 WHERE user_id=$1")
+                    .bind(order.user_id)
+                    .bind(balance_after)
+                    .execute(&mut *tx)
+                    .await?;
+                order.points_reward = points; // reflect final awarded points
+            }
         }
     }
 
-    Ok(HttpResponse::Created().body("操作成功"))
-}
+    // 记录历史
+    sqlx::query("INSERT INTO order_status_history (order_id, from_status, to_status, changed_by, remark) VALUES ($1,$2,$3,$4,$5)")
+        .bind(order.order_id)
+        .bind(from_status)
+        .bind(data.to_status)
+        .bind(user_token.user_id as i64)
+        .bind(&data.remark)
+        .execute(&mut *tx)
+        .await?;
 
-pub async fn insert_footprints(
-    transaction: &mut Transaction<'_, Postgres>,
-    ship_id: i32,
-    foods: &str,
-    order_no: &str,
-    actions: &str,
-) -> Result<(), CustomError> {
-    sqlx::query!(
-        "INSERT INTO footprints (ship_id, foods, order_no, action) VALUES ($1, $2, $3, $4)",
-        ship_id,
-        foods,
-        order_no,
-        actions
+    // 查询 items
+    let item_rows: Vec<OrderItemRecord> = sqlx::query_as::<_, OrderItemRecord>(
+        "SELECT id, order_id, food_id, quantity, price, snapshot_json, created_at FROM order_items WHERE order_id=$1"
     )
-    .execute(&mut **transaction)
+    .bind(order.order_id)
+    .fetch_all(&mut *tx)
     .await?;
-
-    Ok(())
-}
-
-pub async fn log_points_transaction(
-    transaction: &mut Transaction<'_, Postgres>,
-    user_id: i32,
-    points: i32,
-    transaction_type: &str,
-    balance: i32,
-    description: &str,
-    bind_id: i32,
-) -> Result<(), CustomError> {
-    sqlx::query!(
-        "INSERT INTO points_history (user_id, points, transaction_type, balance, description, bind_id) VALUES ($1, $2, $3, $4, $5, $6)",
-        user_id,
-        points,
-        transaction_type,
-        balance,
-        description,
-        bind_id
-    )
-    .execute(&mut **transaction)
-    .await?;
-
-    sqlx::query!(
-        "UPDATE users SET love_point = $2 WHERE user_id = $1",
-        user_id,
-        balance,
-    )
-    .execute(&mut **transaction)
-    .await?;
-
-    Ok(())
-}
-
-// 定时任务用来查询失效订单的
-pub async fn check_order_expiration(state: Arc<AppState>) {
-    loop {
-        let now = Local::now();
-        // 查询数据库，找出已经过期的订单
-        let expired_orders = query_expired_orders(now.into(), &state).await;
-
-        // 处理过期订单，例如取消订单、释放库存、通知用户等
-        let _ = process_expired_orders(expired_orders, &state).await;
-
-        // // 等待一段时间后再次检查
-        let sleep_duration = Duration::minutes(1).to_std().unwrap();
-        time::sleep(sleep_duration).await;
+    let mut items_out: Vec<OrderItemOut> = Vec::new();
+    for ir in item_rows {
+        let food = sqlx::query("SELECT food_name, food_photo FROM foods WHERE food_id=$1")
+            .bind(ir.food_id)
+            .fetch_optional(&mut *tx)
+            .await?;
+        let (name_opt, photo_opt) = food
+            .map(|r| (r.get::<String, _>("food_name"), r.get::<Option<String>, _>("food_photo")))
+            .map(|(n, p)| (Some(n), p))
+            .unwrap_or((None, None));
+        items_out.push(OrderItemOut {
+            id: ir.id,
+            food_id: ir.food_id,
+            food_name: name_opt,
+            food_photo: photo_opt,
+            quantity: ir.quantity,
+            price: ir.price,
+        });
     }
-}
-struct ExpiredOrder {
-    order_id: i32,
-    order_no: Option<String>,
-    user_id: Vec<i32>,
-}
-async fn query_expired_orders(now: DateTime<Utc>, state: &Arc<AppState>) -> Vec<ExpiredOrder> {
-    let db_pool = &state.clone().db_pool;
-    let expiration_threshold = now - Duration::minutes(30); // 假设失效时间为30分钟前
 
-    // 执行数据库查询，找出已经过期的订单
-    let expired_orders = sqlx::query!(
-        "SELECT * FROM orders WHERE create_date < $1 and order_status = 0 and order_status != 2",
-        expiration_threshold
+    // 历史列表
+    let history_rows: Vec<OrderStatusHistoryOut> = sqlx::query(
+        "SELECT from_status::text, to_status::text, changed_by, remark, changed_at FROM order_status_history WHERE order_id=$1 ORDER BY changed_at"
     )
-    .fetch_all(db_pool)
-    .await
-    .unwrap()
-    .iter()
-    .map(|i| ExpiredOrder {
-        order_id: i.order_id,
-        order_no: i.order_no.clone(),
-        user_id: [i.recv_user_id, i.create_user_id]
-            .into_iter()
-            .flatten()
-            .collect(),
+    .bind(order.order_id)
+    .fetch_all(&mut *tx)
+    .await?
+    .into_iter()
+    .map(|row| {
+        let from_s = row.get::<Option<String>, _>("from_status")
+            .and_then(|s| match s.as_str() {
+                "PENDING" => Some(OrderStatusEnum::PENDING),
+                "ACCEPTED" => Some(OrderStatusEnum::ACCEPTED),
+                "FINISHED" => Some(OrderStatusEnum::FINISHED),
+                "CANCELLED" => Some(OrderStatusEnum::CANCELLED),
+                "EXPIRED" => Some(OrderStatusEnum::EXPIRED),
+                "REJECTED" => Some(OrderStatusEnum::REJECTED),
+                "SYSTEM_CLOSED" => Some(OrderStatusEnum::SYSTEM_CLOSED),
+                _ => None,
+            });
+        let to_s_str: String = row.get("to_status");
+        let to_s = match to_s_str.as_str() {
+            "PENDING" => OrderStatusEnum::PENDING,
+            "ACCEPTED" => OrderStatusEnum::ACCEPTED,
+            "FINISHED" => OrderStatusEnum::FINISHED,
+            "CANCELLED" => OrderStatusEnum::CANCELLED,
+            "EXPIRED" => OrderStatusEnum::EXPIRED,
+            "REJECTED" => OrderStatusEnum::REJECTED,
+            "SYSTEM_CLOSED" => OrderStatusEnum::SYSTEM_CLOSED,
+            _ => OrderStatusEnum::PENDING,
+        };
+        OrderStatusHistoryOut {
+            from_status: from_s,
+            to_status: to_s,
+            changed_by: row.get::<Option<i64>, _>("changed_by"),
+            remark: row.get::<Option<String>, _>("remark"),
+            changed_at: row.get::<chrono::DateTime<Utc>, _>("changed_at")
+        }
     })
     .collect();
 
-    return expired_orders;
-}
+    tx.commit().await?;
 
-async fn process_expired_orders(
-    expired_orders: Vec<ExpiredOrder>,
-    state: &Arc<AppState>,
-) -> Result<(), CustomError> {
-    if expired_orders.len() > 0 {
-        let db_pool = &state.clone().db_pool;
-
-        let mut ids = Vec::new();
-        for value in &expired_orders[0..] {
-            ids.push(value.order_id);
-        }
-        // 使用一个SQL语句批量更新订单状态
-        sqlx::query!(
-            "UPDATE orders SET order_status = 2 WHERE order_id = ANY($1)",
-            &ids
-        )
-        .execute(db_pool)
-        .await
-        .expect("处理过期订单失败");
-
-        let tp_record = sqlx::query!("SELECT * FROM templates WHERE templates.types = 'orders'")
-            .fetch_one(db_pool)
-            .await
-            .unwrap();
-
-        for value in &expired_orders[0..] {
-            // 在这里执行其他操作，例如释放库存、通知用户等
-            let record = sqlx::query!(
-                "SELECT * FROM users WHERE user_id = ANY($1)",
-                &value.user_id
-            )
-            .fetch_one(db_pool)
-            .await
-            .unwrap();
-
-            let query = format!("SELECT food_name FROM orders_d d LEFT JOIN foods f ON d.food_id = f.food_id WHERE d.order_id = ANY($1)");
-
-            let result: Vec<String> = sqlx::query(&query)
-                .bind(&ids)
-                .fetch_all(db_pool)
-                .await?
-                .into_iter()
-                .map(|row| row.get("food_name"))
-                .collect();
-
-            let food_names = result.join(", ");
-
-            let _ = send_template(Json(TemplateMessage {
-                template_id: tp_record.template_id.clone(),
-                push_id: record.push_id.expect("no push id"),
-                msg_title: format!("您的订单时间太长未接单！"),
-                order_no: value.order_no.clone().expect("REASON"),
-                date_time: Local::now().format("%Y-%m-%d %H:%M:%S").to_string(),
-                foods: food_names,
-                order_status: "已过期".to_string(),
-            }))
-            .await;
-        }
+    // 异步推送状态更新
+    {
+        let pool_clone = state.db_pool.clone();
+        let oid = order.order_id;
+        tokio::spawn(async move {
+            if let Err(e) = crate::services::notifications::push_order_status(oid, pool_clone).await {
+                log::warn!("order status update push error: {}", e);
+            }
+        });
     }
-    Ok(())
+
+    let out = OrderOutNew::from((order, items_out, history_rows));
+    Ok(HttpResponse::Ok().json(&out))
 }

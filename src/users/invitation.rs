@@ -1,202 +1,279 @@
-use std::sync::Arc;
-use ntex::web::{
-    types::{Json, Path, Query, State}, HttpResponse, Responder
-};
 use crate::{
-    errors::CustomError, models::{
-        invitation::{BindStruct, Invitation},
-        users::{UserInfo, UserToken}
-    }, AppState
+    errors::CustomError,
+    models::{
+        invitation::{ConfirmInvitationInput, InvitationListOut, InvitationRequestOut, NewInvitationInput},
+        users::UserToken,
+    },
+    AppState,
 };
+use chrono::Utc;
+use ntex::web::{
+    types::{Json, Path, State},
+    HttpResponse, Responder,
+};
+use sqlx::FromRow;
+use std::sync::Arc;
+
+// 内部查询结构体（不暴露到 OpenAPI）
+#[derive(FromRow)]
+struct RequestRow { request_id: i64, requester_id: i64, target_user_id: i64, status: i16 }
+#[derive(FromRow)]
+struct RoleRow { user_id: i64, role: crate::models::users::UserRoleEnum }
+#[derive(FromRow)]
+struct CancelRow { request_id: i64, requester_id: i64, status: i16 }
 
 #[utoipa::path(
     get,
     path = "/invitation",
-    params(
-        ("user_id" = Option<i32>, Query, description = "用户Id"),
-    ),
     tag = "用户",
+    summary = "获取当前用户的邀请列表（incoming/outgoing）",
     responses(
-        (status = 201, body = Vec<Invitation>),
-        (status = 400, body = CustomError, example = json!(CustomError::BadRequest("参数错误".to_string())))
+        (status = 200, body = InvitationListOut),
+        (status = 401, body = CustomError)
     ),
-    security(
-        ("cookie_auth" = [])
-    )
+    security(("cookie_auth" = []))
 )]
 pub async fn get_invitation(
-    user_token: UserToken,
-    data: Query<UserInfo>,
+    token: UserToken,
     state: State<Arc<AppState>>,
 ) -> Result<impl Responder, CustomError> {
-    let db_pool = &state.clone().db_pool;
-    println!("user_token: {:?}", user_token);
-
-
-    let ship = sqlx::query_as!(
-        Invitation,
-        "SELECT
-            s.*,
-            wu.nick_name as send_name, wu.avatar as send_avatar, wu.role as send_role,
-            rece.nick_name as bind_name, rece.avatar as bind_avatar, rece.role as bind_role
-        FROM
-            user_ships s
-            LEFT JOIN users wu ON s.user_id = wu.user_id
-            LEFT JOIN users rece ON s.bind_id = rece.user_id
-        WHERE s.bind_id = $1 OR s.user_id = $1
-        ORDER BY bind_date DESC",
-        data.user_id
+    let db = &state.db_pool;
+    let uid = token.user_id;
+    let outgoing = sqlx::query_as::<_, InvitationRequestOut>(
+        "SELECT request_id, requester_id, target_user_id, status, remark, created_at, handled_at FROM association_group_requests WHERE requester_id = $1 ORDER BY request_id DESC"
     )
-    .fetch_all(db_pool)
+    .bind(uid)
+    .fetch_all(db)
     .await?;
 
-    Ok(Json(ship))
-}
+    let incoming = sqlx::query_as::<_, InvitationRequestOut>(
+        "SELECT request_id, requester_id, target_user_id, status, remark, created_at, handled_at FROM association_group_requests WHERE target_user_id = $1 ORDER BY request_id DESC"
+    )
+    .bind(uid)
+    .fetch_all(db)
+    .await?;
 
+    Ok(Json(InvitationListOut { incoming, outgoing }))
+}
 
 #[utoipa::path(
     post,
     path = "/invitation",
-    request_body = Invitation,
     tag = "用户",
+    summary = "发起绑定邀请",
+    request_body = NewInvitationInput,
     responses(
-        (status = 201, body = String),
-        (status = 400, body = CustomError, example = json!(CustomError::BadRequest("参数错误".to_string())))
+        (status = 201, body = InvitationRequestOut),
+        (status = 400, body = CustomError),
+        (status = 401, body = CustomError)
     ),
-    security(
-        ("cookie_auth" = [])
-    )
+    security(("cookie_auth" = []))
 )]
 pub async fn new_invitation(
-    _: UserToken,
-    data: Json<Invitation>,
+    token: UserToken,
+    data: Json<NewInvitationInput>,
     state: State<Arc<AppState>>,
 ) -> Result<impl Responder, CustomError> {
-    let db_pool = &state.clone().db_pool;
+    let db = &state.db_pool;
+    let uid = token.user_id;
+    let target = data.target_user_id;
+    if uid == target { return Err(CustomError::BadRequest("不能邀请自己".into())); }
 
-    let date = chrono::Utc::now();
-
-    let record = sqlx::query!(
-        "SELECT COUNT(*) FROM user_ships WHERE ship_status = 1 AND (bind_id = $1 OR user_id = $1)",
-        data.bind_id
-    ).fetch_one(db_pool).await?;
-
-    let count = match record.count {
-        Some(count) => {
-            count
-        },
-        None => 0
-    };
-    if count > 0_i64 {
-        Err(CustomError::BadRequest("该用户已存在绑定关系".to_string()))
-    } else {
-        sqlx::query!(
-            "INSERT INTO user_ships (user_id, bind_id, bind_date) VALUES ($1, $2, $3)",
-            data.user_id,
-            data.bind_id,
-            date.date_naive()
-        )
-        .execute(db_pool)
+    let target_exists = sqlx::query_scalar::<_, i64>("SELECT user_id FROM users WHERE user_id = $1 AND status = 1")
+        .bind(target)
+        .fetch_optional(db)
         .await?;
-    
-        let _record = sqlx::query!(
-            "SELECT * FROM users WHERE user_id = $1",
-            data.bind_id
-        ).fetch_one(db_pool).await?;
-    
-        // let _ = send_template(Json(TemplateMessage {
-        //     template_id: "-rnlOjKqvvuhIjKysIrTlzW0x-M_iryCNjQvLT58VuQ".to_string(),
-        //     push_id: record.push_id.expect("no push id"),
-        //     date: Some("2024年8月16日".to_string()),
-        //     city: Some("成都市".to_string()),
-        //     weather: Some("多云".to_string()),
-        //     low: Some("23°".to_string()),
-        //     high: Some("33°".to_string()),
-        //     love_days: Some("899天".to_string()),
-        //     birthdays: Some("()".to_string()),
-        // })).await;
-        Ok(HttpResponse::Created().body("发送成功"))
-    }
+    if target_exists.is_none() { return Err(CustomError::BadRequest("目标用户不存在或被禁用".into())); }
+
+    let exists_pending = sqlx::query_scalar::<_, i64>(
+        "SELECT request_id FROM association_group_requests WHERE ((requester_id=$1 AND target_user_id=$2) OR (requester_id=$2 AND target_user_id=$1)) AND status = 0"
+    )
+    .bind(uid)
+    .bind(target)
+    .fetch_optional(db)
+    .await?;
+    if exists_pending.is_some() { return Err(CustomError::BadRequest("已存在待处理邀请".into())); }
+
+    let paired = sqlx::query_scalar::<_, i64>(
+        "SELECT ag.group_id FROM association_groups ag JOIN association_group_members m1 ON ag.group_id = m1.group_id JOIN association_group_members m2 ON ag.group_id = m2.group_id WHERE ag.group_type='PAIR' AND m1.user_id=$1 AND m2.user_id=$2 LIMIT 1"
+    )
+    .bind(uid)
+    .bind(target)
+    .fetch_optional(db)
+    .await?;
+    if paired.is_some() { return Err(CustomError::BadRequest("已绑定，不能重复邀请".into())); }
+
+    let rec = sqlx::query_as::<_, InvitationRequestOut>(
+        "INSERT INTO association_group_requests (requester_id, target_user_id, remark) VALUES ($1,$2,$3) RETURNING request_id, requester_id, target_user_id, status, remark, created_at, handled_at"
+    )
+    .bind(uid)
+    .bind(target)
+    .bind(data.remark.clone())
+    .fetch_one(db)
+    .await?;
+
+    Ok(HttpResponse::Created().json(&rec))
 }
 
 #[utoipa::path(
     put,
     path = "/invitation/{id}",
-    params(
-        ("id" = i32, Path, description = "邀请ID"),
-    ),
-    request_body = BindStruct,
     tag = "用户",
+    summary = "确认或拒绝邀请 (accept=true 同意)",
+    params(("id" = i64, Path, description = "邀请ID")),
+    request_body = ConfirmInvitationInput,
     responses(
-        (status = 201, body = String),
-        (status = 400, body = CustomError, example = json!(CustomError::BadRequest("参数错误".to_string())))
+        (status = 200, body = InvitationRequestOut),
+        (status = 400, body = CustomError),
+        (status = 401, body = CustomError)
     ),
-    security(
-        ("cookie_auth" = [])
-    )
+    security(("cookie_auth" = []))
 )]
 pub async fn confirm_invitation(
-    _: UserToken,
-    id: Path<(i32,)>,
-    data: Json<BindStruct>,
-    state: State<Arc<AppState>>
+    token: UserToken,
+    id: Path<(i64,)>,
+    data: Json<ConfirmInvitationInput>,
+    state: State<Arc<AppState>>,
 ) -> Result<impl Responder, CustomError> {
-    let db_pool = &state.clone().db_pool;
-    let mut transaction = db_pool.begin().await?;
-
-    let date = chrono::Utc::now();
-    sqlx::query!(
-        "UPDATE user_ships SET ship_status = 1, update_date = $2 WHERE ship_id = $1", 
-        id.0,
-        date
-    ).execute(&mut *transaction)
+    let db = &state.db_pool;
+    let mut tx = db.begin().await?;
+    // 读取请求并锁定行，确保并发安全
+    let req_opt = sqlx::query_as::<_, RequestRow>(
+        "SELECT request_id, requester_id, target_user_id, status FROM association_group_requests WHERE request_id=$1 FOR UPDATE"
+    )
+    .bind(id.0)
+    .fetch_optional(&mut *tx)
     .await?;
+    let req = match req_opt {
+        Some(r) => r,
+        None => {
+            tx.rollback().await.ok();
+            return Err(CustomError::BadRequest("邀请不存在".into()));
+        }
+    };
+    if req.target_user_id != token.user_id {
+        tx.rollback().await.ok();
+        return Err(CustomError::BadRequest("无权限操作该邀请".into()));
+    }
+    if req.status != 0 {
+        tx.rollback().await.ok();
+        return Err(CustomError::BadRequest("邀请已处理".into()));
+    }
 
-    sqlx::query!(
-        "UPDATE users SET associate_id = $1 WHERE user_id = $2", 
-        data.bind_id,
-        data.user_id
-    ).execute(&mut *transaction)
+    let now = Utc::now();
+    let new_status: i16 = if data.accept { 1 } else { 2 };
+    sqlx::query("UPDATE association_group_requests SET status=$2, handled_at=$3 WHERE request_id=$1")
+        .bind(req.request_id)
+        .bind(new_status)
+        .bind(now)
+        .execute(&mut *tx)
+        .await?;
+
+    if data.accept {
+        // 查是否已存在配对组
+        let existing_pair = sqlx::query_scalar::<_, i64>(
+            "SELECT ag.group_id FROM association_groups ag \n             JOIN association_group_members m1 ON ag.group_id = m1.group_id \n             JOIN association_group_members m2 ON ag.group_id = m2.group_id \n             WHERE ag.group_type='PAIR' AND m1.user_id=$1 AND m2.user_id=$2 LIMIT 1"
+        )
+        .bind(req.requester_id)
+        .bind(req.target_user_id)
+        .fetch_optional(&mut *tx)
+        .await?;
+        let group_id = if let Some(gid) = existing_pair { gid } else {
+            let group_name = format!("pair-{}-{}", req.requester_id, req.target_user_id);
+            // 创建组
+            sqlx::query_scalar::<_, i64>(
+                "INSERT INTO association_groups (group_name, group_type) VALUES ($1,'PAIR') RETURNING group_id"
+            )
+            .bind(group_name)
+            .fetch_one(&mut *tx)
+            .await?
+        };
+        // 分别读取两个用户角色，为防止 IN ($1,$2) 兼容性问题，拆成两个查询
+        let role_req = sqlx::query_as::<_, RoleRow>("SELECT user_id, role FROM users WHERE user_id=$1")
+            .bind(req.requester_id)
+            .fetch_optional(&mut *tx)
+            .await?;
+        let role_tgt = sqlx::query_as::<_, RoleRow>("SELECT user_id, role FROM users WHERE user_id=$1")
+            .bind(req.target_user_id)
+            .fetch_optional(&mut *tx)
+            .await?;
+        let mut role_rows: Vec<RoleRow> = Vec::new();
+        if let Some(r) = role_req { role_rows.push(r); }
+        if let Some(r) = role_tgt { role_rows.push(r); }
+        if role_rows.len() != 2 {
+            tx.rollback().await.ok();
+            return Err(CustomError::BadRequest("用户角色读取失败".into()));
+        }
+        for r in role_rows {
+            // 不同枚举类型：users.role 是 user_role_enum，而目标列 role_in_group 是 group_member_role_enum，需要显式字符串转换再 cast
+            let role_str = match r.role {
+                crate::models::users::UserRoleEnum::ORDERING => "ORDERING",
+                crate::models::users::UserRoleEnum::RECEIVING => "RECEIVING",
+                crate::models::users::UserRoleEnum::ADMIN => "ADMIN",
+            };
+            sqlx::query(
+                "INSERT INTO association_group_members (group_id, user_id, role_in_group, is_primary) VALUES ($1,$2,$3::group_member_role_enum,$4) ON CONFLICT (group_id, user_id) DO NOTHING"
+            )
+            .bind(group_id)
+            .bind(r.user_id)
+            .bind(role_str)
+            .bind(if r.user_id == req.requester_id { 1 } else { 0 })
+            .execute(&mut *tx)
+            .await?;
+        }
+    }
+
+    let updated = sqlx::query_as::<_, InvitationRequestOut>(
+        "SELECT request_id, requester_id, target_user_id, status, remark, created_at, handled_at FROM association_group_requests WHERE request_id=$1"
+    )
+    .bind(req.request_id)
+    .fetch_one(&mut *tx)
     .await?;
-
-    sqlx::query!(
-        "UPDATE users SET associate_id = $1 WHERE user_id = $2", 
-        data.user_id,
-        data.bind_id
-    ).execute(&mut *transaction)
-    .await?;
-
-    transaction.commit().await?;
-    Ok(HttpResponse::Created().body("绑定成功"))
+    tx.commit().await?;
+    Ok(Json(updated))
 }
 
 #[utoipa::path(
     delete,
     path = "/invitation/{id}",
-    params(
-        ("id" = i32, Path, description = "邀请ID"),
-    ),
     tag = "用户",
+    summary = "取消自己发起的待处理邀请",
+    params(("id" = i64, Path, description = "邀请ID")),
     responses(
-        (status = 201, body = String),
-        (status = 400, body = CustomError, example = json!(CustomError::BadRequest("参数错误".to_string())))
+        (status = 200, body = InvitationRequestOut),
+        (status = 400, body = CustomError),
+        (status = 401, body = CustomError)
     ),
-    security(
-        ("cookie_auth" = [])
-    )
+    security(("cookie_auth" = []))
 )]
 pub async fn cancel_invitation(
-    _: UserToken,
-    id: Path<(i32,)>,
-    state: State<Arc<AppState>>
+    token: UserToken,
+    id: Path<(i64,)>,
+    state: State<Arc<AppState>>,
 ) -> Result<impl Responder, CustomError> {
-    let db_pool = &state.clone().db_pool;
-
-    sqlx::query!(
-        "DELETE FROM user_ships WHERE ship_id = $1", 
-        id.0
-    ).execute(db_pool)
+    let db = &state.db_pool;
+    let mut tx = db.begin().await?;
+    let req: CancelRow = sqlx::query_as::<_, CancelRow>(
+        "SELECT request_id, requester_id, status FROM association_group_requests WHERE request_id=$1 FOR UPDATE"
+    )
+    .bind(id.0)
+    .fetch_optional(&mut *tx)
+    .await?
+    .ok_or_else(|| CustomError::BadRequest("邀请不存在".into()))?;
+    if req.requester_id != token.user_id { return Err(CustomError::BadRequest("无权限取消".into())); }
+    if req.status != 0 { return Err(CustomError::BadRequest("该邀请已处理".into())); }
+    let now = Utc::now();
+    sqlx::query("UPDATE association_group_requests SET status=3, handled_at=$2 WHERE request_id=$1")
+        .bind(req.request_id)
+        .bind(now)
+        .execute(&mut *tx)
+        .await?;
+    let updated = sqlx::query_as::<_, InvitationRequestOut>(
+        "SELECT request_id, requester_id, target_user_id, status, remark, created_at, handled_at FROM association_group_requests WHERE request_id=$1"
+    )
+    .bind(req.request_id)
+    .fetch_one(&mut *tx)
     .await?;
-
-    Ok(HttpResponse::Created().body("删除成功"))
+    tx.commit().await?;
+    Ok(Json(updated))
 }

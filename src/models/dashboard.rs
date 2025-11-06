@@ -42,5 +42,6 @@ pub struct LotteryDto {
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct LotteryItemOut {
     pub food_type: i32,
-    pub food: Option<crate::models::foods::FoodApplyStruct>,
+    // 使用新的 FoodOut 结构替换已移除的 FoodApplyStruct
+    pub food: Option<crate::models::foods::FoodOut>,
 }

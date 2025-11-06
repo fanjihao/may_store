@@ -1,25 +1,32 @@
-use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
+use sqlx::FromRow;
 
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
-pub struct Invitation {
-    pub ship_id: Option<i32>,
-    pub user_id: Option<i32>,
-    pub bind_id: Option<i32>,
-    pub ship_status: Option<i32>,
-    pub bind_date: Option<chrono::NaiveDate>,
-    pub send_avatar: Option<String>,
-    pub send_name: Option<String>,
-    pub send_role: Option<i32>,
-    pub bind_avatar: Option<String>,
-    pub bind_name: Option<String>,
-    pub bind_role: Option<i32>,
-    pub update_date: Option<chrono::DateTime<Utc>>,
+// ========== 新的邀请/绑定相关模型 (替换旧 Invitation/BindStruct) ==========
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema, FromRow)]
+pub struct InvitationRequestOut {
+    pub request_id: i64,
+    pub requester_id: i64,
+    pub target_user_id: i64,
+    pub status: i16, // 0待处理 1同意 2拒绝 3取消
+    pub remark: Option<String>,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+    pub handled_at: Option<chrono::DateTime<chrono::Utc>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
-pub struct BindStruct {
-    pub bind_id: i32,
-    pub user_id: i32
+pub struct NewInvitationInput {
+    pub target_user_id: i64,
+    pub remark: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct ConfirmInvitationInput {
+    pub accept: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct InvitationListOut {
+    pub incoming: Vec<InvitationRequestOut>,
+    pub outgoing: Vec<InvitationRequestOut>,
 }

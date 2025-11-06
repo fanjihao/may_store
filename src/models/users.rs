@@ -5,152 +5,243 @@ use ntex::{
     web::{ErrorRenderer, FromRequest, HttpRequest},
 };
 use serde::{Deserialize, Serialize};
+use sqlx::{FromRow, Type};
 use std::{future::Future, sync::Arc};
 use utoipa::ToSchema;
 
+// ========== 枚举类型 ==========
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, ToSchema, Type)]
+#[sqlx(type_name = "user_role_enum", rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum UserRoleEnum {
+    ORDERING,
+    RECEIVING,
+    ADMIN,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, ToSchema, Type)]
+#[sqlx(type_name = "gender_enum", rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum GenderEnum {
+    MALE,
+    FEMALE,
+    OTHER,
+    UNKNOWN,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, ToSchema, Type)]
+#[sqlx(type_name = "login_method_enum", rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum LoginMethodEnum {
+    PASSWORD,
+    #[serde(rename = "PHONE_CODE")]
+    PhoneCode,
+    OAUTH,
+    MIXED,
+}
+
+// ========== 输入 DTO ==========
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
-pub struct Login {
-    // 登录结构体
-    /// 用户账号
-    pub account: Option<String>,
-    /// 用户密码
+pub struct LoginInput {
+    pub username: String,
     pub password: Option<String>,
-    /// 登录code
-    pub code: Option<String>,
+    pub phone_code: Option<String>,
+    pub login_method: LoginMethodEnum,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
-pub struct Register {
-    // 注册结构体
-    pub account: Option<String>,
-    pub password: Option<String>,
-    pub avatar: Option<String>,
-    pub nick_name: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
-pub struct IsRegister {
-    pub user_id: Option<i32>,
-    pub role: Option<i32>,
-    pub bind_num: Option<i64>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
-pub struct UserInfo {
-    // 用户信息结构体
-    pub user_id: Option<i32>,
-    pub nick_name: Option<String>,
-    pub account: Option<String>,
-    pub password: Option<String>,
-    pub avatar: Option<String>,
-    pub gender: Option<i32>,
-    pub birthday: Option<chrono::NaiveDate>,
-    pub role: Option<i32>,
-    pub role_change_time: Option<chrono::DateTime<chrono::Utc>>,
-    pub love_point: Option<i32>,
-    pub token: Option<String>,
+pub struct RegisterInput {
+    pub username: String,
+    pub password: String,
+    pub email: Option<String>,
     pub phone: Option<String>,
-    pub associate_id: Option<i32>,
-    // pub encounter_date: Option<chrono::NaiveDate>,
-    // pub correlation_avatar: Option<String>,
-    // pub correlation_name: Option<String>,
-    // 以下暂时空置
-    // pub open_id: Option<String>,
-    pub push_id: Option<String>,
-    pub code: Option<String>,
-    // pub session_key: Option<String>,
+    pub avatar: Option<String>,
+    pub gender: Option<GenderEnum>,
+    pub birthday: Option<chrono::NaiveDate>,
 }
 
-// 9.25 中间件身份验证
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct UserUpdateInput {
+    pub email: Option<String>,
+    pub avatar: Option<String>,
+    pub gender: Option<GenderEnum>,
+    pub birthday: Option<chrono::NaiveDate>,
+    pub phone: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct PasswordUpdateInput {
+    pub old_password: String,
+    pub new_password: String,
+}
+
+// ========== 输出 DTO ==========
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct UserPublic {
+    pub user_id: i64,
+    pub username: String,
+    pub email: Option<String>,
+    pub role: UserRoleEnum,
+    pub love_point: i32,
+    pub avatar: Option<String>,
+    pub phone: Option<String>,
+    pub associate_id: Option<i64>,
+    pub status: i16,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+    pub updated_at: chrono::DateTime<chrono::Utc>,
+    // 扩展字段
+    pub gender: GenderEnum,
+    pub birthday: Option<chrono::NaiveDate>,
+    pub phone_verified: bool,
+    pub login_method: LoginMethodEnum,
+    pub last_login_at: Option<chrono::DateTime<chrono::Utc>>,
+    pub is_temp_password: bool,
+    pub push_id: Option<String>,
+    pub last_role_switch_at: Option<chrono::DateTime<chrono::Utc>>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct LoginResponse {
+    pub token: String,
+    pub user: UserPublic,
+}
+
+#[derive(Debug, Serialize, Deserialize, utoipa::ToSchema)]
+pub struct IsRegisterResponse {
+    pub registered: bool,
+}
+
+// ========== 数据库映射结构 ==========
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+pub struct UserRecord {
+    pub user_id: i64,
+    pub username: String,
+    pub email: Option<String>,
+    pub role: UserRoleEnum,
+    pub love_point: i32,
+    pub avatar: Option<String>,
+    pub phone: Option<String>,
+    pub associate_id: Option<i64>,
+    pub status: i16,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+    pub updated_at: chrono::DateTime<chrono::Utc>,
+    // 扩展字段
+    pub password_hash: Option<String>,
+    pub password_algo: Option<String>,
+    pub gender: GenderEnum,
+    pub birthday: Option<chrono::NaiveDate>,
+    pub phone_verified: bool,
+    pub login_method: LoginMethodEnum,
+    pub last_login_at: Option<chrono::DateTime<chrono::Utc>>,
+    pub password_updated_at: Option<chrono::DateTime<chrono::Utc>>,
+    pub is_temp_password: bool,
+    pub push_id: Option<String>,
+    pub last_role_switch_at: Option<chrono::DateTime<chrono::Utc>>,
+}
+
+impl From<UserRecord> for UserPublic {
+    fn from(record: UserRecord) -> Self {
+        UserPublic {
+            user_id: record.user_id,
+            username: record.username,
+            email: record.email,
+            role: record.role,
+            love_point: record.love_point,
+            avatar: record.avatar,
+            phone: record.phone,
+            associate_id: record.associate_id,
+            status: record.status,
+            created_at: record.created_at,
+            updated_at: record.updated_at,
+            gender: record.gender,
+            birthday: record.birthday,
+            phone_verified: record.phone_verified,
+            login_method: record.login_method,
+            last_login_at: record.last_login_at,
+            is_temp_password: record.is_temp_password,
+            push_id: record.push_id,
+            last_role_switch_at: record.last_role_switch_at,
+        }
+    }
+}
+
+// ========== Token Claims ==========
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UserTokenClaims {
+    pub exp: i64,
+    pub user_id: i64,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UserToken {
-    pub exp: Option<i64>, // Expiration（过期时间），表示令牌的有效期，使用 Unix 时间戳表示
-    pub user_id: i32,     // Subject（主题），通常是用户的唯一标识
-    // 在这里可以添加其他自定义字段
-    pub user_info: Option<UserInfo>, // ✅ 存储用户信息
+    pub exp: i64,
+    pub user_id: i64,
+    pub user: Option<UserPublic>,
 }
 
 impl<E: ErrorRenderer> FromRequest<E> for UserToken {
     type Error = CustomError;
-    // type Future = Pin<Box<dyn Future<Output = Result<Self, Self::Error>>>>;
 
     fn from_request(
         req: &HttpRequest,
         _: &mut Payload,
     ) -> impl Future<Output = Result<Self, Self::Error>> {
-        // 注意：下面两个变量的类型不能出现引用（req），否则就会出现生命周期问题（future）
-        // ✅ 提前获取 Arc<AppState>，避免 req 生命周期问题
-        let state = req
-            .app_state::<Arc<AppState>>()
-            .expect("Failed to get AppState")
-            .clone();
-
+        let state = req.app_state::<Arc<AppState>>().expect("app state").clone();
         let redis_cache = state.redis_cache.clone();
+        let auth_header = req.headers().get("Authorization").cloned();
 
-        // Cookies 中的 access token
-        let access_token = req.headers().get("Authorization");
-        let fut = async move {
-            let access_token = match access_token {
-                Some(c) => c.to_str(),
-                None => return Err(CustomError::AuthFailed("No login authorization".into())),
-            };
+        println!("Authenticating request for path: {:#?}", auth_header);
+        async move {
+            let mut raw = auth_header
+                .ok_or_else(|| CustomError::AuthFailed("No login authorization".into()))?
+                .to_str()
+                .map_err(|_| CustomError::AuthFailed("Invalid header".into()))?
+                .to_string();
+            // 支持 'Bearer <token>' 前缀
+            if let Some(stripped) = raw.strip_prefix("Bearer ") {
+                raw = stripped.trim().to_string();
+            }
 
-            let access_token = if let Ok(str) = access_token {
-                str.to_string()
-            } else {
-                String::new()
-            };
-
-            // 设置JWT解码参数
             let decoding_key = DecodingKey::from_secret(TOKEN_SECRET_KEY);
             let validation = Validation::new(Algorithm::HS256);
-            let token_data = match decode::<UserToken>(&access_token, &decoding_key, &validation) {
-                Ok(token_data) => {
-                    println!("Decoded Token: {:?}", token_data);
-                    token_data
-                }
-                Err(err) => {
-                    println!("Token Decoding Error: {:?}", err);
-                    return Err(CustomError::AuthFailed(
-                        format!("Failed to decode token: {}", err).into(),
-                    ));
-                }
-            };
-            let user_id = token_data.claims.user_id;
+            let data =
+                decode::<UserTokenClaims>(&raw, &decoding_key, &validation).map_err(|e| {
+                    CustomError::AuthFailed(format!("decode token error: {}", e).into())
+                })?;
+            let uid = data.claims.user_id;
 
-            // ✅ 先尝试从 Redis 获取用户信息
-            let mut user_info: Option<UserInfo> =
-                redis_cache.get_user(&user_id).await.ok().flatten();
-
-            // 如果 Redis 缓存未命中，则查询数据库
-            if user_info.is_none() {
-                let db_pool = &state.db_pool;
-                user_info =
-                    sqlx::query_as!(UserInfo, "SELECT * FROM users WHERE user_id = $1", &user_id)
-                        .fetch_one(db_pool)
-                        .await
-                        .ok();
-
-                // ✅ 存入 Redis 缓存（如果查询成功）
-                if let Some(ref info) = user_info {
-                    if let Err(e) = redis_cache.set_user(info, 3600).await {
-                        println!("Failed to cache user info in Redis: {:?}", e);
+            // 从缓存或数据库获取用户信息
+            let mut public: Option<UserPublic> =
+                redis_cache.get_user_public(&uid).await.ok().flatten();
+            if public.is_none() {
+                let db = &state.db_pool;
+                if let Ok(record) = sqlx::query_as::<_, UserRecord>(
+                    r#"
+                    SELECT user_id, username, email, role, love_point, avatar, phone,
+                           associate_id, status, created_at, updated_at, password_hash,
+                           password_algo, gender, birthday, phone_verified, login_method,
+                           last_login_at, password_updated_at, is_temp_password, push_id, last_role_switch_at
+                    FROM users WHERE user_id=$1 AND status=1
+                    "#
+                )
+                .bind(uid)
+                .fetch_one(db)
+                .await
+                {
+                    public = Some(record.into());
+                    if let Some(ref p) = public {
+                        let _ = redis_cache.set_user_public(p, 3600).await;
                     }
                 }
             }
 
-            // ✅ 将用户信息存入 `req.extensions_mut()`，便于后续 API 访问
-            if let Some(ref info) = user_info {
-                req.extensions_mut().insert(info.clone());
+            if let Some(ref p) = public {
+                // 插入一个克隆，避免生命周期问题
+                req.extensions_mut().insert(p.clone());
             }
 
-            Ok(Self {
-                exp: token_data.claims.exp,
-                user_id,
-                user_info, // ✅ 直接存入 `UserToken`
+            Ok(UserToken {
+                exp: data.claims.exp,
+                user_id: uid,
+                user: public.clone(),
             })
-        };
-
-        Box::pin(fut)
+        }
     }
 }

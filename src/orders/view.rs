@@ -1,178 +1,222 @@
-use std::{collections::HashMap, sync::Arc};
-
-use ntex::web::{types::{Json, Path, Query, State}, Responder};
-
+use crate::models::users::UserToken;
 use crate::{
     errors::CustomError,
-    models::orders::{OrderDetailListOut, OrderListDto, OrderListOut, OrderOut},
+    models::orders::{
+        OrderItemOut, OrderOutNew, OrderQuery, OrderRecord, OrderStatusEnum, OrderStatusHistoryOut,
+    },
     AppState,
 };
+use chrono::{DateTime, Utc};
+use ntex::web::{
+    types::{Path, Query, State},
+    HttpResponse, Responder,
+};
+use sqlx::Row;
+use std::sync::Arc;
 
 #[utoipa::path(
-    get,
-    path = "/orders",
-    params(
-        ("status", Query, description = "订单状态"),
-        ("user_id", Query, description = "用户ID")
-    ),
-    tag = "订单",
-    responses(
-        (status = 200, body = Vec<OrderListOut>, description = "获取订单列表")
-    )
+	get,
+	path = "/orders",
+	tag = "订单",
+	params(OrderQuery),
+	responses((status = 200, body = [OrderOutNew]))
 )]
 pub async fn get_orders(
+    user_token: UserToken,
     state: State<Arc<AppState>>,
-    data: Query<OrderListDto>,
-) -> Result<Json<Vec<OrderListOut>>, CustomError> {
-    let db_pool = &state.clone().db_pool;
-
-    let rows = sqlx::query!(
-        "SELECT o.*, od.food_id , od.order_d_id, od.user_id, f.food_name, f.food_photo
-         FROM orders o
-         LEFT JOIN orders_d od ON o.order_id = od.order_id
-	     LEFT JOIN foods f ON f.food_id = od.food_id 
-         WHERE (o.recv_user_id = $1 OR o.create_user_id = $1)
-         AND (o.order_status = ANY(string_to_array($2, ',')::int[]) OR $2 IS NULL)
-         AND o.is_del = 0 ORDER BY create_date DESC;",
-        data.user_id,
-        data.status
-    )
-    .fetch_all(db_pool)
-    .await?;
-
-    // 使用 HashMap 进行分组，将每个 order_id 的子项合并
-    let mut orders_map: HashMap<i32, OrderListOut> = HashMap::new();
-
-    for row in rows {
-        let order_id = row.order_id;
-
-        // 如果订单不在 map 中，先插入订单信息
-        let order_entry = orders_map.entry(order_id).or_insert_with(|| OrderListOut {
-            order_id: Some(row.order_id),
-            order_no: row.order_no,
-            order_status: row.order_status,
-            create_date: row.create_date,
-            create_user_id: row.create_user_id,
-            recv_user_id: row.recv_user_id,
-            goal_time: row.goal_time,
-            finish_time: row.finish_time,
-            remarks: row.remarks,
-            is_del: row.is_del,
-            order_detail: Some(Vec::new()),
-        });
-
-        if let Some(order_detail) = &mut order_entry.order_detail {
-            order_detail.push(OrderDetailListOut {
-                order_d_id: Some(row.order_d_id),
-                order_id: Some(order_id),
-                food_id: row.food_id,
-                food_name: row.food_name,
-                food_photo: row.food_photo,
-                user_id: row.user_id,
-            });
+    query: Query<OrderQuery>,
+) -> Result<impl Responder, CustomError> {
+    let db = &state.db_pool;
+    // 使用 QueryBuilder 动态构建过滤条件
+    let mut qb = sqlx::QueryBuilder::<sqlx::Postgres>::new("SELECT order_id, user_id, receiver_id, group_id, status, goal_time, points_cost, points_reward, cancel_reason, reject_reason, last_status_change_at, created_at, updated_at FROM orders");
+    let mut first = true;
+    qb.push(" WHERE ");
+    if let Some(uid) = query.user_id.or(Some(user_token.user_id)) {
+        // default filter user orders unless user explicitly overrides
+        if !first {
+            qb.push(" AND ");
+        } else {
+            first = false;
         }
+        qb.push(" user_id = ");
+        qb.push_bind(uid as i64);
     }
-
-    // 提取 HashMap 的值作为结果返回
-    let mut order_list: Vec<OrderListOut> = orders_map.into_values().collect();
-    order_list.sort_by(|a, b| b.create_date.cmp(&a.create_date));
-
-    Ok(Json(order_list))
+    if let Some(rid) = query.receiver_id {
+        if !first {
+            qb.push(" AND ");
+        } else {
+            first = false;
+        }
+        qb.push(" receiver_id = ");
+        qb.push_bind(rid as i64);
+    }
+    if let Some(st) = query.status {
+        if !first {
+            qb.push(" AND ");
+        } else {
+            first = false;
+        }
+        qb.push(" status = ");
+        qb.push_bind(format!("{:?}", st));
+    }
+    qb.push(" ORDER BY created_at DESC ");
+    qb.push(" LIMIT ");
+    qb.push_bind(query.limit.unwrap_or(50));
+    let rows = qb.build().fetch_all(db).await?;
+    let mut out_list: Vec<OrderOutNew> = Vec::new();
+    for r in rows {
+        let order = map_record(&r);
+        // items
+        let item_rows = sqlx::query("SELECT id, order_id, food_id, quantity, price, snapshot_json, created_at FROM order_items WHERE order_id=$1")
+			.bind(order.order_id)
+			.fetch_all(db)
+			.await?;
+        let items = item_rows
+            .into_iter()
+            .map(map_item_record_to_out(db))
+            .collect::<Result<Vec<_>, _>>()?;
+        // status history (last 5 for list)
+        let hist_rows = sqlx::query("SELECT from_status::text, to_status::text, changed_by, remark, changed_at FROM order_status_history WHERE order_id=$1 ORDER BY changed_at DESC LIMIT 5")
+			.bind(order.order_id)
+			.fetch_all(db)
+			.await?;
+        let history = hist_rows.into_iter().map(map_history_row).collect();
+        out_list.push(OrderOutNew::from((order, items, history)));
+    }
+    Ok(HttpResponse::Ok().json(&out_list))
 }
 
 #[utoipa::path(
-    get,
-    path = "/orders/{id}",
-    tag = "订单",
-    responses(
-        (status = 200, body = OrderOut, description = "获取订单详情")
-    )
+	get,
+	path = "/orders/{id}",
+	tag = "订单",
+	params(("id" = i64, Path, description = "订单ID")),
+	responses((status = 200, body = OrderOutNew))
 )]
 pub async fn get_order_detail(
+    _user_token: UserToken,
     state: State<Arc<AppState>>,
-    id: Path<(i32,)>,
-) -> Result<Json<OrderOut>, CustomError> {
-    let db_pool = &state.clone().db_pool;
-    let id = id.0;
-    let rows = sqlx::query!(
-        "SELECT o.*, od.food_id , od.order_d_id, od.user_id, f.food_name, f.food_photo, p.points
-         FROM orders o
-         LEFT JOIN orders_d od ON o.order_id = od.order_id
-	     LEFT JOIN foods f ON f.food_id = od.food_id 
-	     LEFT JOIN points_history p ON p.bind_id = o.order_id
-         WHERE o.order_id = $1",
-        &id
-    )
-    .fetch_all(db_pool)
-    .await?;
-
-    // 使用 HashMap 进行分组，将每个 order_id 的子项合并
-    let mut orders_map: HashMap<i32, OrderOut> = HashMap::new();
-
-    for row in rows {
-        let order_id = row.order_id;
-
-        // 如果订单不在 map 中，先插入订单信息
-        let order_entry = orders_map.entry(order_id).or_insert_with(|| OrderOut {
-            order_id: Some(row.order_id),
-            order_no: row.order_no,
-            order_status: row.order_status,
-            create_date: row.create_date,
-            create_user_id: row.create_user_id,
-            recv_user_id: row.recv_user_id,
-            goal_time: row.goal_time,
-            finish_time: row.finish_time,
-            remarks: row.remarks,
-            is_del: row.is_del,
-            revoke_time: row.revoke_time,
-            approval_time: row.approval_time,
-            approval_feedback: row.approval_feedback,
-            finish_feedback: row.finish_feedback,
-            approval_status: row.approval_status,
-            finish_status: row.finish_status,
-            points: row.points,
-            order_detail: Some(Vec::new()),
-        });
-
-        if let Some(order_detail) = &mut order_entry.order_detail {
-            order_detail.push(OrderDetailListOut {
-                order_d_id: Some(row.order_d_id),
-                order_id: Some(order_id),
-                food_id: row.food_id,
-                food_name: row.food_name,
-                food_photo: row.food_photo,
-                user_id: row.user_id,
-            });
-        }
-    }
-
-    // 提取 HashMap 的值作为结果返回
-    let order_list: Vec<OrderOut> = orders_map.into_values().collect();
-
-    if let Some(order) = order_list.into_iter().next() {
-        Ok(Json(order))
-    } else {
-        Err(CustomError::BadRequest("获取详情失败".to_string()))
-    }
+    id: Path<i64>,
+) -> Result<impl Responder, CustomError> {
+    let db = &state.db_pool;
+    let row = sqlx::query("SELECT order_id, user_id, receiver_id, group_id, status, goal_time, points_cost, points_reward, cancel_reason, reject_reason, last_status_change_at, created_at, updated_at FROM orders WHERE order_id=$1")
+		.bind(*id)
+		.fetch_optional(db)
+		.await?;
+    let order_row = match row {
+        Some(r) => r,
+        None => return Err(CustomError::BadRequest("订单不存在".into())),
+    };
+    let order = map_record(&order_row);
+    let item_rows = sqlx::query("SELECT id, order_id, food_id, quantity, price, snapshot_json, created_at FROM order_items WHERE order_id=$1")
+		.bind(order.order_id)
+		.fetch_all(db)
+		.await?;
+    let items = item_rows
+        .into_iter()
+        .map(map_item_record_to_out(db))
+        .collect::<Result<Vec<_>, _>>()?;
+    let hist_rows = sqlx::query("SELECT from_status::text, to_status::text, changed_by, remark, changed_at FROM order_status_history WHERE order_id=$1 ORDER BY changed_at")
+		.bind(order.order_id)
+		.fetch_all(db)
+		.await?;
+    let history = hist_rows.into_iter().map(map_history_row).collect();
+    Ok(HttpResponse::Ok().json(&OrderOutNew::from((order, items, history))))
 }
 
 #[utoipa::path(
-    get,
-    path = "/orders/incomplete/{id}",
-    tag = "未完成订单",
-    responses(
-        (status = 200, body = i32, description = "获取订单详情")
-    )
+	get,
+	path = "/orders-incomplete/{user_id}",
+	tag = "订单",
+	params(("user_id" = i64, Path, description = "用户ID")),
+	responses((status = 200, body = i32))
 )]
-pub async fn get_incomplete_order(state: State<Arc<AppState>>, id: Path<(i32,)>) -> Result<impl Responder, CustomError> {
-    let db_pool = &state.clone().db_pool;
+pub async fn get_incomplete_order(
+    state: State<Arc<AppState>>,
+    user_id: Path<i64>,
+) -> Result<impl Responder, CustomError> {
+    let db = &state.db_pool;
+    let count =
+        sqlx::query("SELECT COUNT(*) as c FROM orders WHERE user_id=$1 AND status='PENDING'")
+            .bind(*user_id)
+            .fetch_one(db)
+            .await?;
+    let c: i64 = count.get("c");
+    Ok(HttpResponse::Ok().json(&(c as i32)))
+}
 
-    let result = sqlx::query!("SELECT COUNT(*)   
-        FROM orders   
-        WHERE order_status NOT IN (0, 1)   
-        AND recv_user_id = $1", id.0)
-        .fetch_one(db_pool)
-        .await?;
+pub fn map_record(row: &sqlx::postgres::PgRow) -> OrderRecord {
+    OrderRecord {
+        order_id: row.get("order_id"),
+        user_id: row.get("user_id"),
+        receiver_id: row.get("receiver_id"),
+        group_id: row.get("group_id"),
+        status: match row.get::<String, _>("status").as_str() {
+            "PENDING" => OrderStatusEnum::PENDING,
+            "ACCEPTED" => OrderStatusEnum::ACCEPTED,
+            "FINISHED" => OrderStatusEnum::FINISHED,
+            "CANCELLED" => OrderStatusEnum::CANCELLED,
+            "EXPIRED" => OrderStatusEnum::EXPIRED,
+            "REJECTED" => OrderStatusEnum::REJECTED,
+            "SYSTEM_CLOSED" => OrderStatusEnum::SYSTEM_CLOSED,
+            _ => OrderStatusEnum::PENDING,
+        },
+        goal_time: row.try_get("goal_time").ok(),
+        points_cost: row.get("points_cost"),
+        points_reward: row.get("points_reward"),
+        cancel_reason: row.try_get("cancel_reason").ok(),
+        reject_reason: row.try_get("reject_reason").ok(),
+        last_status_change_at: row.try_get("last_status_change_at").ok(),
+        created_at: row.get("created_at"),
+        updated_at: row.get("updated_at"),
+    }
+}
 
-    Ok(Json(result.count))
+pub fn map_item_record_to_out<'a>(
+    _db: &'a sqlx::Pool<sqlx::Postgres>,
+) -> impl Fn(sqlx::postgres::PgRow) -> Result<OrderItemOut, CustomError> + 'a {
+    move |r| {
+        let food_id: i64 = r.get("food_id");
+        Ok(OrderItemOut {
+            id: r.get("id"),
+            food_id,
+            food_name: None, // lazy populate below if needed
+            food_photo: None,
+            quantity: r.get("quantity"),
+            price: r.try_get("price").ok(),
+        })
+    }
+}
+
+pub fn map_history_row(row: sqlx::postgres::PgRow) -> OrderStatusHistoryOut {
+    let to_s_str: String = row.get("to_status");
+    let to_s = match to_s_str.as_str() {
+        "PENDING" => OrderStatusEnum::PENDING,
+        "ACCEPTED" => OrderStatusEnum::ACCEPTED,
+        "FINISHED" => OrderStatusEnum::FINISHED,
+        "CANCELLED" => OrderStatusEnum::CANCELLED,
+        "EXPIRED" => OrderStatusEnum::EXPIRED,
+        "REJECTED" => OrderStatusEnum::REJECTED,
+        "SYSTEM_CLOSED" => OrderStatusEnum::SYSTEM_CLOSED,
+        _ => OrderStatusEnum::PENDING,
+    };
+    let from_s = row
+        .get::<Option<String>, _>("from_status")
+        .and_then(|s| match s.as_str() {
+            "PENDING" => Some(OrderStatusEnum::PENDING),
+            "ACCEPTED" => Some(OrderStatusEnum::ACCEPTED),
+            "FINISHED" => Some(OrderStatusEnum::FINISHED),
+            "CANCELLED" => Some(OrderStatusEnum::CANCELLED),
+            "EXPIRED" => Some(OrderStatusEnum::EXPIRED),
+            "REJECTED" => Some(OrderStatusEnum::REJECTED),
+            "SYSTEM_CLOSED" => Some(OrderStatusEnum::SYSTEM_CLOSED),
+            _ => None,
+        });
+    OrderStatusHistoryOut {
+        from_status: from_s,
+        to_status: to_s,
+        changed_by: row.get::<Option<i64>, _>("changed_by"),
+        remark: row.get::<Option<String>, _>("remark"),
+        changed_at: row.get::<DateTime<Utc>, _>("changed_at"),
+    }
 }

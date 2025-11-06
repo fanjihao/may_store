@@ -37,6 +37,8 @@ qiniu-upload-token = { version = "0.2.4", features = ["async"] }
 lazy_static = "1.4"
 rust-crypto = "0.2.36"  # 加密
 rand = "0.8.5" # 随机
+argon2 = { version = "0.5", features = ["password-hash"] }
+password-hash = "0.5"
 
 utoipa = { version = "5.2", features = ["chrono"] }
 utoipa-swagger-ui = "*"

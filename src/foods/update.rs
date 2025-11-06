@@ -1,190 +1,178 @@
-use std::sync::Arc;
-
-use ntex::web::{
-    types::{Json, Path, State},
-    HttpResponse, Responder,
-};
-
 use crate::{
     errors::CustomError,
-    models::{foods::{FoodTags, UpdateFood}, users::UserToken},
+    models::foods::{FoodOut, FoodRecord, FoodUpdateInput, MarkTypeEnum, TagRecord},
+    models::users::UserToken,
     AppState,
 };
+use ntex::web::{
+    types::{Json, State},
+    HttpResponse, Responder,
+};
+use sqlx::Row;
+use std::sync::Arc;
 
 #[utoipa::path(
-    put,
-    path = "/food/update_status",
-    request_body = UpdateFood,
-    tag = "菜品",
-    responses(
-        (status = 201, body = String, description = "操作成功"),
-        (status = 400, body = CustomError, example = json!(CustomError::BadRequest("参数错误".to_string())))
-    ),
-    security(
-        ("cookie_auth" = [])
-    )
+	put,
+	path = "/foods/{id}",
+	tag = "菜品",
+	request_body = FoodUpdateInput,
+	params(("id" = i64, Path, description = "菜品ID")),
+	responses((status = 200, body = FoodOut)),
+	security(("cookie_auth" = []))
 )]
-pub async fn update_record_status(
-    _: UserToken,
-    data: Json<UpdateFood>,
+pub async fn update_food(
+    token: UserToken,
     state: State<Arc<AppState>>,
+    id: ntex::web::types::Path<(i64,)>,
+    data: Json<FoodUpdateInput>,
 ) -> Result<impl Responder, CustomError> {
-    let db_pool = &state.clone().db_pool;
+    let db = &state.db_pool;
+    let mut tx = db.begin().await?;
+    // 获取现有记录
+    let rec_opt = sqlx::query_as::<_, FoodRecord>(
+		"SELECT food_id, food_name, food_photo, food_types, food_status, submit_role, apply_status, apply_remark, created_by, owner_user_id, group_id, approved_at, approved_by, is_del, created_at, updated_at FROM foods WHERE food_id=$1 FOR UPDATE"
+	)
+	.bind(id.0)
+	.fetch_optional(&mut *tx)
+	.await?;
+    let mut rec = match rec_opt {
+        Some(r) => r,
+        None => return Err(CustomError::BadRequest("菜品不存在".into())),
+    };
 
-    sqlx::query!(
-        "UPDATE foods SET food_status = $2, apply_remarks = $3 WHERE food_id = $1",
-        data.food_id,
-        data.food_status,
-        data.msg
-    )
-    .execute(db_pool)
-    .await?;
-
-    Ok(HttpResponse::Created().body("操作成功"))
-}
-
-#[utoipa::path(
-    put,
-    path = "/food/update",
-    request_body = UpdateFood,
-    tag = "菜品",
-    responses(
-        (status = 201, body = String, description = "操作成功"),
-        (status = 400, body = CustomError, example = json!(CustomError::BadRequest("参数错误".to_string())))
-    ),
-    security(
-        ("cookie_auth" = [])
-    )
-)]
-pub async fn food_update(
-    _: UserToken,
-    data: Json<UpdateFood>,
-    state: State<Arc<AppState>>,
-) -> Result<impl Responder, CustomError> {
-    let db_pool = &state.clone().db_pool;
-
-    sqlx::query!(
-        "UPDATE foods SET food_name = $2, food_types = $3, food_photo = $4, food_tags = $5 WHERE food_id = $1",
-        data.food_id,
-        data.food_name,
-        data.food_types,
-        data.food_photo,
-        data.food_tags
-    )
-    .execute(db_pool)
-    .await?;
-
-    Ok(HttpResponse::Created().body("操作成功"))
-}
-
-#[utoipa::path(
-    delete,
-    path = "/food/delete/{id}",
-    params(
-        ("id" = i32, Path, description = "菜品ID")
-    ),
-    tag = "菜品",
-    responses(
-        (status = 201, body = String, description = "删除成功"),
-        (status = 400, body = CustomError, example = json!(CustomError::BadRequest("参数错误".to_string())))
-    ),
-    security(
-        ("cookie_auth" = [])
-    )
-)]
-pub async fn delete_record(
-    _: UserToken,
-    id: Path<(i32,)>,
-    state: State<Arc<AppState>>,
-) -> Result<impl Responder, CustomError> {
-    let db_pool = &state.clone().db_pool;
-
-    sqlx::query!("DELETE FROM foods WHERE food_id = $1", id.0)
-        .execute(db_pool)
+    // 权限：只允许创建者或管理员更新（简单判定管理员）
+    let role: Option<String> = sqlx::query_scalar("SELECT role::text FROM users WHERE user_id=$1")
+        .bind(token.user_id as i64)
+        .fetch_optional(&mut *tx)
         .await?;
-
-    Ok(HttpResponse::Created().body("删除成功"))
-}
-
-#[utoipa::path(
-    put,
-    path = "/food/mark/{id}",
-    params(
-        ("id" = i32, Path, description = "菜品ID")
-    ),
-    tag = "菜品",
-    responses(
-        (status = 201, body = String, description = "操作成功"),
-        (status = 400, body = CustomError, example = json!(CustomError::BadRequest("参数错误".to_string())))
-    ),
-    security(
-        ("cookie_auth" = [])
-    )
-)]
-pub async fn favorite_dishes(
-    id: Path<(i32,)>,
-    state: State<Arc<AppState>>,
-) -> Result<impl Responder, CustomError> {
-    let db_pool = &state.clone().db_pool;
-
-    sqlx::query!(
-        "UPDATE foods SET is_mark = CASE WHEN is_mark = 1 THEN 0 ELSE 1 END WHERE food_id = $1",
-        id.0
-    )
-    .execute(db_pool)
-    .await?;
-
-    Ok(HttpResponse::Created().body("操作成功"))
-}
-
-#[utoipa::path(
-    delete,
-    path = "/foodtag/{id}",
-    params(
-        ("id" = i32, Path, description = "标签ID")
-    ),
-    tag = "菜品",
-    responses(
-        (status = 201, body = String, description = "删除成功"),
-        (status = 400, body = CustomError, example = json!(CustomError::BadRequest("参数错误".to_string())))
-    ),
-    security(
-        ("cookie_auth" = [])
-    )
-)]
-pub async fn delete_tags(
-    _: UserToken,
-    id: Path<(i32,)>,
-    state: State<Arc<AppState>>,
-) -> Result<impl Responder, CustomError> {
-    let db_pool = &state.clone().db_pool;
-
-    println!("id: {:?}", id.0);
-    sqlx::query!("DELETE FROM food_tags WHERE tag_id = $1", id.0)
-        .execute(db_pool)
-        .await?;
-
-    Ok(HttpResponse::Created().body("删除成功"))
-}
-
-pub async fn update_tags_sort(
-    _: UserToken,
-    data: Json<Vec<FoodTags>>,
-    state: State<Arc<AppState>>,
-) -> Result<impl Responder, CustomError> {
-    let db_pool = &state.clone().db_pool;
-    let mut transaction = db_pool.begin().await?;
-
-    for record in data.iter() {
-        sqlx::query!(
-            "UPDATE food_tags SET sort = $2 WHERE tag_id = $1",
-            record.tag_id,
-            record.sort
-        )
-        .execute(&mut *transaction)
-        .await?;
+    let is_admin = matches!(role.as_deref(), Some("ADMIN"));
+    if !is_admin && rec.created_by != token.user_id as i64 {
+        return Err(CustomError::BadRequest("无权限修改".into()));
     }
 
-    transaction.commit().await?;
-    Ok(HttpResponse::Created().body("操作成功"))
+    // 应用更新字段
+    if let Some(name) = &data.food_name {
+        rec.food_name = name.clone();
+    }
+    if let Some(photo) = &data.food_photo {
+        rec.food_photo = Some(photo.clone());
+    }
+    if let Some(cat) = data.food_types {
+        rec.food_types = cat as i16;
+    }
+    if let Some(r) = &data.apply_remark {
+        rec.apply_remark = Some(r.clone());
+    }
+    if let Some(status) = data.food_status {
+        rec.food_status = status;
+    }
+    if let Some(app_status) = data.apply_status {
+        rec.apply_status = app_status;
+    }
+
+    sqlx::query(
+		"UPDATE foods SET food_name=$2, food_photo=$3, food_types=$4, apply_remark=$5, food_status=$6, apply_status=$7, updated_at=NOW() WHERE food_id=$1"
+	)
+	.bind(rec.food_id)
+	.bind(&rec.food_name)
+	.bind(&rec.food_photo)
+	.bind(rec.food_types)
+	.bind(&rec.apply_remark)
+	.bind(rec.food_status)
+	.bind(rec.apply_status)
+	.execute(&mut *tx)
+	.await?;
+
+    if let Some(tag_ids) = &data.tag_ids {
+        // 重建标签映射
+        sqlx::query("DELETE FROM food_tags_map WHERE food_id=$1")
+            .bind(rec.food_id)
+            .execute(&mut *tx)
+            .await?;
+        for tid in tag_ids {
+            sqlx::query(
+                "INSERT INTO food_tags_map (food_id, tag_id) VALUES ($1,$2) ON CONFLICT DO NOTHING",
+            )
+            .bind(rec.food_id)
+            .bind(*tid)
+            .execute(&mut *tx)
+            .await?;
+        }
+    }
+
+    let tag_rows: Vec<TagRecord> = sqlx::query_as("SELECT t.tag_id, t.tag_name, t.sort, t.created_at FROM tags t JOIN food_tags_map m ON t.tag_id=m.tag_id WHERE m.food_id=$1")
+		.bind(rec.food_id)
+		.fetch_all(&mut *tx)
+		.await?;
+    let marks: Vec<String> =
+        sqlx::query("SELECT mark_type::text FROM user_food_mark WHERE user_id=$1 AND food_id=$2")
+            .bind(token.user_id as i64)
+            .bind(rec.food_id)
+            .fetch_all(&mut *tx)
+            .await?
+            .into_iter()
+            .map(|r| r.get::<String, _>(0))
+            .collect();
+    let mark_enums = marks
+        .into_iter()
+        .filter_map(|s| match s.as_str() {
+            "LIKE" => Some(MarkTypeEnum::LIKE),
+            "NOT_RECOMMEND" => Some(MarkTypeEnum::NOT_RECOMMEND),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    tx.commit().await?;
+
+    Ok(HttpResponse::Ok().json(&FoodOut::from((rec, tag_rows, mark_enums))))
+}
+
+use crate::models::foods::FoodMarkActionInput;
+
+#[utoipa::path(
+	post,
+	path = "/foods/mark",
+	tag = "菜品",
+	request_body = FoodMarkActionInput,
+	responses((status = 200, body = String)),
+	security(("cookie_auth" = []))
+)]
+pub async fn mark_food(
+    token: UserToken,
+    state: State<Arc<AppState>>,
+    data: Json<FoodMarkActionInput>,
+) -> Result<impl Responder, CustomError> {
+    let db = &state.db_pool;
+    sqlx::query("INSERT INTO user_food_mark (user_id, food_id, mark_type) VALUES ($1,$2,$3) ON CONFLICT DO NOTHING")
+		.bind(token.user_id as i64)
+		.bind(data.food_id)
+		.bind(data.mark_type)
+		.execute(db)
+		.await?;
+    Ok(HttpResponse::Ok().body("ok"))
+}
+
+#[utoipa::path(
+	delete,
+	path = "/foods/mark/{food_id}/{mark_type}",
+	tag = "菜品",
+	params(("food_id"=i64, Path), ("mark_type"=String, Path)),
+	responses((status = 200, body = String)),
+	security(("cookie_auth" = []))
+)]
+pub async fn unmark_food(
+    token: UserToken,
+    state: State<Arc<AppState>>,
+    path: ntex::web::types::Path<(i64, String)>,
+) -> Result<impl Responder, CustomError> {
+    let (food_id, mark_type) = (path.0, path.1.clone());
+    let db = &state.db_pool;
+    sqlx::query(
+        "DELETE FROM user_food_mark WHERE user_id=$1 AND food_id=$2 AND mark_type::text=$3",
+    )
+    .bind(token.user_id as i64)
+    .bind(food_id)
+    .bind(&mark_type)
+    .execute(db)
+    .await?;
+    Ok(HttpResponse::Ok().body("ok"))
 }
