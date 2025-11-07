@@ -9,6 +9,7 @@ mod wx_official;
 mod users;
 mod foods;
 mod orders;
+mod upload;
 mod services; // 新增服务模块用于通知推送
 mod wishes; // 心愿与兑换模块
 mod dashboard; // 看板与组活动
@@ -18,6 +19,7 @@ use dotenvy::dotenv;
 use errors::CustomError;
 use idgenerator::{IdGeneratorOptions, IdInstance};
 use ntex::web::{middleware, App, HttpServer};
+use ntex_cors::Cors;
 use sqlx::{postgres::PgPoolOptions, Pool, Postgres};
 use std::{env, sync::Arc};
 
@@ -60,24 +62,36 @@ async fn main() -> Result<(), CustomError> {
     });
     let app_state_clone = Arc::clone(&app_state);
 
+    let allowed_origin = env::var("FRONTEND_ORIGIN").unwrap_or_else(|_| "http://localhost:5173".to_string());
+
     let server = HttpServer::new(move || {
         App::new()
             .state(Arc::clone(&app_state))
             .wrap(middleware::Logger::default())
+            .wrap(
+                Cors::new()
+                    .allowed_origin(&allowed_origin)
+                    .allowed_methods(vec!["GET", "POST", "PUT", "DELETE", "OPTIONS"])
+                    .allowed_headers(vec!["Authorization", "Content-Type"])
+                    .expose_headers(vec!["Authorization"])
+                    .supports_credentials()
+                    .max_age(3600)
+                    .finish(),
+            )
             .configure(|cfg| routes::route(Arc::clone(&app_state), cfg))
     })
     .workers(4)
     .bind("0.0.0.0:9831")?
     .run();
 
-    // 启动 HTTP 服务器
-    let server_handle = tokio::spawn(server);
-
-    // 定时任务：每分钟检查订单失效时间（30分钟未接单自动过期）
+    // 启动订单过期后台任务（不阻塞主服务器运行）
     let expiration_handle = tokio::spawn(orders::expiration::run_expiration_worker(app_state_clone));
 
-    // 等待 HTTP 服务器和定时任务完成
-    let _ = tokio::try_join!(server_handle, expiration_handle)?;
+    // 运行 HTTP 服务器（阻塞直到停止）
+    server.await?;
+
+    // 等待后台任务结束（正常情况下不会返回，除非出现 panic 或关闭）
+    let _ = expiration_handle.await;
 
     Ok(())
 }

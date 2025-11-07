@@ -1,8 +1,8 @@
 use crate::{
+    dashboard, foods,
     openapi::{openapi_json, serve_swagger},
-    users, foods, orders, dashboard, AppState,
+    orders, upload, users, wishes, AppState,
 };
-use crate::wishes; // wishes handlers module declared at root via mod wishes in main
 use ntex::web;
 use std::sync::Arc;
 
@@ -24,7 +24,7 @@ pub fn route(_state: Arc<AppState>, cfg: &mut web::ServiceConfig) {
                 .route("", web::get().to(users::view::get_user_info))
                 .route("", web::post().to(users::update::change_info))
                 .route("/is-register", web::get().to(users::view::is_register))
-                .route("/role-switch", web::post().to(users::role::switch_role))
+                .route("/role-switch", web::post().to(users::role::switch_role)),
         )
         .service(
             // 关联
@@ -47,18 +47,24 @@ pub fn route(_state: Arc<AppState>, cfg: &mut web::ServiceConfig) {
             .route("", web::post().to(foods::new::create_food))
             .route("", web::get().to(foods::view::get_foods))
             .route("/marks", web::get().to(foods::view::get_marked_foods))
-            .route("/blind_box/draw", web::post().to(foods::view::draw_blind_box))
+            .route(
+                "/blind_box/draw",
+                web::post().to(foods::view::draw_blind_box),
+            )
             .route("/mark", web::post().to(foods::update::mark_food))
-            .route("/mark/{food_id}/{mark_type}", web::delete().to(foods::update::unmark_food))
+            .route(
+                "/mark/{food_id}/{mark_type}",
+                web::delete().to(foods::update::unmark_food),
+            )
             .route("/{id}", web::get().to(foods::view::get_food_detail))
             .route("/{id}", web::put().to(foods::update::update_food))
-            .route("/{id}", web::delete().to(foods::delete::delete_food))
+            .route("/{id}", web::delete().to(foods::delete::delete_food)),
     );
     cfg.service(
         web::scope("/food_tags")
             .route("", web::post().to(foods::new::create_tag))
             .route("", web::get().to(foods::view::get_tags))
-            .route("/{id}", web::delete().to(foods::delete::delete_tag))
+            .route("/{id}", web::delete().to(foods::delete::delete_tag)),
     );
 
     // 订单相关路由
@@ -67,22 +73,27 @@ pub fn route(_state: Arc<AppState>, cfg: &mut web::ServiceConfig) {
             .route("", web::post().to(orders::new::create_order))
             .route("", web::get().to(orders::view::get_orders))
             .route("/{id}", web::get().to(orders::view::get_order_detail))
-            .route("/{id}", web::delete().to(orders::delete::delete_order))
+            .route("/{id}", web::delete().to(orders::delete::delete_order)),
     );
     // 状态更新与未完成统计（放在单独 scope 以兼容旧设计）
     cfg.service(
-        web::scope("/orders-status")
-                    .route("", web::put().to(orders::update::update_order_status))
+        web::scope("/orders-status").route("", web::put().to(orders::update::update_order_status)),
     );
     // 订单评分
     cfg.service(
         web::scope("/orders-rating")
-            .route("/{order_id}", web::post().to(orders::rating::create_order_rating))
-            .route("/{order_id}", web::get().to(orders::rating::get_order_rating))
+            .route(
+                "/{order_id}",
+                web::post().to(orders::rating::create_order_rating),
+            )
+            .route(
+                "/{order_id}",
+                web::get().to(orders::rating::get_order_rating),
+            ),
     );
     cfg.service(
         web::scope("/orders-incomplete")
-            .route("/{id}", web::get().to(orders::view::get_incomplete_order))
+            .route("/{id}", web::get().to(orders::view::get_incomplete_order)),
     );
 
     // 心愿相关路由
@@ -91,27 +102,48 @@ pub fn route(_state: Arc<AppState>, cfg: &mut web::ServiceConfig) {
             .route("", web::post().to(wishes::new::create_wish))
             .route("", web::get().to(wishes::view::get_wishes))
             .route("/{id}", web::get().to(wishes::view::get_wish_detail))
-            .route("/{id}", web::delete().to(wishes::update::disable_wish))
+            .route("/{id}", web::delete().to(wishes::update::disable_wish)),
     );
     cfg.service(
         web::scope("/wish_claims")
             .route("", web::post().to(wishes::claim::claim_wish))
             .route("/status", web::put().to(wishes::claim::update_wish_claim))
-            .route("/{claim_id}/checkins", web::post().to(wishes::checkin::create_wish_claim_checkin))
-            .route("/{claim_id}/checkins", web::get().to(wishes::checkin::list_wish_claim_checkins))
+            .route(
+                "/{claim_id}/checkins",
+                web::post().to(wishes::checkin::create_wish_claim_checkin),
+            )
+            .route(
+                "/{claim_id}/checkins",
+                web::get().to(wishes::checkin::list_wish_claim_checkins),
+            ),
+    );
+    cfg.service(
+        web::scope("/upload-token").route("", web::get().to(upload::upload::get_qiniu_token)),
     );
 
     // 看板 / 组活动
-    cfg.service(
-        web::scope("/groups")
-            .route("/{group_id}/activities", web::get().to(dashboard::activities::get_group_activities))
-    );
+    cfg.service(web::scope("/groups").route(
+        "/{group_id}/activities",
+        web::get().to(dashboard::activities::get_group_activities),
+    ));
     // 看板 / 综合指标
     cfg.service(
         web::scope("/dashboard")
-            .route("/top-foods", web::get().to(dashboard::metrics::get_top_food_orders))
-            .route("/my/orders-today", web::get().to(dashboard::metrics::get_my_today_orders))
-            .route("/my/order-stats", web::get().to(dashboard::metrics::get_my_order_stats))
-            .route("/my/points-journey", web::get().to(dashboard::metrics::get_points_journey))
+            .route(
+                "/top-foods",
+                web::get().to(dashboard::metrics::get_top_food_orders),
+            )
+            .route(
+                "/my/orders-today",
+                web::get().to(dashboard::metrics::get_my_today_orders),
+            )
+            .route(
+                "/my/order-stats",
+                web::get().to(dashboard::metrics::get_my_order_stats),
+            )
+            .route(
+                "/my/points-journey",
+                web::get().to(dashboard::metrics::get_points_journey),
+            ),
     );
 }

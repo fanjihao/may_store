@@ -123,6 +123,11 @@ pub struct FoodOut {
     pub tags: Vec<FoodTagOut>,
     pub is_marked_like: bool,
     pub is_marked_not_recommend: bool,
+    // 统计字段（来自 food_stats 缓存表）
+    pub total_order_count: i32,
+    pub completed_order_count: i32,
+    pub last_order_time: Option<DateTime<Utc>>,
+    pub last_complete_time: Option<DateTime<Utc>>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -153,8 +158,74 @@ impl From<(FoodRecord, Vec<TagRecord>, Vec<MarkTypeEnum>)> for FoodOut {
                 .collect(),
             is_marked_like: like,
             is_marked_not_recommend: not_rec,
+            total_order_count: 0,
+            completed_order_count: 0,
+            last_order_time: None,
+            last_complete_time: None,
             created_at: f.created_at,
             updated_at: f.updated_at,
+        }
+    }
+}
+
+// 专用于列表/详情的合并行（含统计）
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
+pub struct FoodWithStatsRecord {
+    pub food_id: i64,
+    pub food_name: String,
+    pub food_photo: Option<String>,
+    pub food_types: i16,
+    pub food_status: FoodStatusEnum,
+    pub submit_role: SubmitRoleEnum,
+    pub apply_status: ApplyStatusEnum,
+    pub apply_remark: Option<String>,
+    pub created_by: i64,
+    pub owner_user_id: Option<i64>,
+    pub group_id: Option<i64>,
+    pub approved_at: Option<DateTime<Utc>>,
+    pub approved_by: Option<i64>,
+    pub is_del: i16,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+    pub total_order_count: Option<i32>,
+    pub completed_order_count: Option<i32>,
+    pub last_order_time: Option<DateTime<Utc>>,
+    pub last_complete_time: Option<DateTime<Utc>>,
+}
+
+impl FoodOut {
+    pub fn from_with_stats(
+        row: FoodWithStatsRecord,
+        tags: Vec<TagRecord>,
+        marks: Vec<MarkTypeEnum>,
+    ) -> Self {
+        let like = marks.iter().any(|m| matches!(m, MarkTypeEnum::LIKE));
+        let not_rec = marks.iter().any(|m| matches!(m, MarkTypeEnum::NOT_RECOMMEND));
+        FoodOut {
+            food_id: row.food_id,
+            food_name: row.food_name,
+            food_photo: row.food_photo,
+            category: FoodCategory::from_i32(row.food_types as i32)
+                .unwrap_or(FoodCategory::Breakfast),
+            food_status: row.food_status,
+            apply_status: row.apply_status,
+            submit_role: row.submit_role,
+            apply_remark: row.apply_remark,
+            tags: tags
+                .into_iter()
+                .map(|t| FoodTagOut {
+                    tag_id: t.tag_id,
+                    tag_name: t.tag_name,
+                })
+                .collect(),
+            is_marked_like: like,
+            is_marked_not_recommend: not_rec,
+            total_order_count: row.total_order_count.unwrap_or(0),
+            completed_order_count: row.completed_order_count.unwrap_or(0),
+            last_order_time: row.last_order_time,
+            last_complete_time: row.last_complete_time,
+            created_at: row.created_at,
+            updated_at: row.updated_at,
         }
     }
 }

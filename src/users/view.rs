@@ -42,7 +42,9 @@ pub async fn login(
     let account = user.username.clone();
 
     let record = sqlx::query_as::<_, UserRecord>(
-        "SELECT user_id, username, email, role, love_point, avatar, phone, associate_id, status, created_at, updated_at, password_hash, password_algo, gender, birthday, phone_verified, login_method, last_login_at, password_updated_at, is_temp_password, push_id, last_role_switch_at FROM users WHERE username = $1"
+        r#"SELECT u.user_id, u.username, u.email, u.role, u.love_point, u.avatar, u.phone, u.associate_id, u.status, u.created_at, u.updated_at, u.password_hash, u.password_algo, u.gender, u.birthday, u.phone_verified, u.login_method, u.last_login_at, u.password_updated_at, u.is_temp_password, u.push_id, u.last_role_switch_at,
+           (SELECT agm.group_id FROM association_group_members agm JOIN association_groups g ON g.group_id=agm.group_id AND g.status=1 WHERE agm.user_id=u.user_id ORDER BY agm.is_primary DESC, agm.group_id ASC LIMIT 1) AS group_id
+           FROM users u WHERE u.username = $1"#
     )
         .bind(&account)
         .fetch_optional(db_pool)
@@ -111,9 +113,11 @@ pub async fn get_user_info(
     }
     // 兜底查询
     let db = &state.db_pool;
-    let rec = sqlx::query_as::<_, UserRecord>(
-        "SELECT user_id, username, email, role, love_point, avatar, phone, associate_id, status, created_at, updated_at, password_hash, password_algo, gender, birthday, phone_verified, login_method, last_login_at, password_updated_at, is_temp_password, push_id, last_role_switch_at FROM users WHERE user_id = $1"
-    )
+    let rec = sqlx::query_as::<_, UserRecord>(r#"
+        SELECT u.user_id, u.username, u.email, u.role, u.love_point, u.avatar, u.phone, u.associate_id, u.status, u.created_at, u.updated_at, u.password_hash, u.password_algo, u.gender, u.birthday, u.phone_verified, u.login_method, u.last_login_at, u.password_updated_at, u.is_temp_password, u.push_id, u.last_role_switch_at,
+               (SELECT agm.group_id FROM association_group_members agm JOIN association_groups g ON g.group_id=agm.group_id AND g.status=1 WHERE agm.user_id=u.user_id ORDER BY agm.is_primary DESC, agm.group_id ASC LIMIT 1) AS group_id
+        FROM users u WHERE u.user_id = $1
+    "#)
     .bind(token.user_id)
     .fetch_one(db)
     .await?;

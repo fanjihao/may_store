@@ -2,7 +2,8 @@ use crate::{
     errors::CustomError,
     models::foods::{
         BlindBoxDrawInput, BlindBoxDrawResultOut, BlindBoxFoodSnapshot, FoodCategory,
-        FoodFilterQuery, FoodOut, FoodRecord, FoodTagOut, MarkTypeEnum, TagRecord,
+        FoodFilterQuery, FoodOut, FoodRecord, FoodWithStatsRecord, FoodTagOut, MarkTypeEnum,
+        TagRecord,
     },
     models::users::UserToken,
     AppState,
@@ -64,8 +65,8 @@ pub async fn get_foods(
     } else {
         format!("WHERE {}", conditions.join(" AND "))
     };
-    let base_sql = format!("SELECT food_id, food_name, food_photo, food_types, food_status, submit_role, apply_status, apply_remark, created_by, owner_user_id, group_id, approved_at, approved_by, is_del, created_at, updated_at FROM foods {} ORDER BY created_at DESC LIMIT 100", where_sql);
-    let mut query = sqlx::query_as::<_, FoodRecord>(&base_sql);
+    let base_sql = format!("SELECT f.food_id, f.food_name, f.food_photo, f.food_types, f.food_status, f.submit_role, f.apply_status, f.apply_remark, f.created_by, f.owner_user_id, f.group_id, f.approved_at, f.approved_by, f.is_del, f.created_at, f.updated_at, fs.total_order_count, fs.completed_order_count, fs.last_order_time, fs.last_complete_time FROM foods f LEFT JOIN food_stats fs ON fs.food_id=f.food_id {} ORDER BY f.created_at DESC LIMIT 100", where_sql);
+    let mut query = sqlx::query_as::<_, FoodWithStatsRecord>(&base_sql);
     for b in binds {
         query = match b {
             BindValue::Text(v) => query.bind(v),
@@ -75,35 +76,64 @@ pub async fn get_foods(
     }
     let rows = query.fetch_all(db).await?;
 
-    let mut out_list: Vec<FoodOut> = Vec::new();
-    for rec in rows {
-        let tag_rows: Vec<TagRecord> = sqlx::query_as("SELECT t.tag_id, t.tag_name, t.sort, t.created_at FROM tags t JOIN food_tags_map m ON t.tag_id=m.tag_id WHERE m.food_id=$1")
-			.bind(rec.food_id)
-			.fetch_all(db)
-			.await?;
-        let marks: Vec<String> = if let Some(t) = &token {
-            sqlx::query(
-                "SELECT mark_type::text FROM user_food_mark WHERE user_id=$1 AND food_id=$2",
+    // 收集所有 food_id 用于批量查询标签与标记
+    let food_ids: Vec<i64> = rows.iter().map(|r| r.food_id).collect();
+    let mut tags_map: std::collections::HashMap<i64, Vec<TagRecord>> = std::collections::HashMap::new();
+    if !food_ids.is_empty() {
+        let tag_rows_all = sqlx::query_as::<_, TagRecord>(
+            "SELECT t.tag_id, t.tag_name, t.sort, t.created_at FROM tags t JOIN food_tags_map m ON t.tag_id=m.tag_id WHERE m.food_id = ANY($1)"
+        )
+        .bind(&food_ids)
+        .fetch_all(db)
+        .await?;
+        // 重新再查一遍 food_id 与 tag 关联（需要 food_id）
+        let map_rows = sqlx::query(
+            "SELECT m.food_id, t.tag_id, t.tag_name, t.sort, t.created_at FROM food_tags_map m JOIN tags t ON t.tag_id=m.tag_id WHERE m.food_id = ANY($1)"
+        )
+        .bind(&food_ids)
+        .fetch_all(db)
+        .await?;
+        for r in map_rows {
+            let fid: i64 = r.get("food_id");
+            let tag = TagRecord {
+                tag_id: r.get("tag_id"),
+                tag_name: r.get("tag_name"),
+                sort: r.get("sort"),
+                created_at: r.get("created_at"),
+            };
+            tags_map.entry(fid).or_default().push(tag);
+        }
+    }
+
+    // 批量查询用户标记
+    let mut marks_map: std::collections::HashMap<i64, Vec<MarkTypeEnum>> = std::collections::HashMap::new();
+    if let Some(t) = &token {
+        if !food_ids.is_empty() {
+            let mark_rows = sqlx::query(
+                "SELECT food_id, mark_type::text AS mark_type FROM user_food_mark WHERE user_id=$1 AND food_id = ANY($2)"
             )
             .bind(t.user_id as i64)
-            .bind(rec.food_id)
+            .bind(&food_ids)
             .fetch_all(db)
-            .await?
-            .into_iter()
-            .map(|r| r.get::<String, _>(0))
-            .collect()
-        } else {
-            Vec::new()
-        };
-        let mark_enums = marks
-            .into_iter()
-            .filter_map(|s| match s.as_str() {
-                "LIKE" => Some(MarkTypeEnum::LIKE),
-                "NOT_RECOMMEND" => Some(MarkTypeEnum::NOT_RECOMMEND),
-                _ => None,
-            })
-            .collect();
-        out_list.push(FoodOut::from((rec, tag_rows, mark_enums)));
+            .await?;
+            for r in mark_rows {
+                let fid: i64 = r.get("food_id");
+                let mtxt: String = r.get("mark_type");
+                let enum_val = match mtxt.as_str() {
+                    "LIKE" => Some(MarkTypeEnum::LIKE),
+                    "NOT_RECOMMEND" => Some(MarkTypeEnum::NOT_RECOMMEND),
+                    _ => None,
+                };
+                if let Some(ev) = enum_val { marks_map.entry(fid).or_default().push(ev); }
+            }
+        }
+    }
+
+    let mut out_list: Vec<FoodOut> = Vec::with_capacity(rows.len());
+    for rec in rows {
+        let tag_vec = tags_map.remove(&rec.food_id).unwrap_or_default();
+        let mark_vec = marks_map.remove(&rec.food_id).unwrap_or_default();
+        out_list.push(FoodOut::from_with_stats(rec, tag_vec, mark_vec));
     }
     Ok(HttpResponse::Ok().json(&out_list))
 }
@@ -121,9 +151,9 @@ pub async fn get_food_detail(
     id: Path<(i64,)>,
 ) -> Result<impl Responder, CustomError> {
     let db = &state.db_pool;
-    let rec_opt = sqlx::query_as::<_, FoodRecord>(
-		"SELECT food_id, food_name, food_photo, food_types, food_status, submit_role, apply_status, apply_remark, created_by, owner_user_id, group_id, approved_at, approved_by, is_del, created_at, updated_at FROM foods WHERE food_id=$1"
-	)
+    let rec_opt = sqlx::query_as::<_, FoodWithStatsRecord>(
+        "SELECT f.food_id, f.food_name, f.food_photo, f.food_types, f.food_status, f.submit_role, f.apply_status, f.apply_remark, f.created_by, f.owner_user_id, f.group_id, f.approved_at, f.approved_by, f.is_del, f.created_at, f.updated_at, fs.total_order_count, fs.completed_order_count, fs.last_order_time, fs.last_complete_time FROM foods f LEFT JOIN food_stats fs ON fs.food_id=f.food_id WHERE f.food_id=$1"
+    )
 	.bind(id.0)
 	.fetch_optional(db)
 	.await?;
@@ -155,7 +185,7 @@ pub async fn get_food_detail(
             _ => None,
         })
         .collect();
-    Ok(HttpResponse::Ok().json(&FoodOut::from((rec, tag_rows, mark_enums))))
+    Ok(HttpResponse::Ok().json(&FoodOut::from_with_stats(rec, tag_rows, mark_enums)))
 }
 
 #[utoipa::path(
@@ -194,10 +224,10 @@ pub async fn get_marked_foods(
     state: State<Arc<AppState>>,
 ) -> Result<impl Responder, CustomError> {
     let db = &state.db_pool;
-    let rows: Vec<FoodRecord> = sqlx::query_as(
-		"SELECT f.food_id, f.food_name, f.food_photo, f.food_types, f.food_status, f.submit_role, f.apply_status, f.apply_remark, f.created_by, f.owner_user_id, f.group_id, f.approved_at, f.approved_by, f.is_del, f.created_at, f.updated_at \
-		 FROM foods f JOIN user_food_mark m ON f.food_id=m.food_id WHERE m.user_id=$1 AND m.mark_type='LIKE'"
-	)
+    let rows: Vec<FoodWithStatsRecord> = sqlx::query_as(
+        "SELECT f.food_id, f.food_name, f.food_photo, f.food_types, f.food_status, f.submit_role, f.apply_status, f.apply_remark, f.created_by, f.owner_user_id, f.group_id, f.approved_at, f.approved_by, f.is_del, f.created_at, f.updated_at, fs.total_order_count, fs.completed_order_count, fs.last_order_time, fs.last_complete_time \
+         FROM foods f LEFT JOIN food_stats fs ON fs.food_id=f.food_id JOIN user_food_mark m ON f.food_id=m.food_id WHERE m.user_id=$1 AND m.mark_type='LIKE'"
+    )
 	.bind(token.user_id as i64)
 	.fetch_all(db)
 	.await?;
@@ -207,7 +237,7 @@ pub async fn get_marked_foods(
 			.bind(rec.food_id)
 			.fetch_all(db)
 			.await?;
-        out_list.push(FoodOut::from((rec, tag_rows, vec![MarkTypeEnum::LIKE])));
+        out_list.push(FoodOut::from_with_stats(rec, tag_rows, vec![MarkTypeEnum::LIKE]));
     }
     Ok(HttpResponse::Ok().json(&out_list))
 }

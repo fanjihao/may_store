@@ -20,7 +20,7 @@ use crate::{foods, models, orders, users};
         users::invitation::new_invitation,
         users::invitation::confirm_invitation,
         users::invitation::cancel_invitation,
-    users::role::switch_role,
+        users::role::switch_role,
         // 菜品相关
         foods::new::create_food,
         foods::update::update_food,

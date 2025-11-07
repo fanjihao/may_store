@@ -1452,6 +1452,7 @@ dependencies = [
  "lazy_static",
  "log",
  "ntex",
+ "ntex-cors",
  "ntex-multipart",
  "password-hash",
  "qiniu-sdk",
@@ -1648,6 +1649,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "69a7e111d946bb915d712df496728ca2a120b1b5643f66c580f13023bce46fda"
 dependencies = [
  "ntex-bytes",
+]
+
+[[package]]
+name = "ntex-cors"
+version = "2.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f427f8d30b881189553986e3a54c80677c32112170b8175d6dd5b925b25c7d16"
+dependencies = [
+ "derive_more",
+ "futures",
+ "ntex",
 ]
 
 [[package]]

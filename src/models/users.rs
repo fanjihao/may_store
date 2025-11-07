@@ -95,6 +95,8 @@ pub struct UserPublic {
     pub is_temp_password: bool,
     pub push_id: Option<String>,
     pub last_role_switch_at: Option<chrono::DateTime<chrono::Utc>>,
+    /// 用户所在的活跃组ID（若用户不在任何组则为 null）
+    pub group_id: Option<i64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
@@ -134,6 +136,7 @@ pub struct UserRecord {
     pub is_temp_password: bool,
     pub push_id: Option<String>,
     pub last_role_switch_at: Option<chrono::DateTime<chrono::Utc>>,
+    pub group_id: Option<i64>,
 }
 
 impl From<UserRecord> for UserPublic {
@@ -158,6 +161,7 @@ impl From<UserRecord> for UserPublic {
             is_temp_password: record.is_temp_password,
             push_id: record.push_id,
             last_role_switch_at: record.last_role_switch_at,
+            group_id: record.group_id,
         }
     }
 }
@@ -214,11 +218,12 @@ impl<E: ErrorRenderer> FromRequest<E> for UserToken {
                 let db = &state.db_pool;
                 if let Ok(record) = sqlx::query_as::<_, UserRecord>(
                     r#"
-                    SELECT user_id, username, email, role, love_point, avatar, phone,
-                           associate_id, status, created_at, updated_at, password_hash,
-                           password_algo, gender, birthday, phone_verified, login_method,
-                           last_login_at, password_updated_at, is_temp_password, push_id, last_role_switch_at
-                    FROM users WHERE user_id=$1 AND status=1
+                    SELECT u.user_id, u.username, u.email, u.role, u.love_point, u.avatar, u.phone,
+                           u.associate_id, u.status, u.created_at, u.updated_at, u.password_hash,
+                           u.password_algo, u.gender, u.birthday, u.phone_verified, u.login_method,
+                           u.last_login_at, u.password_updated_at, u.is_temp_password, u.push_id, u.last_role_switch_at,
+                           (SELECT agm.group_id FROM association_group_members agm JOIN association_groups g ON g.group_id=agm.group_id AND g.status=1 WHERE agm.user_id=u.user_id ORDER BY agm.is_primary DESC, agm.group_id ASC LIMIT 1) AS group_id
+                    FROM users u WHERE u.user_id=$1 AND u.status=1
                     "#
                 )
                 .bind(uid)
