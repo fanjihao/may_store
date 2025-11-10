@@ -2,8 +2,7 @@ use crate::{
     errors::CustomError,
     models::foods::{
         BlindBoxDrawInput, BlindBoxDrawResultOut, BlindBoxFoodSnapshot, FoodCategory,
-        FoodFilterQuery, FoodOut, FoodRecord, FoodWithStatsRecord, FoodTagOut, MarkTypeEnum,
-        TagRecord,
+        FoodFilterQuery, FoodOut, FoodTagOut, FoodWithStatsRecord, MarkTypeEnum, TagRecord,
     },
     models::users::UserToken,
     AppState,
@@ -12,7 +11,7 @@ use ntex::web::{
     types::{Path, Query, State},
     HttpResponse, Responder,
 };
-use sqlx::Row;
+use sqlx::{QueryBuilder, Row};
 use std::sync::Arc;
 
 #[utoipa::path(
@@ -35,65 +34,52 @@ pub async fn get_foods(
     q: Query<FoodFilterQuery>,
 ) -> Result<impl Responder, CustomError> {
     let db = &state.db_pool;
-    // 动态条件构建（仅处理 keyword / category / group_id）
-    enum BindValue {
-        Text(String),
-        I16(i16),
-        I64(i64),
-    }
-    let mut conditions: Vec<String> = Vec::new();
-    let mut binds: Vec<BindValue> = Vec::new();
-    let mut param_index: usize = 1;
+
+    let mut qb: QueryBuilder<sqlx::Postgres> = QueryBuilder::new(
+        "SELECT f.food_id, f.food_name, f.food_photo, f.food_types, f.food_status, f.submit_role, f.apply_status, f.apply_remark, f.created_by, f.owner_user_id, f.group_id, f.approved_at, f.approved_by, f.is_del, f.created_at, f.updated_at, fs.total_order_count, fs.completed_order_count, fs.last_order_time, fs.last_complete_time FROM foods f LEFT JOIN food_stats fs ON fs.food_id=f.food_id WHERE f.is_del=0"
+    );
     if let Some(kw) = &q.keyword {
-        conditions.push(format!("food_name ILIKE '%' || ${} || '%'", param_index));
-        binds.push(BindValue::Text(kw.clone()));
-        param_index += 1;
+        qb.push(" AND f.food_name ILIKE '%' || ")
+            .push_bind(kw)
+            .push(" || '%'");
     }
     if let Some(cat) = q.category {
-        conditions.push(format!("food_types = ${}", param_index));
-        binds.push(BindValue::I16(cat as i16));
-        param_index += 1;
+        qb.push(" AND f.food_types = ").push_bind(cat as i16);
+    }
+    if let Some(fs) = q.food_status {
+        qb.push(" AND f.food_status = ").push_bind(fs);
+    }
+    if let Some(as_) = q.apply_status {
+        qb.push(" AND f.apply_status = ").push_bind(as_);
+    }
+    if let Some(sr) = q.submit_role {
+        qb.push(" AND f.submit_role = ").push_bind(sr);
     }
     if let Some(gid) = q.group_id {
-        conditions.push(format!("group_id = ${}", param_index));
-        binds.push(BindValue::I64(gid as i64));
-        param_index += 1;
+        qb.push(" AND f.group_id = ").push_bind(gid);
     }
-    conditions.push("is_del = 0".into());
-    let where_sql = if conditions.is_empty() {
-        String::new()
-    } else {
-        format!("WHERE {}", conditions.join(" AND "))
-    };
-    let base_sql = format!("SELECT f.food_id, f.food_name, f.food_photo, f.food_types, f.food_status, f.submit_role, f.apply_status, f.apply_remark, f.created_by, f.owner_user_id, f.group_id, f.approved_at, f.approved_by, f.is_del, f.created_at, f.updated_at, fs.total_order_count, fs.completed_order_count, fs.last_order_time, fs.last_complete_time FROM foods f LEFT JOIN food_stats fs ON fs.food_id=f.food_id {} ORDER BY f.created_at DESC LIMIT 100", where_sql);
-    let mut query = sqlx::query_as::<_, FoodWithStatsRecord>(&base_sql);
-    for b in binds {
-        query = match b {
-            BindValue::Text(v) => query.bind(v),
-            BindValue::I16(v) => query.bind(v),
-            BindValue::I64(v) => query.bind(v),
-        };
+    if let Some(tag_ids) = &q.tag_ids {
+        if !tag_ids.is_empty() {
+            qb.push(" AND EXISTS (SELECT 1 FROM food_tags_map m WHERE m.food_id=f.food_id AND m.tag_id = ANY(").push_bind(tag_ids).push("))");
+        }
     }
-    let rows = query.fetch_all(db).await?;
+    if q.only_active.unwrap_or(false) {
+        qb.push(" AND f.food_status='NORMAL' AND f.apply_status='APPROVED'");
+    }
+    qb.push(" ORDER BY f.created_at DESC LIMIT 100");
+    let rows: Vec<FoodWithStatsRecord> = qb.build_query_as().fetch_all(db).await?;
 
-    // 收集所有 food_id 用于批量查询标签与标记
+    // ===== 批量标签查询 =====
     let food_ids: Vec<i64> = rows.iter().map(|r| r.food_id).collect();
     let mut tags_map: std::collections::HashMap<i64, Vec<TagRecord>> = std::collections::HashMap::new();
     if !food_ids.is_empty() {
-        let tag_rows_all = sqlx::query_as::<_, TagRecord>(
-            "SELECT t.tag_id, t.tag_name, t.sort, t.created_at FROM tags t JOIN food_tags_map m ON t.tag_id=m.tag_id WHERE m.food_id = ANY($1)"
-        )
-        .bind(&food_ids)
-        .fetch_all(db)
-        .await?;
-        // 重新再查一遍 food_id 与 tag 关联（需要 food_id）
-        let map_rows = sqlx::query(
+        let tag_rows = sqlx::query(
             "SELECT m.food_id, t.tag_id, t.tag_name, t.sort, t.created_at FROM food_tags_map m JOIN tags t ON t.tag_id=m.tag_id WHERE m.food_id = ANY($1)"
         )
         .bind(&food_ids)
         .fetch_all(db)
         .await?;
-        for r in map_rows {
+        for r in tag_rows {
             let fid: i64 = r.get("food_id");
             let tag = TagRecord {
                 tag_id: r.get("tag_id"),
@@ -105,7 +91,7 @@ pub async fn get_foods(
         }
     }
 
-    // 批量查询用户标记
+    // ===== 批量用户标记查询 =====
     let mut marks_map: std::collections::HashMap<i64, Vec<MarkTypeEnum>> = std::collections::HashMap::new();
     if let Some(t) = &token {
         if !food_ids.is_empty() {
@@ -129,6 +115,7 @@ pub async fn get_foods(
         }
     }
 
+    // ===== 组装输出 =====
     let mut out_list: Vec<FoodOut> = Vec::with_capacity(rows.len());
     for rec in rows {
         let tag_vec = tags_map.remove(&rec.food_id).unwrap_or_default();
@@ -237,7 +224,11 @@ pub async fn get_marked_foods(
 			.bind(rec.food_id)
 			.fetch_all(db)
 			.await?;
-        out_list.push(FoodOut::from_with_stats(rec, tag_rows, vec![MarkTypeEnum::LIKE]));
+        out_list.push(FoodOut::from_with_stats(
+            rec,
+            tag_rows,
+            vec![MarkTypeEnum::LIKE],
+        ));
     }
     Ok(HttpResponse::Ok().json(&out_list))
 }
