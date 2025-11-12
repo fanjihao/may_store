@@ -2,33 +2,37 @@ use crate::models::users::UserToken;
 use crate::{
     errors::CustomError,
     models::orders::{
-        OrderItemOut, OrderOutNew, OrderQuery, OrderRecord, OrderStatusEnum, OrderStatusHistoryOut,
+        OrderItemOut,
+        OrderOutNew,
+        OrderQuery,
+        OrderRecord,
+        OrderStatusEnum,
+        OrderStatusHistoryOut,
     },
     AppState,
 };
-use chrono::{DateTime, Utc};
-use ntex::web::{
-    types::{Path, Query, State},
-    HttpResponse, Responder,
-};
+use chrono::{ DateTime, Utc };
+use ntex::web::{ types::{ Path, Query, State }, HttpResponse, Responder };
 use sqlx::Row;
 use std::sync::Arc;
 
 #[utoipa::path(
-	get,
-	path = "/orders",
-	tag = "订单",
-	params(OrderQuery),
-	responses((status = 200, body = [OrderOutNew]))
+    get,
+    path = "/orders",
+    tag = "订单",
+    params(OrderQuery),
+    responses((status = 200, body = [OrderOutNew]))
 )]
 pub async fn get_orders(
     user_token: UserToken,
     state: State<Arc<AppState>>,
-    query: Query<OrderQuery>,
+    query: Query<OrderQuery>
 ) -> Result<impl Responder, CustomError> {
     let db = &state.db_pool;
     // 使用 QueryBuilder 动态构建过滤条件
-    let mut qb = sqlx::QueryBuilder::<sqlx::Postgres>::new("SELECT order_id, user_id, receiver_id, group_id, status, goal_time, points_cost, points_reward, cancel_reason, reject_reason, last_status_change_at, created_at, updated_at FROM orders");
+    let mut qb = sqlx::QueryBuilder::<sqlx::Postgres>::new(
+        "SELECT order_id, user_id, receiver_id, group_id, status, goal_time, points_cost, points_reward, cancel_reason, reject_reason, last_status_change_at, created_at, updated_at FROM orders"
+    );
     let mut first = true;
     qb.push(" WHERE ");
     if let Some(uid) = query.user_id.or(Some(user_token.user_id)) {
@@ -53,11 +57,15 @@ pub async fn get_orders(
     if let Some(st) = query.status {
         if !first {
             qb.push(" AND ");
-        } else {
-            first = false;
         }
+        // 直接绑定枚举，让 sqlx 以 order_status_enum 类型传参，避免 enum=text 比较错误
         qb.push(" status = ");
-        qb.push_bind(format!("{:?}", st));
+        qb.push_bind(st); // st: OrderStatusEnum implements sqlx::Type + Encode
+    } else if query.expired_only.unwrap_or(false) {
+        if !first {
+            qb.push(" AND ");
+        }
+        qb.push(" status IN ('EXPIRED', 'CANCELLED', 'REJECTED', 'SYSTEM_CLOSED') ");
     }
     qb.push(" ORDER BY created_at DESC ");
     qb.push(" LIMIT ");
@@ -67,19 +75,23 @@ pub async fn get_orders(
     for r in rows {
         let order = map_record(&r);
         // items
-        let item_rows = sqlx::query("SELECT id, order_id, food_id, quantity, price, snapshot_json, created_at FROM order_items WHERE order_id=$1")
-			.bind(order.order_id)
-			.fetch_all(db)
-			.await?;
+        let item_rows = sqlx
+            ::query(
+                "SELECT id, order_id, food_id, quantity, price, snapshot_json, created_at FROM order_items WHERE order_id=$1"
+            )
+            .bind(order.order_id)
+            .fetch_all(db).await?;
         let items = item_rows
             .into_iter()
             .map(map_item_record_to_out(db))
             .collect::<Result<Vec<_>, _>>()?;
         // status history (last 5 for list)
-        let hist_rows = sqlx::query("SELECT from_status::text, to_status::text, changed_by, remark, changed_at FROM order_status_history WHERE order_id=$1 ORDER BY changed_at DESC LIMIT 5")
-			.bind(order.order_id)
-			.fetch_all(db)
-			.await?;
+        let hist_rows = sqlx
+            ::query(
+                "SELECT from_status::text, to_status::text, changed_by, remark, changed_at FROM order_status_history WHERE order_id=$1 ORDER BY changed_at DESC LIMIT 5"
+            )
+            .bind(order.order_id)
+            .fetch_all(db).await?;
         let history = hist_rows.into_iter().map(map_history_row).collect();
         out_list.push(OrderOutNew::from((order, items, history)));
     }
@@ -87,60 +99,67 @@ pub async fn get_orders(
 }
 
 #[utoipa::path(
-	get,
-	path = "/orders/{id}",
-	tag = "订单",
-	params(("id" = i64, Path, description = "订单ID")),
-	responses((status = 200, body = OrderOutNew))
+    get,
+    path = "/orders/{id}",
+    tag = "订单",
+    params(("id" = i64, Path, description = "订单ID")),
+    responses((status = 200, body = OrderOutNew))
 )]
 pub async fn get_order_detail(
     _user_token: UserToken,
     state: State<Arc<AppState>>,
-    id: Path<i64>,
+    id: Path<i64>
 ) -> Result<impl Responder, CustomError> {
     let db = &state.db_pool;
-    let row = sqlx::query("SELECT order_id, user_id, receiver_id, group_id, status, goal_time, points_cost, points_reward, cancel_reason, reject_reason, last_status_change_at, created_at, updated_at FROM orders WHERE order_id=$1")
-		.bind(*id)
-		.fetch_optional(db)
-		.await?;
+    let row = sqlx
+        ::query(
+            "SELECT order_id, user_id, receiver_id, group_id, status, goal_time, points_cost, points_reward, cancel_reason, reject_reason, last_status_change_at, created_at, updated_at FROM orders WHERE order_id=$1"
+        )
+        .bind(*id)
+        .fetch_optional(db).await?;
     let order_row = match row {
         Some(r) => r,
-        None => return Err(CustomError::BadRequest("订单不存在".into())),
+        None => {
+            return Err(CustomError::BadRequest("订单不存在".into()));
+        }
     };
     let order = map_record(&order_row);
-    let item_rows = sqlx::query("SELECT id, order_id, food_id, quantity, price, snapshot_json, created_at FROM order_items WHERE order_id=$1")
-		.bind(order.order_id)
-		.fetch_all(db)
-		.await?;
+    let item_rows = sqlx
+        ::query(
+            "SELECT id, order_id, food_id, quantity, price, snapshot_json, created_at FROM order_items WHERE order_id=$1"
+        )
+        .bind(order.order_id)
+        .fetch_all(db).await?;
     let items = item_rows
         .into_iter()
         .map(map_item_record_to_out(db))
         .collect::<Result<Vec<_>, _>>()?;
-    let hist_rows = sqlx::query("SELECT from_status::text, to_status::text, changed_by, remark, changed_at FROM order_status_history WHERE order_id=$1 ORDER BY changed_at")
-		.bind(order.order_id)
-		.fetch_all(db)
-		.await?;
+    let hist_rows = sqlx
+        ::query(
+            "SELECT from_status::text, to_status::text, changed_by, remark, changed_at FROM order_status_history WHERE order_id=$1 ORDER BY changed_at"
+        )
+        .bind(order.order_id)
+        .fetch_all(db).await?;
     let history = hist_rows.into_iter().map(map_history_row).collect();
     Ok(HttpResponse::Ok().json(&OrderOutNew::from((order, items, history))))
 }
 
 #[utoipa::path(
-	get,
-	path = "/orders-incomplete/{user_id}",
-	tag = "订单",
-	params(("user_id" = i64, Path, description = "用户ID")),
-	responses((status = 200, body = i32))
+    get,
+    path = "/orders-incomplete/{user_id}",
+    tag = "订单",
+    params(("user_id" = i64, Path, description = "用户ID")),
+    responses((status = 200, body = i32))
 )]
 pub async fn get_incomplete_order(
     state: State<Arc<AppState>>,
-    user_id: Path<i64>,
+    user_id: Path<i64>
 ) -> Result<impl Responder, CustomError> {
     let db = &state.db_pool;
-    let count =
-        sqlx::query("SELECT COUNT(*) as c FROM orders WHERE user_id=$1 AND status='PENDING'")
-            .bind(*user_id)
-            .fetch_one(db)
-            .await?;
+    let count = sqlx
+        ::query("SELECT COUNT(*) as c FROM orders WHERE user_id=$1 AND status='PENDING'")
+        .bind(*user_id)
+        .fetch_one(db).await?;
     let c: i64 = count.get("c");
     Ok(HttpResponse::Ok().json(&(c as i32)))
 }
@@ -173,8 +192,8 @@ pub fn map_record(row: &sqlx::postgres::PgRow) -> OrderRecord {
 }
 
 pub fn map_item_record_to_out<'a>(
-    _db: &'a sqlx::Pool<sqlx::Postgres>,
-) -> impl Fn(sqlx::postgres::PgRow) -> Result<OrderItemOut, CustomError> + 'a {
+    _db: &'a sqlx::Pool<sqlx::Postgres>
+) -> impl (Fn(sqlx::postgres::PgRow) -> Result<OrderItemOut, CustomError>) + 'a {
     move |r| {
         let food_id: i64 = r.get("food_id");
         Ok(OrderItemOut {
@@ -200,9 +219,8 @@ pub fn map_history_row(row: sqlx::postgres::PgRow) -> OrderStatusHistoryOut {
         "SYSTEM_CLOSED" => OrderStatusEnum::SYSTEM_CLOSED,
         _ => OrderStatusEnum::PENDING,
     };
-    let from_s = row
-        .get::<Option<String>, _>("from_status")
-        .and_then(|s| match s.as_str() {
+    let from_s = row.get::<Option<String>, _>("from_status").and_then(|s| {
+        match s.as_str() {
             "PENDING" => Some(OrderStatusEnum::PENDING),
             "ACCEPTED" => Some(OrderStatusEnum::ACCEPTED),
             "FINISHED" => Some(OrderStatusEnum::FINISHED),
@@ -211,7 +229,8 @@ pub fn map_history_row(row: sqlx::postgres::PgRow) -> OrderStatusHistoryOut {
             "REJECTED" => Some(OrderStatusEnum::REJECTED),
             "SYSTEM_CLOSED" => Some(OrderStatusEnum::SYSTEM_CLOSED),
             _ => None,
-        });
+        }
+    });
     OrderStatusHistoryOut {
         from_status: from_s,
         to_status: to_s,

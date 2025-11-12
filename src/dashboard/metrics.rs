@@ -12,6 +12,7 @@ use std::sync::Arc;
 pub struct TopFoodOrderOut {
     pub food_id: i64,
     pub food_name: String,
+    pub food_photo: String,
     pub order_count: i64,
 }
 
@@ -39,7 +40,7 @@ pub async fn get_top_food_orders(
     if rows.is_empty() {
         // 没有订单：随机抽取菜品
         let random_rows =
-            sqlx::query("SELECT food_id, food_name FROM foods ORDER BY random() LIMIT 5")
+            sqlx::query("SELECT food_id, food_name, food_photo FROM foods ORDER BY random() LIMIT 5")
                 .fetch_all(db)
                 .await?;
         if random_rows.is_empty() {
@@ -53,6 +54,7 @@ pub async fn get_top_food_orders(
             .map(|r| TopFoodOrderOut {
                 food_id: r.get("food_id"),
                 food_name: r.get("food_name"),
+                food_photo: r.get("food_photo"),
                 order_count: 0,
             })
             .collect();
@@ -66,6 +68,7 @@ pub async fn get_top_food_orders(
         .map(|r| TopFoodOrderOut {
             food_id: r.get("food_id"),
             food_name: r.get("food_name"),
+            food_photo: r.get("food_photo"),
             order_count: r.get::<i64, _>("order_count"),
         })
         .collect();

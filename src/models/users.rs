@@ -191,7 +191,7 @@ impl<E: ErrorRenderer> FromRequest<E> for UserToken {
         let redis_cache = state.redis_cache.clone();
         let auth_header = req.headers().get("Authorization").cloned();
 
-        println!("Authenticating request for path: {:#?}", auth_header);
+        // println!("Authenticating request for path: {:#?}", auth_header);
         async move {
             let mut raw = auth_header
                 .ok_or_else(|| CustomError::AuthFailed("No login authorization".into()))?
