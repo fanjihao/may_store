@@ -35,7 +35,6 @@ pub async fn get_wishes(
         if !first {
             qb.push(" AND ");
         }
-        first = false;
         qb.push(" created_by = ").push_bind(cb);
     }
     qb.push(" ORDER BY created_at DESC ");

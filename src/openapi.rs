@@ -14,6 +14,7 @@ use crate::{foods, models, orders, users};
         users::view::login,
         users::new::register,
         users::update::change_info,
+        users::view::get_current_info,
         users::view::get_user_info,
         users::view::is_register,
         users::invitation::get_invitation,

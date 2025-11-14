@@ -4,7 +4,6 @@ use crate::{
         users::UserToken,
         wishes::{
             WishClaimCheckinCreateInput, WishClaimCheckinOut, WishClaimCheckinRecord,
-            WishClaimStatusEnum,
         },
     },
     AppState,

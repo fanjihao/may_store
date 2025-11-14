@@ -21,10 +21,11 @@ pub fn route(_state: Arc<AppState>, cfg: &mut web::ServiceConfig) {
         .service(
             // 用户
             web::scope("/users")
-                .route("", web::get().to(users::view::get_user_info))
+                .route("", web::get().to(users::view::get_current_info))
                 .route("", web::post().to(users::update::change_info))
                 .route("/is-register", web::get().to(users::view::is_register))
-                .route("/role-switch", web::post().to(users::role::switch_role)),
+                .route("/role-switch", web::post().to(users::role::switch_role))
+                .route("/getInfoByUsername", web::get().to(users::view::get_user_info)),
         )
         .service(
             // 关联
