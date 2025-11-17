@@ -61,7 +61,23 @@ pub async fn get_invitation(
     .await?;
 
     let incoming = sqlx::query_as::<_, InvitationRequestOut>(
-        "SELECT request_id, requester_id, target_user_id, status, remark, created_at, handled_at FROM association_group_requests WHERE target_user_id = $1 ORDER BY request_id DESC"
+        "SELECT
+            request_id,
+            requester_id,
+            u.username as requester_username,
+            u.avatar as requester_avatar,
+            target_user_id,
+            agr.status,
+            remark,
+            agr.created_at,
+            handled_at
+        FROM
+            association_group_requests agr
+        LEFT JOIN users u ON u.user_id = target_user_id
+        WHERE
+            target_user_id = $1
+        ORDER BY
+            target_user_id DESC"
     )
     .bind(uid)
     .fetch_all(db)

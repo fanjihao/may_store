@@ -7,6 +7,8 @@ use sqlx::FromRow;
 pub struct InvitationRequestOut {
     pub request_id: i64,
     pub requester_id: i64,
+    pub requester_username: Option<String>,
+    pub requester_avatar: Option<String>,
     pub target_user_id: i64,
     pub status: i16, // 0待处理 1同意 2拒绝 3取消
     pub remark: Option<String>,
