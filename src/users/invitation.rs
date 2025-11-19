@@ -32,7 +32,6 @@ struct RoleRow {
 #[derive(FromRow)]
 struct CancelRow {
     request_id: i64,
-    requester_id: i64,
     status: i16,
 }
 
@@ -54,7 +53,23 @@ pub async fn get_invitation(
     let db = &state.db_pool;
     let uid = token.user_id;
     let outgoing = sqlx::query_as::<_, InvitationRequestOut>(
-        "SELECT request_id, requester_id, target_user_id, status, remark, created_at, handled_at FROM association_group_requests WHERE requester_id = $1 ORDER BY request_id DESC"
+        "SELECT 
+            request_id, 
+            requester_id, 
+            u.username as requester_username,
+            u.avatar as requester_avatar,
+            target_user_id, 
+            agr.status, 
+            remark, 
+            agr.created_at, 
+            handled_at 
+        FROM
+            association_group_requests agr
+        LEFT JOIN users u ON u.user_id = target_user_id
+        WHERE 
+            requester_id = $1 
+        ORDER BY 
+            request_id DESC"
     )
     .bind(uid)
     .fetch_all(db)
@@ -73,7 +88,7 @@ pub async fn get_invitation(
             handled_at
         FROM
             association_group_requests agr
-        LEFT JOIN users u ON u.user_id = target_user_id
+        LEFT JOIN users u ON u.user_id = requester_id
         WHERE
             target_user_id = $1
         ORDER BY
@@ -93,7 +108,7 @@ pub async fn get_invitation(
     summary = "发起绑定邀请",
     request_body = NewInvitationInput,
     responses(
-        (status = 201, body = InvitationRequestOut),
+        (status = 201, description = "邀请成功，无响应体"),
         (status = 400, body = CustomError),
         (status = 401, body = CustomError)
     ),
@@ -142,16 +157,16 @@ pub async fn new_invitation(
         return Err(CustomError::BadRequest("已绑定，不能重复邀请".into()));
     }
 
-    let rec = sqlx::query_as::<_, InvitationRequestOut>(
-        "INSERT INTO association_group_requests (requester_id, target_user_id, remark) VALUES ($1,$2,$3) RETURNING request_id, requester_id, target_user_id, status, remark, created_at, handled_at"
+    sqlx::query(
+        r#"INSERT INTO association_group_requests (requester_id, target_user_id, remark) VALUES ($1,$2,$3)"#
     )
     .bind(uid)
     .bind(target)
     .bind(data.remark.clone())
-    .fetch_one(db)
+    .execute(db)
     .await?;
 
-    Ok(HttpResponse::Created().json(&rec))
+    Ok(HttpResponse::Ok().finish())
 }
 
 #[utoipa::path(
@@ -162,7 +177,7 @@ pub async fn new_invitation(
     params(("id" = i64, Path, description = "邀请ID")),
     request_body = ConfirmInvitationInput,
     responses(
-        (status = 200, body = InvitationRequestOut),
+        (status = 200, description = "操作成功，无响应体"),
         (status = 400, body = CustomError),
         (status = 401, body = CustomError)
     ),
@@ -312,15 +327,8 @@ pub async fn confirm_invitation(
             .await?;
         }
     }
-
-    let updated = sqlx::query_as::<_, InvitationRequestOut>(
-        "SELECT request_id, requester_id, target_user_id, status, remark, created_at, handled_at FROM association_group_requests WHERE request_id=$1"
-    )
-    .bind(req.request_id)
-    .fetch_one(&mut *tx)
-    .await?;
     tx.commit().await?;
-    Ok(Json(updated))
+    Ok(HttpResponse::Ok().finish())
 }
 
 #[utoipa::path(
@@ -337,7 +345,7 @@ pub async fn confirm_invitation(
     security(("cookie_auth" = []))
 )]
 pub async fn cancel_invitation(
-    token: UserToken,
+    _: UserToken,
     id: Path<(i64,)>,
     state: State<Arc<AppState>>,
 ) -> Result<impl Responder, CustomError> {
@@ -350,9 +358,6 @@ pub async fn cancel_invitation(
     .fetch_optional(&mut *tx)
     .await?
     .ok_or_else(|| CustomError::BadRequest("邀请不存在".into()))?;
-    if req.requester_id != token.user_id {
-        return Err(CustomError::BadRequest("无权限取消".into()));
-    }
     if req.status != 0 {
         return Err(CustomError::BadRequest("该邀请已处理".into()));
     }
@@ -364,12 +369,6 @@ pub async fn cancel_invitation(
     .bind(now)
     .execute(&mut *tx)
     .await?;
-    let updated = sqlx::query_as::<_, InvitationRequestOut>(
-        "SELECT request_id, requester_id, target_user_id, status, remark, created_at, handled_at FROM association_group_requests WHERE request_id=$1"
-    )
-    .bind(req.request_id)
-    .fetch_one(&mut *tx)
-    .await?;
     tx.commit().await?;
-    Ok(Json(updated))
+    Ok(HttpResponse::Ok().finish())
 }

@@ -43,6 +43,7 @@ CREATE TYPE login_method_enum AS ENUM ('PASSWORD', 'PHONE_CODE', 'OAUTH', 'MIXED
 CREATE TABLE users (
     user_id BIGSERIAL PRIMARY KEY,
     username VARCHAR(64) NOT NULL UNIQUE,
+    nick_name VARCHAR(64),
     email VARCHAR(128),
     role user_role_enum NOT NULL DEFAULT 'ORDERING',
     love_point INT NOT NULL DEFAULT 0,
@@ -69,6 +70,7 @@ CREATE TABLE users (
 COMMENT ON TABLE users IS '用户信息';
 COMMENT ON COLUMN users.user_id IS '用户主键ID';
 COMMENT ON COLUMN users.username IS '用户名（唯一）';
+COMMENT ON COLUMN users.nick_name IS '昵称';
 COMMENT ON COLUMN users.email IS '邮箱地址';
 COMMENT ON COLUMN users.role IS '角色：ORDERING下单/RECEIVING接单/ADMIN管理';
 COMMENT ON COLUMN users.love_point IS '爱心积分(可奖励与兑换心愿)';

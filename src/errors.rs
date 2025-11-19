@@ -33,20 +33,21 @@ impl WebResponseError for CustomError {
     }
 
     fn error_response(&self, _: &ntex::web::HttpRequest) -> HttpResponse {
-        HttpResponse::new(self.status_code()).set_body(
-            match self {
-                Self::NotFound(e) => {
-                    println!("{:?}", e);
-                    e
-                },
-                Self::InternalServerError(e) => e,
-                Self::InternalError(e) => e,
-                Self::BadRequest(e) => e,
-                Self::AuthFailed(e) => e,
-                Self::RedisError(e) => e,
-            }
-            .into(),
-        )
+        #[derive(Serialize)]
+        struct ErrorBody { code: u16, message: String }
+        let status = self.status_code();
+        let msg = match self {
+            Self::NotFound(e) => { println!("{:?}", e); e.clone() },
+            Self::InternalServerError(e) => e.clone(),
+            Self::InternalError(e) => e.clone(),
+            Self::BadRequest(e) => e.clone(),
+            Self::AuthFailed(e) => e.clone(),
+            Self::RedisError(e) => e.clone(),
+        };
+        let body = ErrorBody { code: status.as_u16(), message: msg };
+        HttpResponse::build(status)
+            .content_type("application/json; charset=utf-8")
+            .json(&body)
     }
 }
 

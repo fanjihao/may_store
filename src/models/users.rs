@@ -56,28 +56,13 @@ pub struct RegisterInput {
     pub gender: Option<GenderEnum>,
     pub birthday: Option<chrono::NaiveDate>,
 }
-
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
-pub struct UserUpdateInput {
-    pub email: Option<String>,
-    pub avatar: Option<String>,
-    pub gender: Option<GenderEnum>,
-    pub birthday: Option<chrono::NaiveDate>,
-    pub phone: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
-pub struct PasswordUpdateInput {
-    pub old_password: String,
-    pub new_password: String,
-}
-
 // ========== 输出 DTO ==========
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct UserPublic {
     pub user_id: i64,
     pub username: String,
     pub email: Option<String>,
+    pub nick_name: Option<String>,
     pub role: UserRoleEnum,
     pub love_point: i32,
     pub avatar: Option<String>,
@@ -116,6 +101,7 @@ pub struct UserRecord {
     pub user_id: i64,
     pub username: String,
     pub email: Option<String>,
+    pub nick_name: Option<String>,
     pub role: UserRoleEnum,
     pub love_point: i32,
     pub avatar: Option<String>,
@@ -145,6 +131,7 @@ impl From<UserRecord> for UserPublic {
             user_id: record.user_id,
             username: record.username,
             email: record.email,
+            nick_name: record.nick_name,
             role: record.role,
             love_point: record.love_point,
             avatar: record.avatar,
@@ -218,7 +205,7 @@ impl<E: ErrorRenderer> FromRequest<E> for UserToken {
                 let db = &state.db_pool;
                 if let Ok(record) = sqlx::query_as::<_, UserRecord>(
                     r#"
-                    SELECT u.user_id, u.username, u.email, u.role, u.love_point, u.avatar, u.phone,
+                    SELECT u.user_id, u.username, u.email, u.nick_name, u.role, u.love_point, u.avatar, u.phone,
                            u.associate_id, u.status, u.created_at, u.updated_at, u.password_hash,
                            u.password_algo, u.gender, u.birthday, u.phone_verified, u.login_method,
                            u.last_login_at, u.password_updated_at, u.is_temp_password, u.push_id, u.last_role_switch_at,
