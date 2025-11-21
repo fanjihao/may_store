@@ -52,6 +52,7 @@ use crate::{foods, models, orders, users};
         crate::wishes::view::get_wish_detail,
         crate::wishes::update::disable_wish,
         crate::wishes::claim::claim_wish,
+        crate::wishes::claim::get_claim,
         crate::wishes::claim::update_wish_claim,
         crate::wishes::checkin::create_wish_claim_checkin,
         crate::wishes::checkin::list_wish_claim_checkins,

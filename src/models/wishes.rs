@@ -75,6 +75,7 @@ pub struct WishOut {
     pub created_by: i64, // group_id
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
+    pub current_claim_status: Option<WishClaimStatusEnum>,
 }
 
 impl From<WishRecord> for WishOut {
@@ -87,6 +88,7 @@ impl From<WishRecord> for WishOut {
             created_by: r.created_by,
             created_at: r.created_at,
             updated_at: r.updated_at,
+            current_claim_status: None,
         }
     }
 }

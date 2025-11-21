@@ -73,12 +73,9 @@ pub fn route(_state: Arc<AppState>, cfg: &mut web::ServiceConfig) {
             ::scope("/orders")
             .route("", web::post().to(orders::new::create_order))
             .route("", web::get().to(orders::view::get_orders))
+            .route("/status", web::put().to(orders::update::update_order_status))
             .route("/{id}", web::get().to(orders::view::get_order_detail))
             .route("/{id}", web::delete().to(orders::delete::delete_order))
-    );
-    // 状态更新与未完成统计（放在单独 scope 以兼容旧设计）
-    cfg.service(
-        web::scope("/orders-status").route("", web::put().to(orders::update::update_order_status))
     );
     // 订单评分
     cfg.service(
@@ -106,6 +103,7 @@ pub fn route(_state: Arc<AppState>, cfg: &mut web::ServiceConfig) {
         web
             ::scope("/wish_claims")
             .route("", web::post().to(wishes::claim::claim_wish))
+            .route("", web::get().to(wishes::claim::get_claim))
             .route("/status", web::put().to(wishes::claim::update_wish_claim))
             .route(
                 "/{claim_id}/checkins",

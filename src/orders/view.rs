@@ -35,8 +35,7 @@ pub async fn get_orders(
     );
     let mut first = true;
     qb.push(" WHERE ");
-    if let Some(uid) = query.user_id.or(Some(user_token.user_id)) {
-        // default filter user orders unless user explicitly overrides
+    if let Some(uid) = query.user_id {
         if !first {
             qb.push(" AND ");
         } else {
@@ -54,6 +53,16 @@ pub async fn get_orders(
         qb.push(" receiver_id = ");
         qb.push_bind(rid as i64);
     }
+    if let Some(gid) = query.group_id {
+        if !first {
+            qb.push(" AND ");
+        } else {
+            first = false;
+        }
+        qb.push(" group_id = ");
+        qb.push_bind(gid as i64);
+    }
+
     if let Some(st) = query.status {
         if !first {
             qb.push(" AND ");
@@ -70,29 +79,35 @@ pub async fn get_orders(
     qb.push(" ORDER BY created_at DESC ");
     qb.push(" LIMIT ");
     qb.push_bind(query.limit.unwrap_or(50));
-    let rows = qb.build().fetch_all(db).await?;
+    let orders: Vec<OrderRecord> = qb.build_query_as().fetch_all(db).await?;
     let mut out_list: Vec<OrderOutNew> = Vec::new();
-    for r in rows {
-        let order = map_record(&r);
-        // items
-        let item_rows = sqlx
-            ::query(
-                "SELECT id, order_id, food_id, quantity, price, snapshot_json, created_at FROM order_items WHERE order_id=$1"
-            )
-            .bind(order.order_id)
-            .fetch_all(db).await?;
-        let items = item_rows
-            .into_iter()
-            .map(map_item_record_to_out(db))
-            .collect::<Result<Vec<_>, _>>()?;
-        // status history (last 5 for list)
-        let hist_rows = sqlx
-            ::query(
-                "SELECT from_status::text, to_status::text, changed_by, remark, changed_at FROM order_status_history WHERE order_id=$1 ORDER BY changed_at DESC LIMIT 5"
-            )
-            .bind(order.order_id)
-            .fetch_all(db).await?;
-        let history = hist_rows.into_iter().map(map_history_row).collect();
+    for order in orders {
+        let items: Vec<OrderItemOut> = sqlx::query(
+            "SELECT oi.id, oi.food_id, oi.quantity, oi.price, f.food_name, f.food_photo \
+             FROM order_items oi LEFT JOIN foods f ON f.food_id = oi.food_id WHERE oi.order_id=$1"
+        )
+        .bind(order.order_id)
+        .fetch_all(db)
+        .await?
+        .into_iter()
+        .map(|r| OrderItemOut {
+            id: r.get("id"),
+            food_id: r.get("food_id"),
+            food_name: r.try_get::<String, _>("food_name").ok(),
+            food_photo: r.try_get::<Option<String>, _>("food_photo").ok().flatten(),
+            quantity: r.get("quantity"),
+            price: r.try_get("price").ok(),
+        })
+        .collect();
+        let history_rows = sqlx::query(
+            "SELECT h.from_status::text, h.to_status::text, u.nick_name, h.remark, h.changed_at \
+             FROM order_status_history h LEFT JOIN users u ON h.changed_by = u.user_id \
+             WHERE h.order_id=$1 ORDER BY h.changed_at DESC LIMIT 5"
+        )
+        .bind(order.order_id)
+        .fetch_all(db)
+        .await?;
+        let history = history_rows.into_iter().map(map_history_row).collect();
         out_list.push(OrderOutNew::from((order, items, history)));
     }
     Ok(HttpResponse::Ok().json(&out_list))
@@ -117,16 +132,31 @@ pub async fn get_order_detail(
         )
         .bind(*id)
         .fetch_optional(db).await?;
-    let order_row = match row {
-        Some(r) => r,
-        None => {
-            return Err(CustomError::BadRequest("订单不存在".into()));
+    let order = match row {
+        Some(r) => {
+            // decode directly as OrderRecord via manual field pulls
+            OrderRecord {
+                order_id: r.get("order_id"),
+                user_id: r.get("user_id"),
+                receiver_id: r.get("receiver_id"),
+                group_id: r.get("group_id"),
+                status: r.get::<OrderStatusEnum, _>("status"),
+                goal_time: r.try_get("goal_time").ok(),
+                points_cost: r.get("points_cost"),
+                points_reward: r.get("points_reward"),
+                cancel_reason: r.try_get("cancel_reason").ok(),
+                reject_reason: r.try_get("reject_reason").ok(),
+                last_status_change_at: r.try_get("last_status_change_at").ok(),
+                created_at: r.get("created_at"),
+                updated_at: r.get("updated_at"),
+            }
         }
+        None => return Err(CustomError::BadRequest("订单不存在".into())),
     };
-    let order = map_record(&order_row);
     let item_rows = sqlx
         ::query(
-            "SELECT id, order_id, food_id, quantity, price, snapshot_json, created_at FROM order_items WHERE order_id=$1"
+            "SELECT oi.id, oi.order_id, oi.food_id, oi.quantity, oi.price, oi.snapshot_json, oi.created_at, f.food_name, f.food_photo \
+             FROM order_items oi LEFT JOIN foods f ON f.food_id = oi.food_id WHERE oi.order_id=$1"
         )
         .bind(order.order_id)
         .fetch_all(db).await?;
@@ -136,7 +166,9 @@ pub async fn get_order_detail(
         .collect::<Result<Vec<_>, _>>()?;
     let hist_rows = sqlx
         ::query(
-            "SELECT from_status::text, to_status::text, changed_by, remark, changed_at FROM order_status_history WHERE order_id=$1 ORDER BY changed_at"
+            "SELECT h.from_status::text, h.to_status::text, u.nick_name, h.remark, h.changed_at \
+             FROM order_status_history h LEFT JOIN users u ON h.changed_by = u.user_id \
+             WHERE h.order_id=$1 ORDER BY h.changed_at"
         )
         .bind(order.order_id)
         .fetch_all(db).await?;
@@ -164,32 +196,7 @@ pub async fn get_incomplete_order(
     Ok(HttpResponse::Ok().json(&(c as i32)))
 }
 
-pub fn map_record(row: &sqlx::postgres::PgRow) -> OrderRecord {
-    OrderRecord {
-        order_id: row.get("order_id"),
-        user_id: row.get("user_id"),
-        receiver_id: row.get("receiver_id"),
-        group_id: row.get("group_id"),
-        status: match row.get::<String, _>("status").as_str() {
-            "PENDING" => OrderStatusEnum::PENDING,
-            "ACCEPTED" => OrderStatusEnum::ACCEPTED,
-            "FINISHED" => OrderStatusEnum::FINISHED,
-            "CANCELLED" => OrderStatusEnum::CANCELLED,
-            "EXPIRED" => OrderStatusEnum::EXPIRED,
-            "REJECTED" => OrderStatusEnum::REJECTED,
-            "SYSTEM_CLOSED" => OrderStatusEnum::SYSTEM_CLOSED,
-            _ => OrderStatusEnum::PENDING,
-        },
-        goal_time: row.try_get("goal_time").ok(),
-        points_cost: row.get("points_cost"),
-        points_reward: row.get("points_reward"),
-        cancel_reason: row.try_get("cancel_reason").ok(),
-        reject_reason: row.try_get("reject_reason").ok(),
-        last_status_change_at: row.try_get("last_status_change_at").ok(),
-        created_at: row.get("created_at"),
-        updated_at: row.get("updated_at"),
-    }
-}
+// removed old map_record (now using build_query_as or inline decode)
 
 pub fn map_item_record_to_out<'a>(
     _db: &'a sqlx::Pool<sqlx::Postgres>
@@ -199,8 +206,8 @@ pub fn map_item_record_to_out<'a>(
         Ok(OrderItemOut {
             id: r.get("id"),
             food_id,
-            food_name: None, // lazy populate below if needed
-            food_photo: None,
+            food_name: r.try_get("food_name").ok(),
+            food_photo: r.try_get("food_photo").ok(),
             quantity: r.get("quantity"),
             price: r.try_get("price").ok(),
         })
@@ -234,7 +241,7 @@ pub fn map_history_row(row: sqlx::postgres::PgRow) -> OrderStatusHistoryOut {
     OrderStatusHistoryOut {
         from_status: from_s,
         to_status: to_s,
-        changed_by: row.get::<Option<i64>, _>("changed_by"),
+        changed_by: row.try_get("nick_name").ok().flatten(),
         remark: row.get::<Option<String>, _>("remark"),
         changed_at: row.get::<DateTime<Utc>, _>("changed_at"),
     }

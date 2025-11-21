@@ -65,7 +65,6 @@ pub struct OrderItemCreateInput {
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct OrderCreateInput {
-    pub receiver_id: Option<i64>,
     pub group_id: Option<i64>,
     pub goal_time: Option<DateTime<Utc>>,
     pub items: Vec<OrderItemCreateInput>,
@@ -85,6 +84,7 @@ pub struct OrderStatusUpdateInput {
 pub struct OrderQuery {
     pub user_id: Option<i64>,     // 下单人过滤
     pub receiver_id: Option<i64>, // 接单人过滤
+    pub group_id: Option<i64>,    // 组过滤
     pub status: Option<OrderStatusEnum>,
     pub limit: Option<i64>,
     /// 仅返回已经失效(状态=EXPIRED， CANCELLED， REJECTED， SYSTEM_CLOSED)的订单；与 status 同时出现时优先 status
@@ -105,7 +105,7 @@ pub struct OrderItemOut {
 pub struct OrderStatusHistoryOut {
     pub from_status: Option<OrderStatusEnum>,
     pub to_status: OrderStatusEnum,
-    pub changed_by: Option<i64>,
+    pub changed_by: Option<String>,
     pub remark: Option<String>,
     pub changed_at: DateTime<Utc>,
 }
@@ -158,6 +158,7 @@ pub struct OrderRatingCreateInput {
     pub order_id: i64,
     pub delta: i32, // -5..5 (非0)
     pub remark: Option<String>,
+    pub target_user_id: Option<i64>, // 指定被评分人（若订单未绑定receiver_id则必填）
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]

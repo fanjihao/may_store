@@ -9,6 +9,7 @@ use ntex::web::{
     HttpResponse, Responder,
 };
 use std::sync::Arc;
+use sqlx::Row;
 
 #[derive(Debug, serde::Deserialize)]
 pub struct CancelInput {
@@ -41,7 +42,21 @@ pub async fn delete_order(
             return Err(CustomError::BadRequest("订单不存在".into()));
         }
     };
-    let mut order = super::view::map_record(&row);
+    let mut order = crate::models::orders::OrderRecord {
+        order_id: row.get("order_id"),
+        user_id: row.get("user_id"),
+        receiver_id: row.get("receiver_id"),
+        group_id: row.get("group_id"),
+        status: row.get::<OrderStatusEnum, _>("status"),
+        goal_time: row.try_get("goal_time").ok(),
+        points_cost: row.get("points_cost"),
+        points_reward: row.get("points_reward"),
+        cancel_reason: row.try_get("cancel_reason").ok(),
+        reject_reason: row.try_get("reject_reason").ok(),
+        last_status_change_at: row.try_get("last_status_change_at").ok(),
+        created_at: row.get("created_at"),
+        updated_at: row.get("updated_at"),
+    };
     if order.status != OrderStatusEnum::PENDING {
         tx.rollback().await.ok();
         return Err(CustomError::BadRequest("仅待处理订单可取消".into()));
@@ -72,7 +87,8 @@ pub async fn delete_order(
 		.await?;
 
     // items
-    let item_rows = sqlx::query("SELECT id, order_id, food_id, quantity, price, snapshot_json, created_at FROM order_items WHERE order_id=$1")
+    let item_rows = sqlx::query("SELECT oi.id, oi.order_id, oi.food_id, oi.quantity, oi.price, oi.snapshot_json, oi.created_at, f.food_name, f.food_photo \
+        FROM order_items oi LEFT JOIN foods f ON f.food_id = oi.food_id WHERE oi.order_id=$1")
 		.bind(order.order_id)
 		.fetch_all(&mut *tx)
 		.await?;
@@ -80,7 +96,9 @@ pub async fn delete_order(
         .into_iter()
         .map(super::view::map_item_record_to_out(&state.db_pool))
         .collect::<Result<Vec<_>, _>>()?;
-    let hist_rows = sqlx::query("SELECT from_status::text, to_status::text, changed_by, remark, changed_at FROM order_status_history WHERE order_id=$1 ORDER BY changed_at")
+    let hist_rows = sqlx::query("SELECT h.from_status::text, h.to_status::text, u.nick_name, h.remark, h.changed_at \
+        FROM order_status_history h LEFT JOIN users u ON h.changed_by = u.user_id \
+        WHERE h.order_id=$1 ORDER BY h.changed_at")
 		.bind(order.order_id)
 		.fetch_all(&mut *tx)
 		.await?;
