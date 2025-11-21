@@ -1,23 +1,23 @@
 use crate::{
     errors::CustomError,
-    models::{
-        users::UserToken,
-        wishes::{WishCreateInput, WishOut, WishRecord, WishStatusEnum},
-    },
+    models::{ users::UserToken, wishes::{ WishCreateInput, WishOut, WishRecord, WishStatusEnum } },
     AppState,
 };
-use ntex::web::{
-    types::{Json, State},
-    HttpResponse, Responder,
-};
+use ntex::web::{ types::{ Json, State }, HttpResponse, Responder };
 use sqlx::Row;
 use std::sync::Arc;
 
-#[utoipa::path(post, path="/wishes", tag="心愿", request_body=WishCreateInput, responses((status=201, body=WishOut)))]
+#[utoipa::path(
+    post,
+    path = "/wishes",
+    tag = "心愿",
+    request_body = WishCreateInput,
+    responses((status = 201, body = WishOut))
+)]
 pub async fn create_wish(
-    user_token: UserToken,
+    _: UserToken,
     state: State<Arc<AppState>>,
-    data: Json<WishCreateInput>,
+    data: Json<WishCreateInput>
 ) -> Result<impl Responder, CustomError> {
     if data.wish_name.trim().is_empty() {
         return Err(CustomError::BadRequest("心愿名称不能为空".into()));
@@ -26,10 +26,13 @@ pub async fn create_wish(
         return Err(CustomError::BadRequest("心愿积分必须大于0".into()));
     }
     let db = &state.db_pool;
-    let row = sqlx::query("INSERT INTO wishes (wish_name, wish_cost, created_by) VALUES ($1,$2,$3) RETURNING wish_id, wish_name, wish_cost, status, created_by, created_at, updated_at")
+    let row = sqlx
+        ::query(
+            "INSERT INTO wishes (wish_name, wish_cost, created_by) VALUES ($1,$2,$3) RETURNING wish_id, wish_name, wish_cost, status, created_by, created_at, updated_at"
+        )
         .bind(&data.wish_name)
         .bind(data.wish_cost)
-        .bind(user_token.user_id)
+        .bind(data.group_id)
         .fetch_one(db).await?;
     let rec = WishRecord {
         wish_id: row.get("wish_id"),

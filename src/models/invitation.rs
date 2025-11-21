@@ -32,3 +32,31 @@ pub struct InvitationListOut {
     pub incoming: Vec<InvitationRequestOut>,
     pub outgoing: Vec<InvitationRequestOut>,
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct UnbindRequestInput {
+    pub target_user_id: i64,
+    pub remark: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct GroupMemberOut {
+    pub user_id: i64,
+    pub nick_name: Option<String>,
+    pub avatar: Option<String>,
+    pub role_in_group: Option<String>, // PAIR 模式下 ORDERING/RECEIVING/ADMIN
+    pub is_primary: i16,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct GroupInfoOut {
+    pub group_id: i64,
+    pub group_name: Option<String>,
+    pub group_type: String,
+    pub status: i16,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+    pub updated_at: chrono::DateTime<chrono::Utc>,
+    pub members: Vec<GroupMemberOut>,
+    pub total_orders: i64,      // 该组总订单数
+    pub completed_orders: i64,  // 该组已完成订单数
+}

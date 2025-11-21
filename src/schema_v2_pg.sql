@@ -145,7 +145,7 @@ COMMENT ON TABLE association_group_requests IS '绑定申请记录';
 COMMENT ON COLUMN association_group_requests.request_id IS '申请记录主键';
 COMMENT ON COLUMN association_group_requests.requester_id IS '发起者用户ID';
 COMMENT ON COLUMN association_group_requests.target_user_id IS '目标用户ID';
-COMMENT ON COLUMN association_group_requests.status IS '申请状态';
+COMMENT ON COLUMN association_group_requests.status IS '申请状态,默认0,0待处理 1同意 2拒绝 4: 申请解绑中5: 已解绑';
 COMMENT ON COLUMN association_group_requests.remark IS '备注/理由';
 COMMENT ON COLUMN association_group_requests.created_at IS '创建时间';
 COMMENT ON COLUMN association_group_requests.handled_at IS '处理时间';
@@ -354,7 +354,7 @@ CREATE TABLE wishes (
     wish_name VARCHAR(128) NOT NULL,
     wish_cost INT NOT NULL,
     status wish_status_enum NOT NULL DEFAULT 'ON',
-    created_by BIGINT NOT NULL REFERENCES users(user_id) ON DELETE RESTRICT,
+    created_by BIGINT NOT NULL REFERENCES association_groups(group_id) ON DELETE RESTRICT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
@@ -363,10 +363,11 @@ COMMENT ON COLUMN wishes.wish_id IS '心愿ID';
 COMMENT ON COLUMN wishes.wish_name IS '心愿名称';
 COMMENT ON COLUMN wishes.wish_cost IS '心愿所需积分';
 COMMENT ON COLUMN wishes.status IS '心愿状态';
-COMMENT ON COLUMN wishes.created_by IS '创建者用户ID';
+COMMENT ON COLUMN wishes.created_by IS '创建者团队ID（关联组ID）';
 COMMENT ON COLUMN wishes.created_at IS '创建时间';
 COMMENT ON COLUMN wishes.updated_at IS '更新时间';
 CREATE INDEX idx_wish_status ON wishes(status);
+CREATE INDEX idx_wish_created_by ON wishes(created_by);
 CREATE TABLE wish_claims (
     id BIGSERIAL PRIMARY KEY,
     wish_id BIGINT NOT NULL REFERENCES wishes(wish_id) ON DELETE CASCADE,

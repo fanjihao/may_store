@@ -21,6 +21,8 @@ use crate::{foods, models, orders, users};
         users::invitation::new_invitation,
         users::invitation::confirm_invitation,
         users::invitation::cancel_invitation,
+        users::invitation::unbind_request,
+        users::invitation::get_group_info,
         users::role::switch_role,
         // 菜品相关
         foods::new::create_food,
@@ -75,6 +77,9 @@ use crate::{foods, models, orders, users};
             models::invitation::ConfirmInvitationInput,
             models::invitation::InvitationRequestOut,
             models::invitation::InvitationListOut,
+            models::invitation::GroupMemberOut,
+            models::invitation::GroupInfoOut,
+            models::invitation::UnbindRequestInput,
         ),
         // 菜品
         schemas(

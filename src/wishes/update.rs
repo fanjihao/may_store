@@ -1,30 +1,33 @@
 use crate::{
     errors::CustomError,
-    models::{
-        users::UserToken,
-        wishes::{WishOut, WishRecord, WishStatusEnum, WishUpdateInput},
-    },
+    models::{ users::UserToken, wishes::{ WishOut, WishRecord, WishStatusEnum, WishUpdateInput } },
     AppState,
 };
-use ntex::web::{
-    types::{Json, State},
-    HttpResponse, Responder,
-};
+use ntex::web::{ types::{ Json, State }, HttpResponse, Responder };
 use sqlx::QueryBuilder;
 use sqlx::Row;
 use std::sync::Arc;
 
-#[utoipa::path(put, path="/wishes", tag="心愿", request_body=WishUpdateInput, responses((status=200, body=WishOut)))]
+#[utoipa::path(
+    put,
+    path = "/wishes",
+    tag = "心愿",
+    request_body = WishUpdateInput,
+    responses((status = 200, body = WishOut))
+)]
 pub async fn update_wish(
     user_token: UserToken,
     state: State<Arc<AppState>>,
-    data: Json<WishUpdateInput>,
+    data: Json<WishUpdateInput>
 ) -> Result<impl Responder, CustomError> {
     if data.wish_name.is_none() && data.wish_cost.is_none() && data.status.is_none() {
         return Err(CustomError::BadRequest("无修改内容".into()));
     }
     let db = &state.db_pool;
-    let row = sqlx::query("SELECT wish_id, wish_name, wish_cost, status, created_by, created_at, updated_at FROM wishes WHERE wish_id=$1")
+    let row = sqlx
+        ::query(
+            "SELECT wish_id, wish_name, wish_cost, status, created_by, created_at, updated_at FROM wishes WHERE wish_id=$1"
+        )
         .bind(data.wish_id)
         .fetch_optional(db).await?;
     let Some(r) = row else {
@@ -64,7 +67,7 @@ pub async fn update_wish(
     qb.push(", updated_at = NOW() WHERE wish_id = ")
         .push_bind(data.wish_id)
         .push(
-            " RETURNING wish_id, wish_name, wish_cost, status, created_by, created_at, updated_at",
+            " RETURNING wish_id, wish_name, wish_cost, status, created_by, created_at, updated_at"
         );
     let updated = qb.build().fetch_one(db).await?;
     let rec = WishRecord {
@@ -79,14 +82,23 @@ pub async fn update_wish(
     Ok(HttpResponse::Ok().json(&WishOut::from(rec)))
 }
 
-#[utoipa::path(delete, path="/wishes/{id}", tag="心愿", params(("id"=i64, description="心愿ID")), responses((status=200, body=WishOut)))]
+#[utoipa::path(
+    delete,
+    path = "/wishes/{id}",
+    tag = "心愿",
+    params(("id" = i64, description = "心愿ID")),
+    responses((status = 200, body = WishOut))
+)]
 pub async fn disable_wish(
     user_token: UserToken,
     state: State<Arc<AppState>>,
-    id: ntex::web::types::Path<i64>,
+    id: ntex::web::types::Path<i64>
 ) -> Result<impl Responder, CustomError> {
     let db = &state.db_pool;
-    let row = sqlx::query("SELECT wish_id, wish_name, wish_cost, status, created_by, created_at, updated_at FROM wishes WHERE wish_id=$1")
+    let row = sqlx
+        ::query(
+            "SELECT wish_id, wish_name, wish_cost, status, created_by, created_at, updated_at FROM wishes WHERE wish_id=$1"
+        )
         .bind(*id)
         .fetch_optional(db).await?;
     let Some(r) = row else {
@@ -96,10 +108,10 @@ pub async fn disable_wish(
     if created_by != user_token.user_id {
         return Err(CustomError::BadRequest("只能关闭自己创建的心愿".into()));
     }
-    sqlx::query("UPDATE wishes SET status='OFF', updated_at=NOW() WHERE wish_id=$1")
+    sqlx
+        ::query("UPDATE wishes SET status='OFF', updated_at=NOW() WHERE wish_id=$1")
         .bind(*id)
-        .execute(db)
-        .await?;
+        .execute(db).await?;
     let rec = WishRecord {
         wish_id: r.get("wish_id"),
         wish_name: r.get("wish_name"),
