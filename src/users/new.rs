@@ -47,13 +47,14 @@ pub async fn register(
     sqlx
         ::query(
             r#"INSERT INTO users (
-                username, nick_name, password_hash, password_algo, gender, birthday, phone_verified, login_method, role, love_point, status, is_temp_password
+                username, nick_name, open_id, password_hash, password_algo, gender, birthday, phone_verified, login_method, role, love_point, status, is_temp_password
             ) VALUES (
-                $1, $2, $3, $4, $5, NULL, FALSE, $6, $7, 0, 1, FALSE
+                $1, $2, $3, $4, $5, $6, NULL, FALSE, $7, $8, 0, 1, FALSE
             )"#
         )
         .bind(&data.username)
         .bind(&data.username) // 默认昵称同用户名
+        .bind(&data.open_id)
         .bind(&pwd_hash)
         .bind(&algo)
         .bind(GenderEnum::UNKNOWN)

@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use crate::models::users::IsRegisterResponse;
-use crate::users::verify_password;
+use crate::users::{verify_password, weixin_login};
 use crate::{
     errors::CustomError,
     models::users::{
@@ -39,19 +39,29 @@ pub async fn login(
     state: State<Arc<AppState>>,
 ) -> Result<impl Responder, CustomError> {
     let db_pool = &state.clone().db_pool;
-    let account = user.username.clone();
+    let mut account = user.username.clone();
+
+    if let Some(code) = &user.weixin_code {
+        account = weixin_login(&code).await?;
+    };
 
     let record = sqlx::query_as::<_, UserRecord>(
-        r#"SELECT u.user_id, u.username, u.nick_name, u.email, u.role, u.love_point, u.avatar, u.phone, u.associate_id, u.status, u.created_at, u.updated_at, u.password_hash, u.password_algo, u.gender, u.birthday, u.phone_verified, u.login_method, u.last_login_at, u.password_updated_at, u.is_temp_password, u.push_id, u.last_role_switch_at,
+        r#"SELECT u.user_id, u.username, u.nick_name, u.email, u.role, u.love_point, u.avatar, u.phone, u.open_id, u.status, u.created_at, u.updated_at, u.password_hash, u.password_algo, u.gender, u.birthday, u.phone_verified, u.login_method, u.last_login_at, u.password_updated_at, u.is_temp_password, u.push_id, u.last_role_switch_at,
            (SELECT agm.group_id FROM association_group_members agm JOIN association_groups g ON g.group_id=agm.group_id AND g.status=1 WHERE agm.user_id=u.user_id ORDER BY agm.is_primary DESC, agm.group_id ASC LIMIT 1) AS group_id
-           FROM users u WHERE u.username = $1"#
+           FROM users u WHERE u.username = $1 OR u.open_id = $1"#
     )
         .bind(&account)
         .fetch_optional(db_pool)
         .await?;
     let record = match record {
         Some(r) => r,
-        None => return Err(CustomError::BadRequest("账号不存在".into())),
+        None => {
+            if user.weixin_code.is_some() {
+                return Err(CustomError::NotFound(account));
+            } else {
+                return Err(CustomError::BadRequest("账号不存在".into()));
+            }
+        },
     };
 
     let stored = record.password_hash.clone().unwrap_or_default();
@@ -59,6 +69,8 @@ pub async fn login(
         if !verify_password(pwd, &stored).unwrap_or(false) {
             return Err(CustomError::BadRequest("账号或密码错误".into()));
         }
+    } else if user.weixin_code.is_some() {
+        // 微信登录且用户存在，允许登录
     } else {
         return Err(CustomError::BadRequest("缺少密码".into()));
     }
@@ -110,7 +122,7 @@ pub async fn get_current_info(
 ) -> Result<Json<UserPublic>, CustomError> {
     let db = &state.db_pool;
     let rec = sqlx::query_as::<_, UserRecord>(r#"
-        SELECT u.user_id, u.username, u.email, u.nick_name, u.role, u.love_point, u.avatar, u.phone, u.associate_id, u.status, u.created_at, u.updated_at, u.password_hash, u.password_algo, u.gender, u.birthday, u.phone_verified, u.login_method, u.last_login_at, u.password_updated_at, u.is_temp_password, u.push_id, u.last_role_switch_at,
+        SELECT u.user_id, u.username, u.email, u.nick_name, u.role, u.love_point, u.avatar, u.phone, u.open_id, u.status, u.created_at, u.updated_at, u.password_hash, u.password_algo, u.gender, u.birthday, u.phone_verified, u.login_method, u.last_login_at, u.password_updated_at, u.is_temp_password, u.push_id, u.last_role_switch_at,
                (SELECT agm.group_id FROM association_group_members agm JOIN association_groups g ON g.group_id=agm.group_id AND g.status=1 WHERE agm.user_id=u.user_id ORDER BY agm.is_primary DESC, agm.group_id ASC LIMIT 1) AS group_id
         FROM users u WHERE u.user_id = $1
     "#)
@@ -143,7 +155,7 @@ pub async fn get_user_info(
     let rec = sqlx
         ::query_as::<_, UserRecord>(
             r#"
-        SELECT u.user_id, u.username, u.nick_name, u.email, u.role, u.love_point, u.avatar, u.phone, u.associate_id, u.status, u.created_at, u.updated_at, u.password_hash, u.password_algo, u.gender, u.birthday, u.phone_verified, u.login_method, u.last_login_at, u.password_updated_at, u.is_temp_password, u.push_id, u.last_role_switch_at,
+        SELECT u.user_id, u.username, u.nick_name, u.email, u.role, u.love_point, u.avatar, u.phone, u.open_id, u.status, u.created_at, u.updated_at, u.password_hash, u.password_algo, u.gender, u.birthday, u.phone_verified, u.login_method, u.last_login_at, u.password_updated_at, u.is_temp_password, u.push_id, u.last_role_switch_at,
                (SELECT agm.group_id FROM association_group_members agm JOIN association_groups g ON g.group_id=agm.group_id AND g.status=1 WHERE agm.user_id=u.user_id ORDER BY agm.is_primary DESC, agm.group_id ASC LIMIT 1) AS group_id
         FROM users u WHERE u.username = $1
     "#

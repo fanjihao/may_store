@@ -35,7 +35,7 @@ pub async fn get_top_food_orders(
 ) -> Result<impl Responder, CustomError> {
     let db = &state.db_pool;
     // 统计前五
-    let rows = sqlx::query("SELECT oi.food_id, f.food_name, COUNT(*)::bigint AS order_count FROM order_items oi JOIN orders o ON oi.order_id=o.order_id JOIN foods f ON oi.food_id=f.food_id GROUP BY oi.food_id, f.food_name ORDER BY order_count DESC LIMIT 5")
+    let rows = sqlx::query("SELECT oi.food_id, f.food_name, f.food_photo, COUNT(*)::bigint AS order_count FROM order_items oi JOIN orders o ON oi.order_id=o.order_id JOIN foods f ON oi.food_id=f.food_id GROUP BY oi.food_id, f.food_name, f.food_photo ORDER BY order_count DESC LIMIT 5")
         .fetch_all(db).await?;
     if rows.is_empty() {
         // 没有订单：随机抽取菜品

@@ -43,7 +43,7 @@ pub async fn change_info(
 
     // 先读取用户
     let rec = sqlx::query_as::<_, UserRecord>(r#"
-        SELECT u.user_id, u.username, u.email, u.nick_name, u.role, u.love_point, u.avatar, u.phone, u.associate_id, u.status, u.created_at, u.updated_at,
+        SELECT u.user_id, u.username, u.email, u.nick_name, u.role, u.love_point, u.avatar, u.phone, u.open_id, u.status, u.created_at, u.updated_at,
                u.password_hash, u.password_algo, u.gender, u.birthday, u.phone_verified, u.login_method, u.last_login_at, u.password_updated_at,
                u.is_temp_password, u.push_id, u.last_role_switch_at,
                (SELECT agm.group_id FROM association_group_members agm JOIN association_groups g ON g.group_id=agm.group_id AND g.status=1 WHERE agm.user_id=u.user_id ORDER BY agm.is_primary DESC, agm.group_id ASC LIMIT 1) AS group_id
@@ -94,7 +94,7 @@ pub async fn change_info(
 
     // 重新取更新后的公开信息
     let updated = sqlx::query_as::<_, UserRecord>(r#"
-        SELECT u.user_id, u.username, u.email, u.nick_name, u.role, u.love_point, u.avatar, u.phone, u.associate_id, u.status, u.created_at, u.updated_at,
+        SELECT u.user_id, u.username, u.email, u.nick_name, u.role, u.love_point, u.avatar, u.phone, u.open_id, u.status, u.created_at, u.updated_at,
                u.password_hash, u.password_algo, u.gender, u.birthday, u.phone_verified, u.login_method, u.last_login_at, u.password_updated_at,
                u.is_temp_password, u.push_id, u.last_role_switch_at,
                (SELECT agm.group_id FROM association_group_members agm JOIN association_groups g ON g.group_id=agm.group_id AND g.status=1 WHERE agm.user_id=u.user_id ORDER BY agm.is_primary DESC, agm.group_id ASC LIMIT 1) AS group_id

@@ -35,6 +35,7 @@ pub enum LoginMethodEnum {
     PhoneCode,
     OAUTH,
     MIXED,
+    WEIXIN
 }
 
 // ========== 输入 DTO ==========
@@ -43,6 +44,7 @@ pub struct LoginInput {
     pub username: String,
     pub password: Option<String>,
     pub phone_code: Option<String>,
+    pub weixin_code: Option<String>,
     pub login_method: LoginMethodEnum,
 }
 
@@ -53,6 +55,7 @@ pub struct RegisterInput {
     pub email: Option<String>,
     pub phone: Option<String>,
     pub avatar: Option<String>,
+    pub open_id: Option<String>,
     pub gender: Option<GenderEnum>,
     pub birthday: Option<chrono::NaiveDate>,
 }
@@ -67,7 +70,7 @@ pub struct UserPublic {
     pub love_point: i32,
     pub avatar: Option<String>,
     pub phone: Option<String>,
-    pub associate_id: Option<i64>,
+    pub open_id: Option<String>,
     pub status: i16,
     pub created_at: chrono::DateTime<chrono::Utc>,
     pub updated_at: chrono::DateTime<chrono::Utc>,
@@ -106,7 +109,7 @@ pub struct UserRecord {
     pub love_point: i32,
     pub avatar: Option<String>,
     pub phone: Option<String>,
-    pub associate_id: Option<i64>,
+    pub open_id: Option<String>,
     pub status: i16,
     pub created_at: chrono::DateTime<chrono::Utc>,
     pub updated_at: chrono::DateTime<chrono::Utc>,
@@ -136,7 +139,7 @@ impl From<UserRecord> for UserPublic {
             love_point: record.love_point,
             avatar: record.avatar,
             phone: record.phone,
-            associate_id: record.associate_id,
+            open_id: record.open_id,
             status: record.status,
             created_at: record.created_at,
             updated_at: record.updated_at,
@@ -206,7 +209,7 @@ impl<E: ErrorRenderer> FromRequest<E> for UserToken {
                 if let Ok(record) = sqlx::query_as::<_, UserRecord>(
                     r#"
                     SELECT u.user_id, u.username, u.email, u.nick_name, u.role, u.love_point, u.avatar, u.phone,
-                           u.associate_id, u.status, u.created_at, u.updated_at, u.password_hash,
+                           u.open_id, u.status, u.created_at, u.updated_at, u.password_hash,
                            u.password_algo, u.gender, u.birthday, u.phone_verified, u.login_method,
                            u.last_login_at, u.password_updated_at, u.is_temp_password, u.push_id, u.last_role_switch_at,
                            (SELECT agm.group_id FROM association_group_members agm JOIN association_groups g ON g.group_id=agm.group_id AND g.status=1 WHERE agm.user_id=u.user_id ORDER BY agm.is_primary DESC, agm.group_id ASC LIMIT 1) AS group_id

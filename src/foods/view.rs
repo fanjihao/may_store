@@ -26,11 +26,12 @@ use std::sync::Arc;
 		("tag_ids"=Option<String>, Query, description="以逗号分隔标签ID"),
 		("group_id"=Option<i64>, Query)
 	),
-	responses((status = 200, body = Vec<FoodOut>))
+	responses((status = 200, body = Vec<FoodOut>)),
+    security(("cookie_auth"=[]))
 )]
 pub async fn get_foods(
     state: State<Arc<AppState>>,
-    token: Option<UserToken>,
+    token: UserToken,
     q: Query<FoodFilterQuery>,
 ) -> Result<impl Responder, CustomError> {
     let db = &state.db_pool;
@@ -57,6 +58,9 @@ pub async fn get_foods(
     }
     if let Some(gid) = q.group_id {
         qb.push(" AND f.group_id = ").push_bind(gid);
+    }
+    if let Some(user) = q.created_by {
+        qb.push(" AND f.created_by = ").push_bind(user);
     }
     if let Some(tag_ids) = &q.tag_ids {
         if !tag_ids.is_empty() {
@@ -93,25 +97,23 @@ pub async fn get_foods(
 
     // ===== 批量用户标记查询 =====
     let mut marks_map: std::collections::HashMap<i64, Vec<MarkTypeEnum>> = std::collections::HashMap::new();
-    if let Some(t) = &token {
-        if !food_ids.is_empty() {
-            let mark_rows = sqlx::query(
-                "SELECT food_id, mark_type::text AS mark_type FROM user_food_mark WHERE user_id=$1 AND food_id = ANY($2)"
-            )
-            .bind(t.user_id as i64)
-            .bind(&food_ids)
-            .fetch_all(db)
-            .await?;
-            for r in mark_rows {
-                let fid: i64 = r.get("food_id");
-                let mtxt: String = r.get("mark_type");
-                let enum_val = match mtxt.as_str() {
-                    "LIKE" => Some(MarkTypeEnum::LIKE),
-                    "NOT_RECOMMEND" => Some(MarkTypeEnum::NOT_RECOMMEND),
-                    _ => None,
-                };
-                if let Some(ev) = enum_val { marks_map.entry(fid).or_default().push(ev); }
-            }
+    if !food_ids.is_empty() {
+        let mark_rows = sqlx::query(
+            "SELECT food_id, mark_type::text AS mark_type FROM user_food_mark WHERE user_id=$1 AND food_id = ANY($2)"
+        )
+        .bind(token.user_id as i64)
+        .bind(&food_ids)
+        .fetch_all(db)
+        .await?;
+        for r in mark_rows {
+            let fid: i64 = r.get("food_id");
+            let mtxt: String = r.get("mark_type");
+            let enum_val = match mtxt.as_str() {
+                "LIKE" => Some(MarkTypeEnum::LIKE),
+                "NOT_RECOMMEND" => Some(MarkTypeEnum::NOT_RECOMMEND),
+                _ => None,
+            };
+            if let Some(ev) = enum_val { marks_map.entry(fid).or_default().push(ev); }
         }
     }
 

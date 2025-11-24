@@ -38,7 +38,7 @@ CREATE TYPE feedback_status_enum AS ENUM ('NEW', 'PROCESSING', 'CLOSED');
 CREATE TYPE cart_status_enum AS ENUM ('ACTIVE', 'SETTLED', 'CLEARED');
 CREATE TYPE mark_type_enum AS ENUM ('LIKE', 'NOT_RECOMMEND');
 CREATE TYPE gender_enum AS ENUM ('MALE', 'FEMALE', 'OTHER', 'UNKNOWN');
-CREATE TYPE login_method_enum AS ENUM ('PASSWORD', 'PHONE_CODE', 'OAUTH', 'MIXED');
+CREATE TYPE login_method_enum AS ENUM ('PASSWORD', 'PHONE_CODE', 'OAUTH', 'MIXED', 'WEIXIN');
 -- ================= USERS =================
 CREATE TABLE users (
     user_id BIGSERIAL PRIMARY KEY,
@@ -49,7 +49,7 @@ CREATE TABLE users (
     love_point INT NOT NULL DEFAULT 0,
     avatar VARCHAR(256) NOT NULL DEFAULT 'https://img95.699pic.com/xsj/0f/d0/fo.jpg',
     phone VARCHAR(32),
-    associate_id BIGINT,
+    open_id VARCHAR(128),
     status SMALLINT NOT NULL DEFAULT 1,
     -- 1正常 0禁用
     password_hash VARCHAR(255),
@@ -76,7 +76,7 @@ COMMENT ON COLUMN users.role IS '角色：ORDERING下单/RECEIVING接单/ADMIN�
 COMMENT ON COLUMN users.love_point IS '爱心积分(可奖励与兑换心愿)';
 COMMENT ON COLUMN users.avatar IS '头像URL';
 COMMENT ON COLUMN users.phone IS '手机号';
-COMMENT ON COLUMN users.associate_id IS '关联ID（预留扩展绑定）';
+COMMENT ON COLUMN users.open_id IS '微信绑定openid';
 COMMENT ON COLUMN users.status IS '状态：1正常 0禁用';
 COMMENT ON COLUMN users.password_hash IS '哈希后的密码（永不存明文）';
 COMMENT ON COLUMN users.password_algo IS '密码哈希算法标识';

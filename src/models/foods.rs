@@ -269,6 +269,7 @@ pub struct FoodFilterQuery {
     pub tag_ids: Option<Vec<i64>>,
     pub group_id: Option<i64>,
     pub only_active: Option<bool>,
+    pub created_by: Option<i64>,
 }
 
 // ================ 收藏/标记 DTOs ==================
