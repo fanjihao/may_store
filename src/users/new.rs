@@ -47,7 +47,7 @@ pub async fn register(
     sqlx
         ::query(
             r#"INSERT INTO users (
-                username, nick_name, open_id, password_hash, password_algo, gender, birthday, phone_verified, login_method, role, love_point, status, is_temp_password
+                username, nick_name, open_id, password_hash, password_algo, gender, birthday, username_change, login_method, role, love_point, status, is_temp_password
             ) VALUES (
                 $1, $2, $3, $4, $5, $6, NULL, FALSE, $7, $8, 0, 1, FALSE
             )"#

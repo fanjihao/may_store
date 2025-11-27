@@ -13,6 +13,7 @@ use crate::{
 };
 use chrono::Utc;
 use serde::Deserialize;
+use sqlx::Row;
 
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct ProfileUpdateInput {
@@ -23,6 +24,7 @@ pub struct ProfileUpdateInput {
     pub birthday: Option<chrono::NaiveDate>,
     pub new_password: Option<String>,
     pub old_password: Option<String>,
+    pub new_username: Option<String>,
 }
 
 #[utoipa::path(
@@ -40,11 +42,12 @@ pub async fn change_info(
     state: State<Arc<AppState>>,
 ) -> Result<impl Responder, CustomError> {
     let db_pool = &state.clone().db_pool;
+    let mut current_username = data.username.clone();
 
     // 先读取用户
     let rec = sqlx::query_as::<_, UserRecord>(r#"
         SELECT u.user_id, u.username, u.email, u.nick_name, u.role, u.love_point, u.avatar, u.phone, u.open_id, u.status, u.created_at, u.updated_at,
-               u.password_hash, u.password_algo, u.gender, u.birthday, u.phone_verified, u.login_method, u.last_login_at, u.password_updated_at,
+               u.password_hash, u.password_algo, u.gender, u.birthday, u.username_change, u.login_method, u.last_login_at, u.password_updated_at,
                u.is_temp_password, u.push_id, u.last_role_switch_at,
                (SELECT agm.group_id FROM association_group_members agm JOIN association_groups g ON g.group_id=agm.group_id AND g.status=1 WHERE agm.user_id=u.user_id ORDER BY agm.is_primary DESC, agm.group_id ASC LIMIT 1) AS group_id
         FROM users u WHERE u.username = $1
@@ -57,10 +60,26 @@ pub async fn change_info(
         None => return Err(CustomError::BadRequest("账号不存在".into())),
     };
 
-    // 修改资料
-    if data.avatar.is_some() || data.gender.is_some() || data.birthday.is_some() || data.nick_name.is_some() {
+    if let Some(new_username) = &data.new_username {
+        // 检查新用户名是否已存在
+        let exists_row = sqlx::query("SELECT COUNT(*) FROM users WHERE username = $1")
+            .bind(new_username)
+            .fetch_optional(db_pool)
+            .await?;
+        let exists: i64 = exists_row.expect("REASON").get(0);
+        if exists > 0 {
+            return Err(CustomError::BadRequest("用户名已存在".into()));
+        }
+        // 修改用户名
+        sqlx::query("UPDATE users SET username = $2, username_change = TRUE WHERE username = $1")
+            .bind(&current_username)
+            .bind(new_username)
+            .execute(db_pool)
+            .await?;
+        current_username = new_username.clone();
+    } else if data.avatar.is_some() || data.gender.is_some() || data.birthday.is_some() || data.nick_name.is_some() {
         sqlx::query("UPDATE users SET avatar = COALESCE($2, avatar), gender = COALESCE($3, gender), birthday = COALESCE($4, birthday), nick_name = COALESCE($5, nick_name) WHERE username = $1")
-            .bind(&data.username)
+            .bind(&current_username)
             .bind(&data.avatar)
             .bind(&data.gender)
             .bind(&data.birthday)
@@ -84,7 +103,7 @@ pub async fn change_info(
         let (hash, algo) =
             hash_password(new_pwd).map_err(|e| CustomError::InternalError(e.into()))?;
         sqlx::query("UPDATE users SET password_hash = $2, password_algo = $3, password_updated_at = $4, is_temp_password = FALSE WHERE username = $1")
-            .bind(&data.username)
+            .bind(&current_username)
             .bind(&hash)
             .bind(&algo)
             .bind(Utc::now())
@@ -95,12 +114,12 @@ pub async fn change_info(
     // 重新取更新后的公开信息
     let updated = sqlx::query_as::<_, UserRecord>(r#"
         SELECT u.user_id, u.username, u.email, u.nick_name, u.role, u.love_point, u.avatar, u.phone, u.open_id, u.status, u.created_at, u.updated_at,
-               u.password_hash, u.password_algo, u.gender, u.birthday, u.phone_verified, u.login_method, u.last_login_at, u.password_updated_at,
+               u.password_hash, u.password_algo, u.gender, u.birthday, u.username_change, u.login_method, u.last_login_at, u.password_updated_at,
                u.is_temp_password, u.push_id, u.last_role_switch_at,
                (SELECT agm.group_id FROM association_group_members agm JOIN association_groups g ON g.group_id=agm.group_id AND g.status=1 WHERE agm.user_id=u.user_id ORDER BY agm.is_primary DESC, agm.group_id ASC LIMIT 1) AS group_id
         FROM users u WHERE u.username = $1
     "#)
-        .bind(&data.username)
+        .bind(&current_username)
         .fetch_one(db_pool)
         .await?;
 

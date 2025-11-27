@@ -77,7 +77,7 @@ pub struct UserPublic {
     // 扩展字段
     pub gender: GenderEnum,
     pub birthday: Option<chrono::NaiveDate>,
-    pub phone_verified: bool,
+    pub username_change: bool,
     pub login_method: LoginMethodEnum,
     pub last_login_at: Option<chrono::DateTime<chrono::Utc>>,
     pub is_temp_password: bool,
@@ -118,7 +118,7 @@ pub struct UserRecord {
     pub password_algo: Option<String>,
     pub gender: GenderEnum,
     pub birthday: Option<chrono::NaiveDate>,
-    pub phone_verified: bool,
+    pub username_change: bool,
     pub login_method: LoginMethodEnum,
     pub last_login_at: Option<chrono::DateTime<chrono::Utc>>,
     pub password_updated_at: Option<chrono::DateTime<chrono::Utc>>,
@@ -145,7 +145,7 @@ impl From<UserRecord> for UserPublic {
             updated_at: record.updated_at,
             gender: record.gender,
             birthday: record.birthday,
-            phone_verified: record.phone_verified,
+            username_change: record.username_change,
             login_method: record.login_method,
             last_login_at: record.last_login_at,
             is_temp_password: record.is_temp_password,
@@ -210,7 +210,7 @@ impl<E: ErrorRenderer> FromRequest<E> for UserToken {
                     r#"
                     SELECT u.user_id, u.username, u.email, u.nick_name, u.role, u.love_point, u.avatar, u.phone,
                            u.open_id, u.status, u.created_at, u.updated_at, u.password_hash,
-                           u.password_algo, u.gender, u.birthday, u.phone_verified, u.login_method,
+                           u.password_algo, u.gender, u.birthday, u.username_change, u.login_method,
                            u.last_login_at, u.password_updated_at, u.is_temp_password, u.push_id, u.last_role_switch_at,
                            (SELECT agm.group_id FROM association_group_members agm JOIN association_groups g ON g.group_id=agm.group_id AND g.status=1 WHERE agm.user_id=u.user_id ORDER BY agm.is_primary DESC, agm.group_id ASC LIMIT 1) AS group_id
                     FROM users u WHERE u.user_id=$1 AND u.status=1

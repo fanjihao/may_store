@@ -56,7 +56,7 @@ CREATE TABLE users (
     password_algo VARCHAR(32),
     gender gender_enum NOT NULL DEFAULT 'UNKNOWN',
     birthday DATE,
-    phone_verified BOOLEAN NOT NULL DEFAULT FALSE,
+    username_change BOOLEAN NOT NULL DEFAULT FALSE,
     login_method login_method_enum NOT NULL DEFAULT 'PASSWORD',
     last_login_at TIMESTAMPTZ,
     password_updated_at TIMESTAMPTZ,
@@ -82,7 +82,7 @@ COMMENT ON COLUMN users.password_hash IS '哈希后的密码（永不存明文�
 COMMENT ON COLUMN users.password_algo IS '密码哈希算法标识';
 COMMENT ON COLUMN users.gender IS '性别';
 COMMENT ON COLUMN users.birthday IS '生日';
-COMMENT ON COLUMN users.phone_verified IS '手机号是否已验证';
+COMMENT ON COLUMN users.username_change IS '用户名是否修改过';
 COMMENT ON COLUMN users.login_method IS '最近登录方式';
 COMMENT ON COLUMN users.last_login_at IS '最近登录时间';
 COMMENT ON COLUMN users.password_updated_at IS '最近密码更新时间';
