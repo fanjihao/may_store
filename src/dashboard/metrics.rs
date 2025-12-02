@@ -99,7 +99,7 @@ pub async fn get_my_today_orders(
     user: UserToken,
 ) -> Result<impl Responder, CustomError> {
     let db = &state.db_pool;
-    let rows = sqlx::query("SELECT o.order_id, o.status::text AS status, ARRAY_AGG(f.food_name) AS names, MIN(f.food_types) AS category_code FROM orders o JOIN order_items oi ON o.order_id=oi.order_id JOIN foods f ON oi.food_id=f.food_id WHERE o.user_id=$1 AND o.goal_time IS NOT NULL AND o.goal_time::date=CURRENT_DATE AND o.status IN ('PENDING','ACCEPTED','FINISHED') GROUP BY o.order_id, o.status")
+    let rows = sqlx::query("SELECT o.order_id, o.status AS status, ARRAY_AGG(f.food_name) AS names, MIN(f.food_types) AS category_code FROM orders o JOIN order_items oi ON o.order_id=oi.order_id JOIN foods f ON oi.food_id=f.food_id WHERE o.user_id=$1 AND o.goal_time IS NOT NULL AND o.goal_time::date=CURRENT_DATE AND o.status IN ('PENDING','ACCEPTED','FINISHED') GROUP BY o.order_id, o.status")
         .bind(user.user_id)
         .fetch_all(db).await?;
     if rows.is_empty() {
@@ -217,7 +217,7 @@ pub async fn get_points_journey(
 ) -> Result<impl Responder, CustomError> {
     let db = &state.db_pool;
     // 今日待办订单（PENDING/ACCEPTED）
-    let order_rows = sqlx::query("SELECT o.order_id, o.status::text AS status, ARRAY_AGG(f.food_name) AS names FROM orders o JOIN order_items oi ON o.order_id=oi.order_id JOIN foods f ON oi.food_id=f.food_id WHERE o.user_id=$1 AND o.goal_time IS NOT NULL AND o.goal_time::date=CURRENT_DATE AND o.status IN ('PENDING','ACCEPTED') GROUP BY o.order_id, o.status")
+    let order_rows = sqlx::query("SELECT o.order_id, o.status AS status, ARRAY_AGG(f.food_name) AS names FROM orders o JOIN order_items oi ON o.order_id=oi.order_id JOIN foods f ON oi.food_id=f.food_id WHERE o.user_id=$1 AND o.goal_time IS NOT NULL AND o.goal_time::date=CURRENT_DATE AND o.status IN ('PENDING','ACCEPTED') GROUP BY o.order_id, o.status")
         .bind(user.user_id).fetch_all(db).await?;
     let journey_orders: Vec<JourneyOrderOut> = order_rows
         .into_iter()

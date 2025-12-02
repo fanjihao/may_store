@@ -79,8 +79,8 @@ pub async fn delete_order(
     // 历史
     sqlx::query("INSERT INTO order_status_history (order_id, from_status, to_status, changed_by, remark) VALUES ($1,$2,$3,$4,$5)")
 		.bind(order.order_id)
-		.bind("PENDING")
-		.bind("CANCELLED")
+		.bind(OrderStatusEnum::PENDING)
+		.bind(OrderStatusEnum::CANCELLED)
 		.bind(user_token.user_id as i64)
 		.bind(body.reason.clone())
 		.execute(&mut *tx)
@@ -96,7 +96,7 @@ pub async fn delete_order(
         .into_iter()
         .map(super::view::map_item_record_to_out(&state.db_pool))
         .collect::<Result<Vec<_>, _>>()?;
-    let hist_rows = sqlx::query("SELECT h.from_status::text, h.to_status::text, u.nick_name, h.remark, h.changed_at \
+    let hist_rows = sqlx::query("SELECT h.from_status, h.to_status, u.nick_name, h.remark, h.changed_at \
         FROM order_status_history h LEFT JOIN users u ON h.changed_by = u.user_id \
         WHERE h.order_id=$1 ORDER BY h.changed_at")
 		.bind(order.order_id)

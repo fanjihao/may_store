@@ -1,3 +1,4 @@
+use crate::models::orders::OrderStatusEnum;
 use crate::{errors::CustomError, AppState};
 use chrono::{Duration, Utc};
 use sqlx::Acquire;
@@ -44,8 +45,8 @@ async fn expire_pending(db: &sqlx::Pool<sqlx::Postgres>) -> Result<(), CustomErr
             .await?;
         sqlx::query("INSERT INTO order_status_history (order_id, from_status, to_status, changed_by, remark) VALUES ($1,$2,$3,$4,$5)")
             .bind(oid)
-            .bind("PENDING")
-            .bind("EXPIRED")
+            .bind(OrderStatusEnum::PENDING)
+            .bind(OrderStatusEnum::EXPIRED)
             .bind(None::<Option<i64>>) // system
             .bind(Some("自动过期".to_string()))
             .execute(&mut *tx)
