@@ -96,11 +96,16 @@ pub async fn get_group_activities(
             GROUP BY o.order_id, o.user_id, o.created_at
 
             UNION ALL
-            -- 订单接单 / 完成（来自状态历史，保持事件留存）
+            -- 订单接单 / 完成 / 取消
             SELECT 
                 osh.order_id AS ref_id,
                 osh.changed_by AS actor_user_id,
-                CASE WHEN osh.to_status='ACCEPTED' THEN 'ORDER_ACCEPTED' ELSE 'ORDER_FINISHED' END AS event_type,
+                CASE 
+                    WHEN osh.to_status='ACCEPTED' THEN 'ORDER_ACCEPTED' 
+                    WHEN osh.to_status='FINISHED' THEN 'ORDER_FINISHED'
+                    WHEN osh.to_status='CANCELLED' THEN 'ORDER_CANCELED'
+                    ELSE 'ORDER_OTHER'
+                END AS event_type,
                 osh.changed_at AS occurred_at,
                 NULL::text AS ref_name,
                 NULL::int AS point_amount,
@@ -109,7 +114,7 @@ pub async fn get_group_activities(
             FROM order_status_history osh
             JOIN orders o ON osh.order_id=o.order_id
             WHERE o.group_id=$1
-              AND osh.to_status IN ('ACCEPTED','FINISHED')
+              AND osh.to_status IN ('ACCEPTED','FINISHED','CANCELLED')
               AND osh.changed_at < $2
 
             UNION ALL
@@ -127,11 +132,11 @@ pub async fn get_group_activities(
             WHERE f.group_id=$1 AND f.created_at < $2
 
             UNION ALL
-            -- 菜品审核通过
+            -- 菜品审核通过 / 拒绝
             SELECT 
                 fal.food_id AS ref_id,
                 fal.acted_by AS actor_user_id,
-                'FOOD_APPROVED' AS event_type,
+                CASE WHEN fal.action=2 THEN 'FOOD_APPROVED' ELSE 'FOOD_REJECTED' END AS event_type,
                 fal.created_at AS occurred_at,
                 f.food_name AS ref_name,
                 NULL::int AS point_amount,
@@ -139,14 +144,28 @@ pub async fn get_group_activities(
                 NULL::int AS point_balance_after
             FROM food_audit_logs fal
             JOIN foods f ON f.food_id=fal.food_id
-            WHERE f.group_id=$1 AND fal.action=2 AND fal.created_at < $2
+            WHERE f.group_id=$1 AND fal.action IN (2, 3) AND fal.created_at < $2
+
+            UNION ALL
+            -- 心愿创建
+            SELECT 
+                w.wish_id AS ref_id,
+                NULL::bigint AS actor_user_id,
+                'WISH_CREATED' AS event_type,
+                w.created_at AS occurred_at,
+                w.wish_name AS ref_name,
+                NULL::int AS point_amount,
+                NULL::text AS point_tx_type,
+                NULL::int AS point_balance_after
+            FROM wishes w
+            WHERE w.created_by=$1 AND w.created_at < $2
 
             UNION ALL
             -- 心愿兑换（组内成员）
             SELECT 
                 wc.id AS ref_id,
                 wc.user_id AS actor_user_id,
-                'WISH_REDEEMED' AS event_type,
+                'WISH_CLAIMED' AS event_type,
                 wc.created_at AS occurred_at,
                 w.wish_name AS ref_name,
                 NULL::int AS point_amount,

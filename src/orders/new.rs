@@ -4,14 +4,13 @@ use crate::{
     errors::CustomError,
     models::{
         orders::{
-            OrderCreateInput, OrderItemOut, OrderItemRecord, OrderOutNew, OrderRecord,
+            OrderCreateInput, OrderItemOut, OrderOutNew, OrderRecord,
             OrderStatusEnum, OrderStatusHistoryOut,
         },
         users::UserToken,
     },
     AppState,
 };
-use chrono::{DateTime, Utc};
 use ntex::web::{
     types::{Json, State},
     HttpResponse, Responder,
@@ -45,9 +44,30 @@ pub async fn create_order(
         .bind(user_token.user_id as i64)
         .fetch_one(&mut *tx)
         .await?;
+        
         if !is_member {
-            tx.rollback().await.ok();
-            return Err(CustomError::BadRequest("你不是该组成员".into()));
+            // 检查邀请码
+            let mut allowed = false;
+            if let Some(code) = &data.invite_code {
+                let group_code: Option<String> = sqlx::query_scalar(
+                    "SELECT invite_code FROM association_groups WHERE group_id=$1"
+                )
+                .bind(gid)
+                .fetch_optional(&mut *tx)
+                .await?
+                .flatten();
+                
+                if let Some(gc) = group_code {
+                    if gc == *code {
+                        allowed = true;
+                    }
+                }
+            }
+
+            if !allowed {
+                tx.rollback().await.ok();
+                return Err(CustomError::BadRequest("你不是该组成员且邀请码无效".into()));
+            }
         }
     }
 

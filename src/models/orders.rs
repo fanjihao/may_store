@@ -31,6 +31,8 @@ pub struct OrderRecord {
     pub last_status_change_at: Option<DateTime<Utc>>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
+    #[sqlx(default)]
+    pub is_guest: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema, sqlx::FromRow)]
@@ -66,6 +68,7 @@ pub struct OrderItemCreateInput {
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct OrderCreateInput {
     pub group_id: Option<i64>,
+    pub invite_code: Option<String>,
     pub goal_time: Option<DateTime<Utc>>,
     pub items: Vec<OrderItemCreateInput>,
     pub points_cost: Option<i32>,
@@ -127,6 +130,8 @@ pub struct OrderOutNew {
     pub last_status_change_at: Option<DateTime<Utc>>,
     pub items: Vec<OrderItemOut>,
     pub status_history: Vec<OrderStatusHistoryOut>,
+    pub is_guest: bool,
+    pub group_name: Option<String>,
 }
 
 impl From<(OrderRecord, Vec<OrderItemOut>, Vec<OrderStatusHistoryOut>)> for OrderOutNew {
@@ -148,6 +153,8 @@ impl From<(OrderRecord, Vec<OrderItemOut>, Vec<OrderStatusHistoryOut>)> for Orde
             last_status_change_at: r.last_status_change_at,
             items,
             status_history: history,
+            is_guest: r.is_guest,
+            group_name: None, // Will be filled by query
         }
     }
 }

@@ -42,7 +42,9 @@ pub fn route(_state: Arc<AppState>, cfg: &mut web::ServiceConfig) {
                 .route("/{id}", web::put().to(users::invitation::confirm_invitation))
                 .route("/{id}", web::delete().to(users::invitation::cancel_invitation))
                 .route("/unbind", web::post().to(users::invitation::unbind_request))
+                .route("/bind", web::post().to(users::invitation::bind_user_directly))
                 .route("/group/{id}", web::get().to(users::invitation::get_group_info))
+                .route("/groups/{group_id}", web::put().to(users::group_update::update_group))
         );
 
     // 菜品相关新路由

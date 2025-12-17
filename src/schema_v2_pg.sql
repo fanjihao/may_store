@@ -47,7 +47,7 @@ CREATE TABLE users (
     email VARCHAR(128),
     role user_role_enum NOT NULL DEFAULT 'ORDERING',
     love_point INT NOT NULL DEFAULT 0,
-    avatar VARCHAR(256) NOT NULL DEFAULT 'https://img95.699pic.com/xsj/0f/d0/fo.jpg',
+    avatar VARCHAR(256) NOT NULL DEFAULT 'http://store.impeter.fun/default-avatar.png',
     phone VARCHAR(32),
     open_id VARCHAR(128),
     status SMALLINT NOT NULL DEFAULT 1,
@@ -102,6 +102,7 @@ CREATE TABLE association_groups (
     group_name VARCHAR(128),
     group_type group_type_enum NOT NULL DEFAULT 'PAIR',
     status SMALLINT NOT NULL DEFAULT 1,
+    invite_code VARCHAR(32),
     -- 1活跃 0关闭
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
@@ -111,6 +112,7 @@ COMMENT ON COLUMN association_groups.group_id IS '组ID主键';
 COMMENT ON COLUMN association_groups.group_name IS '组名称';
 COMMENT ON COLUMN association_groups.group_type IS '组类型：PAIR/FAMILY/TEAM';
 COMMENT ON COLUMN association_groups.status IS '状态：1活跃 0关闭';
+COMMENT ON COLUMN association_groups.invite_code IS '做客邀请码';
 COMMENT ON COLUMN association_groups.created_at IS '创建时间';
 COMMENT ON COLUMN association_groups.updated_at IS '更新时间';
 CREATE TABLE association_group_members (
@@ -145,7 +147,7 @@ COMMENT ON TABLE association_group_requests IS '绑定申请记录';
 COMMENT ON COLUMN association_group_requests.request_id IS '申请记录主键';
 COMMENT ON COLUMN association_group_requests.requester_id IS '发起者用户ID';
 COMMENT ON COLUMN association_group_requests.target_user_id IS '目标用户ID';
-COMMENT ON COLUMN association_group_requests.status IS '申请状态,默认0,0待处理 1同意 2拒绝 4: 申请解绑中5: 已解绑';
+COMMENT ON COLUMN association_group_requests.status IS '申请状态,默认0,0待处理 1同意 2拒绝 4申请解绑中 5已解绑';
 COMMENT ON COLUMN association_group_requests.remark IS '备注/理由';
 COMMENT ON COLUMN association_group_requests.created_at IS '创建时间';
 COMMENT ON COLUMN association_group_requests.handled_at IS '处理时间';

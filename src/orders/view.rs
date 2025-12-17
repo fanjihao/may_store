@@ -24,14 +24,19 @@ use std::sync::Arc;
     responses((status = 200, body = [OrderOutNew]))
 )]
 pub async fn get_orders(
-    user_token: UserToken,
+    _: UserToken,
     state: State<Arc<AppState>>,
     query: Query<OrderQuery>
 ) -> Result<impl Responder, CustomError> {
     let db = &state.db_pool;
     // 使用 QueryBuilder 动态构建过滤条件
     let mut qb = sqlx::QueryBuilder::<sqlx::Postgres>::new(
-        "SELECT order_id, user_id, receiver_id, group_id, status, goal_time, points_cost, points_reward, cancel_reason, reject_reason, last_status_change_at, created_at, updated_at FROM orders"
+        "SELECT o.order_id, o.user_id, o.receiver_id, o.group_id, o.status, o.goal_time, o.points_cost, o.points_reward, o.cancel_reason, o.reject_reason, o.last_status_change_at, o.created_at, o.updated_at, \
+        (o.group_id IS NOT NULL AND m.user_id IS NULL) AS is_guest, \
+        g.group_name \
+        FROM orders o \
+        LEFT JOIN association_group_members m ON o.group_id = m.group_id AND o.user_id = m.user_id \
+        LEFT JOIN association_groups g ON o.group_id = g.group_id"
     );
     let mut first = true;
     qb.push(" WHERE ");
@@ -41,7 +46,7 @@ pub async fn get_orders(
         } else {
             first = false;
         }
-        qb.push(" user_id = ");
+        qb.push(" o.user_id = ");
         qb.push_bind(uid as i64);
     }
     if let Some(rid) = query.receiver_id {
@@ -50,7 +55,7 @@ pub async fn get_orders(
         } else {
             first = false;
         }
-        qb.push(" receiver_id = ");
+        qb.push(" o.receiver_id = ");
         qb.push_bind(rid as i64);
     }
     if let Some(gid) = query.group_id {
@@ -59,7 +64,7 @@ pub async fn get_orders(
         } else {
             first = false;
         }
-        qb.push(" group_id = ");
+        qb.push(" o.group_id = ");
         qb.push_bind(gid as i64);
     }
 
@@ -68,20 +73,38 @@ pub async fn get_orders(
             qb.push(" AND ");
         }
         // 直接绑定枚举，让 sqlx 以 order_status_enum 类型传参，避免 enum=text 比较错误
-        qb.push(" status = ");
+        qb.push(" o.status = ");
         qb.push_bind(st); // st: OrderStatusEnum implements sqlx::Type + Encode
     } else if query.expired_only.unwrap_or(false) {
         if !first {
             qb.push(" AND ");
         }
-        qb.push(" status IN ('EXPIRED', 'CANCELLED', 'REJECTED', 'SYSTEM_CLOSED') ");
+        qb.push(" o.status IN ('EXPIRED', 'CANCELLED', 'REJECTED', 'SYSTEM_CLOSED') ");
     }
-    qb.push(" ORDER BY created_at DESC ");
+    qb.push(" ORDER BY o.created_at DESC ");
     qb.push(" LIMIT ");
     qb.push_bind(query.limit.unwrap_or(50));
-    let orders: Vec<OrderRecord> = qb.build_query_as().fetch_all(db).await?;
+    let orders_rows = qb.build().fetch_all(db).await?;
     let mut out_list: Vec<OrderOutNew> = Vec::new();
-    for order in orders {
+    for row in orders_rows {
+        let order = OrderRecord {
+            order_id: row.get("order_id"),
+            user_id: row.get("user_id"),
+            receiver_id: row.get("receiver_id"),
+            group_id: row.get("group_id"),
+            status: row.get::<OrderStatusEnum, _>("status"),
+            goal_time: row.try_get("goal_time").ok(),
+            points_cost: row.get("points_cost"),
+            points_reward: row.get("points_reward"),
+            cancel_reason: row.try_get("cancel_reason").ok(),
+            reject_reason: row.try_get("reject_reason").ok(),
+            last_status_change_at: row.try_get("last_status_change_at").ok(),
+            created_at: row.get("created_at"),
+            updated_at: row.get("updated_at"),
+            is_guest: row.get("is_guest"),
+        };
+        let group_name: Option<String> = row.try_get("group_name").ok();
+
         let items: Vec<OrderItemOut> = sqlx::query(
             "SELECT oi.id, oi.food_id, oi.quantity, oi.price, f.food_name, f.food_photo \
              FROM order_items oi LEFT JOIN foods f ON f.food_id = oi.food_id WHERE oi.order_id=$1"
@@ -108,7 +131,9 @@ pub async fn get_orders(
         .fetch_all(db)
         .await?;
         let history = history_rows.into_iter().map(map_history_row).collect();
-        out_list.push(OrderOutNew::from((order, items, history)));
+        let mut out = OrderOutNew::from((order, items, history));
+        out.group_name = group_name;
+        out_list.push(out);
     }
     Ok(HttpResponse::Ok().json(&out_list))
 }
@@ -128,14 +153,20 @@ pub async fn get_order_detail(
     let db = &state.db_pool;
     let row = sqlx
         ::query(
-            "SELECT order_id, user_id, receiver_id, group_id, status, goal_time, points_cost, points_reward, cancel_reason, reject_reason, last_status_change_at, created_at, updated_at FROM orders WHERE order_id=$1"
+            "SELECT o.order_id, o.user_id, o.receiver_id, o.group_id, o.status, o.goal_time, o.points_cost, o.points_reward, o.cancel_reason, o.reject_reason, o.last_status_change_at, o.created_at, o.updated_at, \
+            (o.group_id IS NOT NULL AND m.user_id IS NULL) AS is_guest, \
+            g.group_name \
+            FROM orders o \
+            LEFT JOIN association_group_members m ON o.group_id = m.group_id AND o.user_id = m.user_id \
+            LEFT JOIN association_groups g ON o.group_id = g.group_id \
+            WHERE o.order_id=$1"
         )
         .bind(*id)
         .fetch_optional(db).await?;
-    let order = match row {
+    let (order, group_name) = match row {
         Some(r) => {
             // decode directly as OrderRecord via manual field pulls
-            OrderRecord {
+            (OrderRecord {
                 order_id: r.get("order_id"),
                 user_id: r.get("user_id"),
                 receiver_id: r.get("receiver_id"),
@@ -149,7 +180,8 @@ pub async fn get_order_detail(
                 last_status_change_at: r.try_get("last_status_change_at").ok(),
                 created_at: r.get("created_at"),
                 updated_at: r.get("updated_at"),
-            }
+                is_guest: r.get("is_guest"),
+            }, r.try_get::<String, _>("group_name").ok())
         }
         None => return Err(CustomError::BadRequest("订单不存在".into())),
     };
@@ -173,7 +205,9 @@ pub async fn get_order_detail(
         .bind(order.order_id)
         .fetch_all(db).await?;
     let history = hist_rows.into_iter().map(map_history_row).collect();
-    Ok(HttpResponse::Ok().json(&OrderOutNew::from((order, items, history))))
+    let mut out = OrderOutNew::from((order, items, history));
+    out.group_name = group_name;
+    Ok(HttpResponse::Ok().json(&out))
 }
 
 #[utoipa::path(

@@ -1,7 +1,7 @@
 use crate::{
     AppState, errors::CustomError, models::{
         invitation::{
-            ConfirmInvitationInput, GroupInfoOut, GroupMemberOut, InvitationListOut, InvitationRequestOut, NewInvitationInput, UnbindRequestInput
+            BindUserDirectlyInput, ConfirmInvitationInput, GroupInfoOut, GroupMemberOut, InvitationListOut, InvitationRequestOut, NewInvitationInput, UnbindRequestInput
         },
         users::{UserRoleEnum, UserToken},
     }
@@ -14,6 +14,7 @@ use ntex::web::{
 use sqlx::FromRow;
 use std::sync::Arc;
 use sqlx::Row;
+use rand::Rng;
 
 // 内部查询结构体（不暴露到 OpenAPI）
 #[derive(FromRow)]
@@ -274,11 +275,13 @@ pub async fn confirm_invitation(
             gid
         } else {
             let group_name = format!("pair-{}-{}", req.requester_id, req.target_user_id);
+            let invite_code = generate_invite_code();
             // 创建组
             sqlx::query_scalar::<_, i64>(
-                "INSERT INTO association_groups (group_name, group_type) VALUES ($1,'PAIR') RETURNING group_id"
+                "INSERT INTO association_groups (group_name, group_type, invite_code) VALUES ($1,'PAIR', $2) RETURNING group_id"
             )
             .bind(group_name)
+            .bind(invite_code)
             .fetch_one(&mut *tx)
             .await?
         };
@@ -563,3 +566,112 @@ pub async fn get_group_info(
     };
     Ok(HttpResponse::Ok().json(&out))
 }
+
+#[utoipa::path(
+    post,
+    path = "/invitation/bind",
+    tag = "用户",
+    summary = "直接绑定用户（无需邀请确认）",
+    request_body = BindUserDirectlyInput,
+    responses(
+        (status = 200, description = "绑定成功"),
+        (status = 400, body = CustomError),
+        (status = 401, body = CustomError)
+    ),
+    security(("cookie_auth" = []))
+)]
+pub async fn bind_user_directly(
+    token: UserToken,
+    data: Json<BindUserDirectlyInput>,
+    state: State<Arc<AppState>>,
+) -> Result<impl Responder, CustomError> {
+    let db = &state.db_pool;
+    let uid = token.user_id;
+    let target = data.target_user_id;
+
+    if uid == target {
+        return Err(CustomError::BadRequest("不能绑定自己".into()));
+    }
+
+    let mut tx = db.begin().await?;
+
+    // Check if target exists
+    let target_exists = sqlx::query_scalar::<_, i64>("SELECT user_id FROM users WHERE user_id = $1 AND status = 1")
+        .bind(target)
+        .fetch_optional(&mut *tx)
+        .await?;
+    if target_exists.is_none() {
+        tx.rollback().await.ok();
+        return Err(CustomError::BadRequest("目标用户不存在或被禁用".into()));
+    }
+
+    // Check if already paired
+    let existing_pair = sqlx::query_scalar::<_, i64>(
+        "SELECT ag.group_id FROM association_groups ag JOIN association_group_members m1 ON ag.group_id = m1.group_id JOIN association_group_members m2 ON ag.group_id = m2.group_id WHERE ag.group_type='PAIR' AND m1.user_id=$1 AND m2.user_id=$2 LIMIT 1"
+    )
+    .bind(uid)
+    .bind(target)
+    .fetch_optional(&mut *tx)
+    .await?;
+
+    if existing_pair.is_some() {
+        tx.rollback().await.ok();
+        return Err(CustomError::BadRequest("已绑定".into()));
+    }
+
+    let group_name = format!("pair-{}-{}", uid, target);
+    let invite_code = generate_invite_code();
+    
+    let group_id = sqlx::query_scalar::<_, i64>(
+        "INSERT INTO association_groups (group_name, group_type, invite_code) VALUES ($1, 'PAIR', $2) RETURNING group_id"
+    )
+    .bind(group_name)
+    .bind(invite_code)
+    .fetch_one(&mut *tx)
+    .await?;
+
+    let role_req = sqlx::query_as::<_, RoleRow>("SELECT user_id, role FROM users WHERE user_id=$1")
+        .bind(uid)
+        .fetch_optional(&mut *tx)
+        .await?;
+    let role_tgt = sqlx::query_as::<_, RoleRow>("SELECT user_id, role FROM users WHERE user_id=$1")
+        .bind(target)
+        .fetch_optional(&mut *tx)
+        .await?;
+        
+    let mut role_rows: Vec<RoleRow> = Vec::new();
+    if let Some(r) = role_req { role_rows.push(r); }
+    if let Some(r) = role_tgt { role_rows.push(r); }
+    
+    for r in role_rows {
+        let g_role = match r.role {
+            UserRoleEnum::ORDERING => "ORDERING",
+            UserRoleEnum::RECEIVING => "RECEIVING",
+            UserRoleEnum::ADMIN => "ADMIN",
+        };
+        sqlx::query(
+            "INSERT INTO association_group_members (group_id, user_id, role_in_group, is_primary) VALUES ($1, $2, $3::group_member_role_enum, 0)"
+        )
+        .bind(group_id)
+        .bind(r.user_id)
+        .bind(g_role)
+        .execute(&mut *tx)
+        .await?;
+    }
+
+    tx.commit().await?;
+    Ok(HttpResponse::Ok().finish())
+}
+
+fn generate_invite_code() -> String {
+    const CHARSET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+    let mut rng = rand::thread_rng();
+    let code: String = (0..8)
+        .map(|_| {
+            let idx = rng.gen_range(0..CHARSET.len());
+            CHARSET[idx] as char
+        })
+        .collect();
+    code
+}
+

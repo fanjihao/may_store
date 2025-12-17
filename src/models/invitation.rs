@@ -60,3 +60,8 @@ pub struct GroupInfoOut {
     pub total_orders: i64,      // 该组总订单数
     pub completed_orders: i64,  // 该组已完成订单数
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct BindUserDirectlyInput {
+    pub target_user_id: i64,
+}

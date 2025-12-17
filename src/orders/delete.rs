@@ -56,6 +56,7 @@ pub async fn delete_order(
         last_status_change_at: row.try_get("last_status_change_at").ok(),
         created_at: row.get("created_at"),
         updated_at: row.get("updated_at"),
+        is_guest: false,
     };
     if order.status != OrderStatusEnum::PENDING {
         tx.rollback().await.ok();

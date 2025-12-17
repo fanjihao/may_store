@@ -109,7 +109,7 @@ pub async fn list_wish_claim_checkins(
         ::query("SELECT user_id FROM wish_claims WHERE id=$1")
         .bind(*claim_id)
         .fetch_optional(db).await?;
-    let Some(r) = own else {
+    let Some(_) = own else {
         return Err(CustomError::BadRequest("兑换记录不存在".into()));
     };
     let rows = sqlx

@@ -3,7 +3,7 @@ use crate::{
     models::users::{UserRoleEnum, UserToken},
     AppState,
 };
-use chrono::{Duration, Utc};
+use chrono::Utc;
 use ntex::web::{
     types::{Json, State},
     HttpResponse, Responder,
@@ -25,10 +25,7 @@ pub struct RoleSwitchResult {
     pub new_role: UserRoleEnum,
     pub counterpart_user_id: i64,
     pub counterpart_new_role: UserRoleEnum,
-    pub next_allowed_switch_at: chrono::DateTime<chrono::Utc>,
 }
-
-const SWITCH_COOLDOWN_MONTHS: i64 = 6; // 半年冷却
 
 #[utoipa::path(post, path="/users/role-switch", tag="用户", request_body=RoleSwitchInput, responses((status=200, body=RoleSwitchResult)), security(("cookie_auth"=[])))]
 pub async fn switch_role(
@@ -91,17 +88,16 @@ pub async fn switch_role(
         return Err(CustomError::BadRequest("当前角色不支持互换".into()));
     }
 
-    // 冷却校验（自身）
-    let cooldown_row = sqlx::query("SELECT last_role_switch_at FROM users WHERE user_id=$1")
-        .bind(token.user_id)
-        .fetch_one(db)
-        .await?;
-    let last_switch: Option<chrono::DateTime<chrono::Utc>> =
-        cooldown_row.try_get("last_role_switch_at").ok();
-    if let Some(ts) = last_switch {
-        if Utc::now() < ts + Duration::days(30 * SWITCH_COOLDOWN_MONTHS) {
-            return Err(CustomError::BadRequest("角色切换仍在冷却期".into()));
-        }
+    // 检查是否有未完成订单 (PENDING, ACCEPTED)
+    let incomplete_count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM orders WHERE group_id=$1 AND status IN ('PENDING', 'ACCEPTED')"
+    )
+    .bind(group_id)
+    .fetch_one(db)
+    .await?;
+
+    if incomplete_count > 0 {
+        return Err(CustomError::BadRequest("当前组内存在未完成订单，无法切换角色".into()));
     }
 
     // 目标角色
@@ -154,7 +150,6 @@ pub async fn switch_role(
     tx.commit().await?;
 
     let switched_at = Utc::now();
-    let next_allowed = switched_at + Duration::days(30 * SWITCH_COOLDOWN_MONTHS);
     let result = RoleSwitchResult {
         group_id,
         switched_at,
@@ -170,7 +165,6 @@ pub async fn switch_role(
         } else {
             UserRoleEnum::RECEIVING
         },
-        next_allowed_switch_at: next_allowed,
     };
     Ok(HttpResponse::Ok().json(&result))
 }
