@@ -123,7 +123,7 @@ pub async fn get_orders(
         })
         .collect();
         let history_rows = sqlx::query(
-            "SELECT h.from_status::text, h.to_status::text, u.nick_name, h.remark, h.changed_at \
+            "SELECT h.from_status, h.to_status, u.nick_name, h.remark, h.changed_at \
              FROM order_status_history h LEFT JOIN users u ON h.changed_by = u.user_id \
              WHERE h.order_id=$1 ORDER BY h.changed_at DESC LIMIT 5"
         )
@@ -198,7 +198,7 @@ pub async fn get_order_detail(
         .collect::<Result<Vec<_>, _>>()?;
     let hist_rows = sqlx
         ::query(
-            "SELECT h.from_status::text, h.to_status::text, u.nick_name, h.remark, h.changed_at \
+            "SELECT h.from_status, h.to_status, u.nick_name, h.remark, h.changed_at \
              FROM order_status_history h LEFT JOIN users u ON h.changed_by = u.user_id \
              WHERE h.order_id=$1 ORDER BY h.changed_at"
         )

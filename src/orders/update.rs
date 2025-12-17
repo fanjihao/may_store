@@ -142,7 +142,7 @@ pub async fn update_order_status(
 
     // 历史列表
     let history_rows: Vec<OrderStatusHistoryOut> = sqlx::query(
-        "SELECT h.from_status::text, h.to_status::text, u.nick_name, h.remark, h.changed_at \
+        "SELECT h.from_status, h.to_status, u.nick_name, h.remark, h.changed_at \
          FROM order_status_history h LEFT JOIN users u ON h.changed_by = u.user_id \
          WHERE h.order_id=$1 ORDER BY h.changed_at"
     )
