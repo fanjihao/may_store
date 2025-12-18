@@ -151,31 +151,9 @@ pub async fn update_order_status(
     .await?
     .into_iter()
     .map(|row| {
-        let from_s = row.get::<Option<String>, _>("from_status")
-            .and_then(|s| match s.as_str() {
-                "PENDING" => Some(OrderStatusEnum::PENDING),
-                "ACCEPTED" => Some(OrderStatusEnum::ACCEPTED),
-                "FINISHED" => Some(OrderStatusEnum::FINISHED),
-                "CANCELLED" => Some(OrderStatusEnum::CANCELLED),
-                "EXPIRED" => Some(OrderStatusEnum::EXPIRED),
-                "REJECTED" => Some(OrderStatusEnum::REJECTED),
-                "SYSTEM_CLOSED" => Some(OrderStatusEnum::SYSTEM_CLOSED),
-                _ => None,
-            });
-        let to_s_str: String = row.get("to_status");
-        let to_s = match to_s_str.as_str() {
-            "PENDING" => OrderStatusEnum::PENDING,
-            "ACCEPTED" => OrderStatusEnum::ACCEPTED,
-            "FINISHED" => OrderStatusEnum::FINISHED,
-            "CANCELLED" => OrderStatusEnum::CANCELLED,
-            "EXPIRED" => OrderStatusEnum::EXPIRED,
-            "REJECTED" => OrderStatusEnum::REJECTED,
-            "SYSTEM_CLOSED" => OrderStatusEnum::SYSTEM_CLOSED,
-            _ => OrderStatusEnum::PENDING,
-        };
         OrderStatusHistoryOut {
-            from_status: from_s,
-            to_status: to_s,
+            from_status: row.get("from_status"),
+            to_status: row.get("to_status"),
             changed_by: row.try_get("nick_name").ok().flatten(),
             remark: row.get::<Option<String>, _>("remark"),
             changed_at: row.get::<chrono::DateTime<Utc>, _>("changed_at")
