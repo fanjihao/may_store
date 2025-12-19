@@ -75,7 +75,10 @@ pub struct FoodRecord {
     pub food_id: i64,
     pub food_name: String,
     pub food_photo: Option<String>,
-    pub food_types: i16, // 使用数值分类
+    // food_types removed
+    pub tag_id: Option<i64>,
+    pub ingredients: Option<String>,
+    pub steps: Option<String>,
     pub food_status: FoodStatusEnum,
     pub submit_role: SubmitRoleEnum,
     pub apply_status: ApplyStatusEnum,
@@ -94,6 +97,7 @@ pub struct FoodRecord {
 pub struct TagRecord {
     pub tag_id: i64,
     pub tag_name: String,
+    pub group_id: Option<i64>,
     pub sort: Option<i32>,
     pub created_at: DateTime<Utc>,
 }
@@ -115,12 +119,14 @@ pub struct FoodOut {
     pub food_id: i64,
     pub food_name: String,
     pub food_photo: Option<String>,
-    pub category: FoodCategory,
+    // category removed
+    pub ingredients: Option<String>,
+    pub steps: Option<String>,
     pub food_status: FoodStatusEnum,
     pub apply_status: ApplyStatusEnum,
     pub submit_role: SubmitRoleEnum,
     pub apply_remark: Option<String>,
-    pub tags: Vec<FoodTagOut>,
+    pub tag: Option<FoodTagOut>,
     pub is_marked_like: bool,
     pub is_marked_not_recommend: bool,
     // 统计字段（来自 food_stats 缓存表）
@@ -132,9 +138,9 @@ pub struct FoodOut {
     pub updated_at: DateTime<Utc>,
 }
 
-impl From<(FoodRecord, Vec<TagRecord>, Vec<MarkTypeEnum>)> for FoodOut {
-    fn from(value: (FoodRecord, Vec<TagRecord>, Vec<MarkTypeEnum>)) -> Self {
-        let (f, tags, marks) = value;
+impl From<(FoodRecord, Option<TagRecord>, Vec<MarkTypeEnum>)> for FoodOut {
+    fn from(value: (FoodRecord, Option<TagRecord>, Vec<MarkTypeEnum>)) -> Self {
+        let (f, tag, marks) = value;
         let like = marks.iter().any(|m| matches!(m, MarkTypeEnum::LIKE));
         let not_rec = marks
             .iter()
@@ -143,19 +149,16 @@ impl From<(FoodRecord, Vec<TagRecord>, Vec<MarkTypeEnum>)> for FoodOut {
             food_id: f.food_id,
             food_name: f.food_name,
             food_photo: f.food_photo,
-            category: FoodCategory::from_i32(f.food_types as i32)
-                .unwrap_or(FoodCategory::Breakfast),
+            ingredients: f.ingredients,
+            steps: f.steps,
             food_status: f.food_status,
             apply_status: f.apply_status,
             submit_role: f.submit_role,
             apply_remark: f.apply_remark,
-            tags: tags
-                .into_iter()
-                .map(|t| FoodTagOut {
-                    tag_id: t.tag_id,
-                    tag_name: t.tag_name,
-                })
-                .collect(),
+            tag: tag.map(|t| FoodTagOut {
+                tag_id: t.tag_id,
+                tag_name: t.tag_name,
+            }),
             is_marked_like: like,
             is_marked_not_recommend: not_rec,
             total_order_count: 0,
@@ -174,7 +177,10 @@ pub struct FoodWithStatsRecord {
     pub food_id: i64,
     pub food_name: String,
     pub food_photo: Option<String>,
-    pub food_types: i16,
+    // food_types removed
+    pub tag_id: Option<i64>,
+    pub ingredients: Option<String>,
+    pub steps: Option<String>,
     pub food_status: FoodStatusEnum,
     pub submit_role: SubmitRoleEnum,
     pub apply_status: ApplyStatusEnum,
@@ -196,7 +202,7 @@ pub struct FoodWithStatsRecord {
 impl FoodOut {
     pub fn from_with_stats(
         row: FoodWithStatsRecord,
-        tags: Vec<TagRecord>,
+        tag: Option<TagRecord>,
         marks: Vec<MarkTypeEnum>,
     ) -> Self {
         let like = marks.iter().any(|m| matches!(m, MarkTypeEnum::LIKE));
@@ -205,19 +211,16 @@ impl FoodOut {
             food_id: row.food_id,
             food_name: row.food_name,
             food_photo: row.food_photo,
-            category: FoodCategory::from_i32(row.food_types as i32)
-                .unwrap_or(FoodCategory::Breakfast),
+            ingredients: row.ingredients,
+            steps: row.steps,
             food_status: row.food_status,
             apply_status: row.apply_status,
             submit_role: row.submit_role,
             apply_remark: row.apply_remark,
-            tags: tags
-                .into_iter()
-                .map(|t| FoodTagOut {
-                    tag_id: t.tag_id,
-                    tag_name: t.tag_name,
-                })
-                .collect(),
+            tag: tag.map(|t| FoodTagOut {
+                tag_id: t.tag_id,
+                tag_name: t.tag_name,
+            }),
             is_marked_like: like,
             is_marked_not_recommend: not_rec,
             total_order_count: row.total_order_count.unwrap_or(0),
@@ -236,8 +239,10 @@ impl FoodOut {
 pub struct FoodCreateInput {
     pub food_name: String,
     pub food_photo: Option<String>,
-    pub food_types: FoodCategory,
-    pub tag_ids: Option<Vec<i64>>, // 关联标签
+    // food_types removed
+    pub ingredients: Option<String>,
+    pub steps: Option<String>,
+    pub tag_id: Option<i64>, // 关联标签
     pub group_id: Option<i64>,     // 归属组（可选）
 }
 
@@ -246,8 +251,10 @@ pub struct FoodUpdateInput {
     pub food_id: i64,
     pub food_name: Option<String>,
     pub food_photo: Option<String>,
-    pub food_types: Option<FoodCategory>,
-    pub tag_ids: Option<Vec<i64>>,
+    // food_types removed
+    pub ingredients: Option<String>,
+    pub steps: Option<String>,
+    pub tag_id: Option<i64>,
     pub apply_remark: Option<String>,
     pub food_status: Option<FoodStatusEnum>,
     pub apply_status: Option<ApplyStatusEnum>,
@@ -256,6 +263,7 @@ pub struct FoodUpdateInput {
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct TagCreateInput {
     pub tag_name: String,
+    pub group_id: Option<i64>,
     pub sort: Option<i32>,
 }
 
@@ -265,8 +273,8 @@ pub struct FoodFilterQuery {
     pub food_status: Option<FoodStatusEnum>,
     pub apply_status: Option<ApplyStatusEnum>,
     pub submit_role: Option<SubmitRoleEnum>,
-    pub category: Option<FoodCategory>,
-    pub tag_ids: Option<Vec<i64>>,
+    // category removed
+    pub tag_id: Option<i64>,
     pub group_id: Option<i64>,
     pub only_active: Option<bool>,
     pub created_by: Option<i64>,
@@ -292,7 +300,7 @@ pub struct FoodMarkOut {
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct BlindBoxDrawInput {
     pub group_id: Option<i64>,         // 若为空则按用户所属主 group
-    pub food_types: Vec<FoodCategory>, // 需要抽取的类别集合
+    pub tag_ids: Vec<i64>,             // 抽取的标签ID列表
     pub limit_each: Option<u32>,       // 每个类型最多抽取数量
 }
 
@@ -301,11 +309,11 @@ pub struct BlindBoxFoodSnapshot {
     pub food_id: i64,
     pub food_name: String,
     pub food_photo: Option<String>,
-    pub category: FoodCategory,
+    // category removed
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct BlindBoxDrawResultOut {
     pub results: Vec<BlindBoxFoodSnapshot>,
-    pub requested_types: Vec<FoodCategory>,
+    pub requested_tags: Vec<i64>,
 }

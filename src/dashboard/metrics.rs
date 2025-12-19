@@ -99,7 +99,7 @@ pub async fn get_my_today_orders(
     user: UserToken,
 ) -> Result<impl Responder, CustomError> {
     let db = &state.db_pool;
-    let rows = sqlx::query("SELECT o.order_id, o.status AS status, ARRAY_AGG(f.food_name) AS names, MIN(f.food_types) AS category_code FROM orders o JOIN order_items oi ON o.order_id=oi.order_id JOIN foods f ON oi.food_id=f.food_id WHERE o.user_id=$1 AND o.goal_time IS NOT NULL AND o.goal_time::date=CURRENT_DATE AND o.status IN ('PENDING','ACCEPTED','FINISHED') GROUP BY o.order_id, o.status")
+    let rows = sqlx::query("SELECT o.order_id, o.status AS status, ARRAY_AGG(f.food_name) AS names, MIN(t.tag_name) AS tag_name FROM orders o JOIN order_items oi ON o.order_id=oi.order_id JOIN foods f ON oi.food_id=f.food_id LEFT JOIN tags t ON f.tag_id=t.tag_id WHERE o.user_id=$1 AND o.goal_time IS NOT NULL AND o.goal_time::date=CURRENT_DATE AND o.status IN ('PENDING','ACCEPTED','FINISHED') GROUP BY o.order_id, o.status")
         .bind(user.user_id)
         .fetch_all(db).await?;
     if rows.is_empty() {
@@ -111,15 +111,7 @@ pub async fn get_my_today_orders(
     let mut entries: Vec<TodayOrderEntryOut> = rows
         .into_iter()
         .map(|r| {
-            let code: i32 = r.get("category_code");
-            let category = match code {
-                1 => "早上",
-                2 => "中午",
-                3 => "下午",
-                4 => "晚上",
-                _ => "其他",
-            }
-            .to_string();
+            let category: String = r.get::<Option<String>, _>("tag_name").unwrap_or("其他".to_string());
             // ARRAY_AGG returns Value; attempt to treat as Vec<String>
             let names_val: serde_json::Value = r.get("names");
             let foods_text = names_val

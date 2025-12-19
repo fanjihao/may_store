@@ -60,38 +60,32 @@ pub async fn create_food(
     };
 
     let rec = sqlx::query_as::<_, FoodRecord>(
-		"INSERT INTO foods (food_name, food_photo, food_types, submit_role, apply_status, food_status, created_by, owner_user_id, group_id, apply_remark) \
-		 VALUES ($1,$2,$3,$4,$5,$6,$7,$7,$8,$9) RETURNING food_id, food_name, food_photo, food_types, food_status, submit_role, apply_status, apply_remark, created_by, owner_user_id, group_id, approved_at, approved_by, is_del, created_at, updated_at"
+		"INSERT INTO foods (food_name, food_photo, ingredients, steps, submit_role, apply_status, food_status, created_by, owner_user_id, group_id, apply_remark, tag_id) \
+		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$8,$9,$10,$11) RETURNING food_id, food_name, food_photo, ingredients, steps, food_status, submit_role, apply_status, apply_remark, created_by, owner_user_id, group_id, approved_at, approved_by, is_del, created_at, updated_at, tag_id"
 	)
 	.bind(&data.food_name)
 	.bind(&data.food_photo)
-	.bind(data.food_types as i16)
+    .bind(&data.ingredients)
+    .bind(&data.steps)
 	.bind(submit_role)
 	.bind(apply_status)
 	.bind(food_status)
 	.bind(token.user_id as i64)
 	.bind(data.group_id.map(|v| v as i64))
 	.bind(Option::<String>::None) // apply_remark
+    .bind(data.tag_id)
 	.fetch_one(&mut *tx)
 	.await?;
 
-    if let Some(tag_ids) = &data.tag_ids {
-        for tid in tag_ids {
-            sqlx::query(
-                "INSERT INTO food_tags_map (food_id, tag_id) VALUES ($1,$2) ON CONFLICT DO NOTHING",
-            )
-            .bind(rec.food_id)
-            .bind(*tid)
-            .execute(&mut *tx)
-            .await?;
-        }
-    }
-
     // 查询标签
-    let tag_rows: Vec<TagRecord> = sqlx::query_as("SELECT t.tag_id, t.tag_name, t.sort, t.created_at FROM tags t JOIN food_tags_map m ON t.tag_id=m.tag_id WHERE m.food_id=$1")
-		.bind(rec.food_id)
-		.fetch_all(&mut *tx)
-		.await?;
+    let tag_row: Option<TagRecord> = if let Some(tid) = rec.tag_id {
+        sqlx::query_as("SELECT * FROM tags WHERE tag_id=$1")
+            .bind(tid)
+            .fetch_optional(&mut *tx)
+            .await?
+    } else {
+        None
+    };
 
     // 查询标记
     let marks: Vec<String> =
@@ -113,7 +107,7 @@ pub async fn create_food(
         .collect::<Vec<_>>();
 
     tx.commit().await?;
-    let out = FoodOut::from((rec, tag_rows, mark_enums));
+    let out = FoodOut::from((rec, tag_row, mark_enums));
     Ok(HttpResponse::Created().json(&out))
 }
 
@@ -128,15 +122,17 @@ use crate::models::foods::TagCreateInput;
 	security(("cookie_auth" = []))
 )]
 pub async fn create_tag(
-    _token: UserToken,
+    token: UserToken,
     data: Json<TagCreateInput>,
     state: State<Arc<AppState>>,
 ) -> Result<impl Responder, CustomError> {
     let db = &state.db_pool;
+    let gid = data.group_id.or(token.user.as_ref().and_then(|u| u.group_id));
     let rec = sqlx::query_as::<_, TagRecord>(
-		"INSERT INTO tags (tag_name, sort) VALUES ($1,$2) RETURNING tag_id, tag_name, sort, created_at"
+		"INSERT INTO tags (tag_name, group_id, sort) VALUES ($1,$2,$3) RETURNING tag_id, tag_name, group_id, sort, created_at"
 	)
 	.bind(&data.tag_name)
+    .bind(gid)
 	.bind(data.sort)
 	.fetch_one(db)
 	.await?;

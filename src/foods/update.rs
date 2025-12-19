@@ -30,7 +30,7 @@ pub async fn update_food(
     let mut tx = db.begin().await?;
     // 获取现有记录
     let rec_opt = sqlx::query_as::<_, FoodRecord>(
-		"SELECT food_id, food_name, food_photo, food_types, food_status, submit_role, apply_status, apply_remark, created_by, owner_user_id, group_id, approved_at, approved_by, is_del, created_at, updated_at FROM foods WHERE food_id=$1 FOR UPDATE"
+		"SELECT food_id, food_name, food_photo, ingredients, steps, food_status, submit_role, apply_status, apply_remark, created_by, owner_user_id, group_id, approved_at, approved_by, is_del, created_at, updated_at, tag_id FROM foods WHERE food_id=$1 FOR UPDATE"
 	)
 	.bind(id.0)
 	.fetch_optional(&mut *tx)
@@ -57,8 +57,11 @@ pub async fn update_food(
     if let Some(photo) = &data.food_photo {
         rec.food_photo = Some(photo.clone());
     }
-    if let Some(cat) = data.food_types {
-        rec.food_types = cat as i16;
+    if let Some(ing) = &data.ingredients {
+        rec.ingredients = Some(ing.clone());
+    }
+    if let Some(st) = &data.steps {
+        rec.steps = Some(st.clone());
     }
     if let Some(r) = &data.apply_remark {
         rec.apply_remark = Some(r.clone());
@@ -70,40 +73,34 @@ pub async fn update_food(
         rec.apply_status = app_status;
     }
 
+    if let Some(tid) = data.tag_id {
+        rec.tag_id = Some(tid);
+    }
+
     sqlx::query(
-		"UPDATE foods SET food_name=$2, food_photo=$3, food_types=$4, apply_remark=$5, food_status=$6, apply_status=$7, updated_at=NOW() WHERE food_id=$1"
+		"UPDATE foods SET food_name=$2, food_photo=$3, ingredients=$4, steps=$5, apply_remark=$6, food_status=$7, apply_status=$8, tag_id=$9, updated_at=NOW() WHERE food_id=$1"
 	)
 	.bind(rec.food_id)
 	.bind(&rec.food_name)
 	.bind(&rec.food_photo)
-	.bind(rec.food_types)
+    .bind(&rec.ingredients)
+    .bind(&rec.steps)
 	.bind(&rec.apply_remark)
 	.bind(rec.food_status)
 	.bind(rec.apply_status)
+    .bind(rec.tag_id)
 	.execute(&mut *tx)
 	.await?;
 
-    if let Some(tag_ids) = &data.tag_ids {
-        // 重建标签映射
-        sqlx::query("DELETE FROM food_tags_map WHERE food_id=$1")
-            .bind(rec.food_id)
-            .execute(&mut *tx)
-            .await?;
-        for tid in tag_ids {
-            sqlx::query(
-                "INSERT INTO food_tags_map (food_id, tag_id) VALUES ($1,$2) ON CONFLICT DO NOTHING",
-            )
-            .bind(rec.food_id)
-            .bind(*tid)
-            .execute(&mut *tx)
-            .await?;
-        }
-    }
+    let tag_row: Option<TagRecord> = if let Some(tid) = rec.tag_id {
+        sqlx::query_as("SELECT * FROM tags WHERE tag_id=$1")
+            .bind(tid)
+            .fetch_optional(&mut *tx)
+            .await?
+    } else {
+        None
+    };
 
-    let tag_rows: Vec<TagRecord> = sqlx::query_as("SELECT t.tag_id, t.tag_name, t.sort, t.created_at FROM tags t JOIN food_tags_map m ON t.tag_id=m.tag_id WHERE m.food_id=$1")
-		.bind(rec.food_id)
-		.fetch_all(&mut *tx)
-		.await?;
     let marks: Vec<String> =
         sqlx::query("SELECT mark_type::text FROM user_food_mark WHERE user_id=$1 AND food_id=$2")
             .bind(token.user_id as i64)
@@ -123,7 +120,7 @@ pub async fn update_food(
         .collect::<Vec<_>>();
     tx.commit().await?;
 
-    Ok(HttpResponse::Ok().json(&FoodOut::from((rec, tag_rows, mark_enums))))
+    Ok(HttpResponse::Ok().json(&FoodOut::from((rec, tag_row, mark_enums))))
 }
 
 use crate::models::foods::FoodMarkActionInput;

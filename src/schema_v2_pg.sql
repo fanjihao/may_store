@@ -157,8 +157,10 @@ CREATE TABLE foods (
     food_id BIGSERIAL PRIMARY KEY,
     food_name VARCHAR(128) NOT NULL,
     food_photo VARCHAR(256),
-    food_types SMALLINT NOT NULL,
-    -- 1早餐 2午餐 3下午茶 4晚餐
+    -- food_types removed
+    tag_id BIGINT REFERENCES tags(tag_id) ON DELETE SET NULL,
+    ingredients TEXT,
+    steps TEXT,
     food_status food_status_enum NOT NULL DEFAULT 'NORMAL',
     submit_role submit_role_enum NOT NULL DEFAULT 'ORDERING_APPLY',
     apply_status apply_status_enum NOT NULL DEFAULT 'PENDING',
@@ -197,26 +199,18 @@ CREATE INDEX idx_food_owner ON foods(owner_user_id);
 CREATE INDEX idx_food_types ON foods(food_types);
 CREATE TABLE tags (
     tag_id BIGSERIAL PRIMARY KEY,
-    tag_name VARCHAR(64) NOT NULL UNIQUE,
+    tag_name VARCHAR(64) NOT NULL,
+    group_id BIGINT REFERENCES association_groups(group_id) ON DELETE CASCADE,
     sort INT DEFAULT 0,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE (tag_name, group_id)
 );
 COMMENT ON TABLE tags IS '菜品标签';
 COMMENT ON COLUMN tags.tag_id IS '标签主键ID';
 COMMENT ON COLUMN tags.tag_name IS '标签名称唯一';
 COMMENT ON COLUMN tags.sort IS '排序值-越大越靠前';
 COMMENT ON COLUMN tags.created_at IS '创建时间';
-CREATE TABLE food_tags_map (
-    food_id BIGINT NOT NULL REFERENCES foods(food_id) ON DELETE CASCADE,
-    tag_id BIGINT NOT NULL REFERENCES tags(tag_id) ON DELETE CASCADE,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    PRIMARY KEY (food_id, tag_id)
-);
-COMMENT ON TABLE food_tags_map IS '菜品与标签多对多映射';
-COMMENT ON COLUMN food_tags_map.food_id IS '菜品ID';
-COMMENT ON COLUMN food_tags_map.tag_id IS '标签ID';
-COMMENT ON COLUMN food_tags_map.created_at IS '映射创建时间';
-CREATE INDEX idx_ft_tag ON food_tags_map(tag_id);
+
 CREATE TABLE user_food_mark (
     user_id BIGINT NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
     food_id BIGINT NOT NULL REFERENCES foods(food_id) ON DELETE CASCADE,

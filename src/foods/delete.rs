@@ -40,10 +40,7 @@ pub async fn delete_tag(
     id: Path<(i64,)>,
 ) -> Result<impl Responder, CustomError> {
     let db = &state.db_pool;
-    sqlx::query("DELETE FROM food_tags_map WHERE tag_id=$1")
-        .bind(id.0)
-        .execute(db)
-        .await?;
+    // food_tags_map removed
     sqlx::query("DELETE FROM tags WHERE tag_id=$1")
         .bind(id.0)
         .execute(db)
