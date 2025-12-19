@@ -642,6 +642,50 @@ pub async fn bind_user_directly(
     let mut role_rows: Vec<RoleRow> = Vec::new();
     if let Some(r) = role_req { role_rows.push(r); }
     if let Some(r) = role_tgt { role_rows.push(r); }
+
+    if role_rows.len() != 2 {
+        tx.rollback().await.ok();
+        return Err(CustomError::BadRequest("用户角色读取失败".into()));
+    }
+
+    // 判断是否需要自动补齐一对互补角色（双方都 ORDERING 或都 RECEIVING 时）
+    let req_role_enum = role_rows
+        .iter()
+        .find(|r| r.user_id == uid)
+        .unwrap()
+        .role;
+    let tgt_role_enum = role_rows
+        .iter()
+        .find(|r| r.user_id == target)
+        .unwrap()
+        .role;
+    let mut adjusted_target_role: Option<UserRoleEnum> = None;
+    if matches!(req_role_enum, UserRoleEnum::ORDERING)
+        && matches!(tgt_role_enum, UserRoleEnum::ORDERING)
+    {
+        adjusted_target_role = Some(UserRoleEnum::RECEIVING);
+    } else if matches!(req_role_enum, UserRoleEnum::RECEIVING)
+        && matches!(tgt_role_enum, UserRoleEnum::RECEIVING)
+    {
+        adjusted_target_role = Some(UserRoleEnum::ORDERING);
+    }
+
+    if let Some(new_role) = adjusted_target_role {
+        sqlx::query("UPDATE users SET role=$2::user_role_enum, updated_at=NOW() WHERE user_id=$1")
+            .bind(target)
+            .bind(match new_role {
+                UserRoleEnum::ORDERING => "ORDERING",
+                UserRoleEnum::RECEIVING => "RECEIVING",
+                UserRoleEnum::ADMIN => "ADMIN",
+            })
+            .execute(&mut *tx)
+            .await?;
+        
+        // Update the role in role_rows for the target user so the group member insertion uses the correct role
+        if let Some(r) = role_rows.iter_mut().find(|r| r.user_id == target) {
+            r.role = new_role;
+        }
+    }
     
     for r in role_rows {
         let g_role = match r.role {
