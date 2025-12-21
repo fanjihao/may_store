@@ -53,6 +53,7 @@ pub struct GroupInfoOut {
     pub group_id: i64,
     pub group_name: Option<String>,
     pub group_type: String,
+    pub invite_code: Option<String>,
     pub status: i16,
     pub created_at: chrono::DateTime<chrono::Utc>,
     pub updated_at: chrono::DateTime<chrono::Utc>,

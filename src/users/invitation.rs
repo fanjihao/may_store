@@ -512,7 +512,7 @@ pub async fn get_group_info(
 ) -> Result<impl Responder, CustomError> {
     let db = &state.db_pool;
     let base = sqlx::query(
-        "SELECT group_id, group_name, group_type::text, status, created_at, updated_at FROM association_groups WHERE group_id=$1"
+        "SELECT group_id, invite_code, group_name, group_type::text, status, created_at, updated_at FROM association_groups WHERE group_id=$1"
     )
     .bind(id.0)
     .fetch_optional(db)
@@ -557,6 +557,7 @@ pub async fn get_group_info(
         group_id: g.get("group_id"),
         group_name: g.try_get("group_name").ok(),
         group_type: g.get("group_type"),
+        invite_code: g.get("invite_code"),
         status: g.get("status"),
         created_at: g.get("created_at"),
         updated_at: g.get("updated_at"),

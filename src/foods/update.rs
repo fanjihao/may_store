@@ -1,6 +1,6 @@
 use crate::{
     errors::CustomError,
-    models::foods::{FoodOut, FoodRecord, FoodUpdateInput, MarkTypeEnum, TagRecord},
+    models::foods::{FoodOut, FoodRecord, FoodUpdateInput, MarkTypeEnum, SubmitRoleEnum, TagRecord},
     models::users::UserToken,
     AppState,
 };
@@ -40,14 +40,45 @@ pub async fn update_food(
         None => return Err(CustomError::BadRequest("菜品不存在".into())),
     };
 
-    // 权限：只允许创建者或管理员更新（简单判定管理员）
+    // 权限：
+    // - RECEIVING 自主创建（RECEIVING_CREATE）：仅允许本人或管理员修改
+    // - ORDERING 申请（ORDERING_APPLY）：允许 RECEIVING 审核，但禁止自审（同一账号切角色也不行）
     let role: Option<String> = sqlx::query_scalar("SELECT role::text FROM users WHERE user_id=$1")
         .bind(token.user_id as i64)
         .fetch_optional(&mut *tx)
         .await?;
-    let is_admin = matches!(role.as_deref(), Some("ADMIN"));
-    if !is_admin && rec.created_by != token.user_id as i64 {
+    let Some(role) = role else {
+        return Err(CustomError::BadRequest("用户不存在".into()));
+    };
+    let is_admin = role == "ADMIN";
+    let is_receiving = role == "RECEIVING";
+    let uid = token.user_id as i64;
+
+    let can_update = match rec.submit_role {
+        SubmitRoleEnum::RECEIVING_CREATE => is_admin || rec.created_by == uid,
+        SubmitRoleEnum::ORDERING_APPLY => is_admin || rec.created_by == uid || (is_receiving && rec.created_by != uid),
+    };
+    if !can_update {
         return Err(CustomError::BadRequest("无权限修改".into()));
+    }
+
+    // 禁止自审：如果是 ORDERING 申请菜品，创建者本人不允许修改 apply_status。
+    // （即使该用户通过“角色互换”切到 RECEIVING，也不能审核自己提交的申请。）
+    if !is_admin
+        && matches!(rec.submit_role, SubmitRoleEnum::ORDERING_APPLY)
+        && rec.created_by == uid
+        && data.apply_status.is_some()
+    {
+        return Err(CustomError::BadRequest("禁止自审".into()));
+    }
+
+    // 非管理员审核必须是 RECEIVING
+    if !is_admin
+        && matches!(rec.submit_role, SubmitRoleEnum::ORDERING_APPLY)
+        && data.apply_status.is_some()
+        && !is_receiving
+    {
+        return Err(CustomError::BadRequest("仅接单角色可审核".into()));
     }
 
     // 应用更新字段
@@ -152,23 +183,23 @@ pub async fn mark_food(
 	delete,
 	path = "/foods/mark/{food_id}/{mark_type}",
 	tag = "菜品",
-	params(("food_id"=i64, Path), ("mark_type"=String, Path)),
+	params(("food_id"=i64, Path), ("mark_type"=MarkTypeEnum, Path)),
 	responses((status = 200, body = String)),
 	security(("cookie_auth" = []))
 )]
 pub async fn unmark_food(
     token: UserToken,
     state: State<Arc<AppState>>,
-    path: ntex::web::types::Path<(i64, String)>,
+    path: ntex::web::types::Path<(i64, MarkTypeEnum)>,
 ) -> Result<impl Responder, CustomError> {
-    let (food_id, mark_type) = (path.0, path.1.clone());
+    let (food_id, mark_type) = (path.0, path.1);
     let db = &state.db_pool;
     sqlx::query(
-        "DELETE FROM user_food_mark WHERE user_id=$1 AND food_id=$2 AND mark_type::text=$3",
+        "DELETE FROM user_food_mark WHERE user_id=$1 AND food_id=$2 AND mark_type=$3",
     )
     .bind(token.user_id as i64)
     .bind(food_id)
-    .bind(&mark_type)
+    .bind(mark_type)
     .execute(db)
     .await?;
     Ok(HttpResponse::Ok().body("ok"))

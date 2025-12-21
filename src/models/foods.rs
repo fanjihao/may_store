@@ -32,8 +32,11 @@ pub enum ApplyStatusEnum {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema, sqlx::Type)]
 #[sqlx(type_name = "mark_type_enum", rename_all = "SCREAMING_SNAKE_CASE")]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum MarkTypeEnum {
+    #[serde(alias = "like")]
     LIKE,
+    #[serde(alias = "not_recommend", alias = "not-recommend", alias = "notRecommend")]
     NOT_RECOMMEND,
 }
 

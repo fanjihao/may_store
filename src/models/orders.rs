@@ -86,7 +86,6 @@ pub struct OrderStatusUpdateInput {
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema, utoipa::IntoParams)]
 pub struct OrderQuery {
     pub user_id: Option<i64>,     // 下单人过滤
-    pub receiver_id: Option<i64>, // 接单人过滤
     pub group_id: Option<i64>,    // 组过滤
     pub status: Option<OrderStatusEnum>,
     pub limit: Option<i64>,
@@ -132,6 +131,15 @@ pub struct OrderOutNew {
     pub status_history: Vec<OrderStatusHistoryOut>,
     pub is_guest: bool,
     pub group_name: Option<String>,
+    pub group_info: Option<GroupInfoSimple>,
+    pub receiver_nick_name: Option<String>,
+    pub receiver_avatar: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct GroupInfoSimple {
+    pub group_id: i64,
+    pub group_name: Option<String>,
 }
 
 impl From<(OrderRecord, Vec<OrderItemOut>, Vec<OrderStatusHistoryOut>)> for OrderOutNew {
@@ -155,6 +163,9 @@ impl From<(OrderRecord, Vec<OrderItemOut>, Vec<OrderStatusHistoryOut>)> for Orde
             status_history: history,
             is_guest: r.is_guest,
             group_name: None, // Will be filled by query
+            group_info: None, // Will be filled by query
+            receiver_nick_name: None, // Will be filled by query
+            receiver_avatar: None, // Will be filled by query
         }
     }
 }

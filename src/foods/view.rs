@@ -218,7 +218,7 @@ pub async fn get_marked_foods(
 ) -> Result<impl Responder, CustomError> {
     let db = &state.db_pool;
     let rows: Vec<FoodWithStatsRecord> = sqlx::query_as(
-        "SELECT f.food_id, f.food_name, f.food_photo, f.ingredients, f.steps, f.food_status, f.submit_role, f.apply_status, f.apply_remark, f.created_by, f.owner_user_id, f.group_id, f.approved_at, f.approved_by, f.is_del, f.created_at, f.updated_at, fs.total_order_count, fs.completed_order_count, fs.last_order_time, fs.last_complete_time \
+        "SELECT f.food_id, f.food_name, f.food_photo, f.ingredients, f.steps, f.food_status, f.submit_role, f.apply_status, f.apply_remark, f.created_by, f.owner_user_id, f.group_id, f.approved_at, f.approved_by, f.is_del, f.created_at, f.updated_at, f.tag_id, fs.total_order_count, fs.completed_order_count, fs.last_order_time, fs.last_complete_time \
          FROM foods f LEFT JOIN food_stats fs ON fs.food_id=f.food_id JOIN user_food_mark m ON f.food_id=m.food_id WHERE m.user_id=$1 AND m.mark_type='LIKE'"
     )
 	.bind(token.user_id as i64)
