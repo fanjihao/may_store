@@ -98,6 +98,12 @@ pub struct IsRegisterResponse {
     pub registered: bool,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct DailyCheckinOut {
+    pub added: i32,
+    pub balance_after: i32,
+}
+
 // ========== 数据库映射结构 ==========
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
 pub struct UserRecord {

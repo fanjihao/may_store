@@ -31,6 +31,7 @@ pub fn route(_state: Arc<AppState>, cfg: &mut web::ServiceConfig) {
                 .route("", web::post().to(users::update::change_info))
                 .route("/is-register", web::get().to(users::view::is_register))
                 .route("/role-switch", web::post().to(users::role::switch_role))
+                .route("/checkin", web::post().to(users::checkin::daily_checkin))
                 .route("/getInfoByUsername", web::get().to(users::view::get_user_info))
         )
         .service(
