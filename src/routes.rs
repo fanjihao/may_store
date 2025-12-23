@@ -1,6 +1,7 @@
 use crate::{
     dashboard,
     foods,
+    game_ws,
     openapi::{ openapi_json, serve_swagger },
     orders,
     upload,
@@ -12,6 +13,9 @@ use ntex::web;
 use std::sync::Arc;
 
 pub fn route(_state: Arc<AppState>, cfg: &mut web::ServiceConfig) {
+    cfg.service(web::resource("/ws/game").route(web::get().to(game_ws::ws_game)));
+    cfg.service(web::resource("/game/room-code").route(web::get().to(game_ws::get_room_code)));
+
     cfg.service(web::scope("/api-doc/openapi.json").route("", web::get().to(openapi_json)))
         .service(web::scope("/swagger-ui").route("/{tail:.*}", web::get().to(serve_swagger)))
         // 个人中心

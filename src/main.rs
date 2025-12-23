@@ -4,6 +4,7 @@ mod models;
 mod openapi;
 mod routes;
 mod utils;
+mod game_ws;
 
 mod wx_official;
 mod users;
@@ -27,6 +28,7 @@ use std::{env, sync::Arc};
 pub struct AppState {
     pub db_pool: Pool<Postgres>,
     pub redis_cache: Arc<RedisCache>, // 添加Redis缓存
+    pub game_hub: Arc<game_ws::GameHub>,
 }
 
 #[ntex::main]
@@ -59,25 +61,36 @@ async fn main() -> Result<(), CustomError> {
             .connect(&db_url)
             .await?,
         redis_cache,
+        game_hub: Arc::new(game_ws::GameHub::new()),
     });
     let app_state_clone = Arc::clone(&app_state);
 
-    let allowed_origin = env::var("FRONTEND_ORIGIN").unwrap_or_else(|_| "http://localhost:5173".to_string());
+    let allowed_origin = env::var("FRONTEND_ORIGIN").unwrap_or_else(|_| "*".to_string());
 
     let server = HttpServer::new(move || {
         App::new()
             .state(Arc::clone(&app_state))
             .wrap(middleware::Logger::default())
-            .wrap(
-                Cors::new()
-                    .allowed_origin(&allowed_origin)
+            .wrap({
+                let mut cors = Cors::new()
                     .allowed_methods(vec!["GET", "POST", "PUT", "DELETE", "OPTIONS"])
                     .allowed_headers(vec!["Authorization", "Content-Type"])
                     .expose_headers(vec!["Authorization"])
-                    .supports_credentials()
-                    .max_age(3600)
-                    .finish(),
-            )
+                    .max_age(3600);
+
+                // 开发环境允许所有 origin（FRONTEND_ORIGIN 未设置或为 *）
+                if allowed_origin == "*" {
+                    // ntex-cors 没有 allow_any_origin，用 send_wildcard 代替
+                    cors = cors.send_wildcard();
+                } else {
+                    cors = cors
+                        .allowed_origin(&allowed_origin)
+                        .allowed_origin("https://servicewechat.com")
+                        .supports_credentials();
+                }
+
+                cors.finish()
+            })
             .configure(|cfg| routes::route(Arc::clone(&app_state), cfg))
     })
     .workers(4)

@@ -10,6 +10,12 @@ use serde::Serialize;
 use tokio::task::JoinError;
 use utoipa::ToSchema;
 
+impl From<ntex::ws::error::HandshakeError> for CustomError {
+    fn from(value: ntex::ws::error::HandshakeError) -> Self {
+        CustomError::BadRequest(format!("WebSocket handshake error: {value:?}"))
+    }
+}
+
 #[derive(Debug, Clone, Serialize, ToSchema)]
 pub enum CustomError {
     NotFound(String),
