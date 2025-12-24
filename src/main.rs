@@ -4,7 +4,8 @@ mod models;
 mod openapi;
 mod routes;
 mod utils;
-mod game_ws;
+
+mod game_im;
 
 mod wx_official;
 mod users;
@@ -24,11 +25,13 @@ use ntex_cors::Cors;
 use sqlx::{postgres::PgPoolOptions, Pool, Postgres};
 use std::{env, sync::Arc};
 
+use crate::models::game_im::ImConfig;
+
 #[derive(Debug, Clone)]
 pub struct AppState {
     pub db_pool: Pool<Postgres>,
     pub redis_cache: Arc<RedisCache>, // 添加Redis缓存
-    pub game_hub: Arc<game_ws::GameHub>,
+    pub im_config: Option<Arc<ImConfig>>,
 }
 
 #[ntex::main]
@@ -46,6 +49,13 @@ async fn main() -> Result<(), CustomError> {
     let db_url = env::var("DATABASE_URL").expect("Please set DATABASE_URL");
     let redis_url = env::var("REDIS_URL").expect("Please set REDIS_URL");
 
+    // Tencent Cloud IM config (optional)
+    // If not provided, IM endpoints will return a clear error.
+    let im_config = match ImConfig::from_env() {
+        Ok(v) => Some(Arc::new(v)),
+        Err(_) => None,
+    };
+
     // 初始化Redis缓存
     let redis_cache = match RedisCache::new(&redis_url) {
         Ok(cache) => Arc::new(cache),
@@ -61,7 +71,7 @@ async fn main() -> Result<(), CustomError> {
             .connect(&db_url)
             .await?,
         redis_cache,
-        game_hub: Arc::new(game_ws::GameHub::new()),
+        im_config,
     });
     let app_state_clone = Arc::clone(&app_state);
 

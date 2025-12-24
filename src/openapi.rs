@@ -4,7 +4,7 @@ use utoipa::openapi::security::{ApiKey, ApiKeyValue, SecurityScheme};
 use utoipa::{Modify, OpenApi};
 
 // Re-export model modules for macro path resolution
-use crate::{foods, models, orders, users};
+use crate::{foods, game_im, models, orders, users};
 // 注意：不要导入 models::wishes 为 wishes 避免遮蔽根模块 wishes
 
 #[derive(OpenApi)]
@@ -62,6 +62,18 @@ use crate::{foods, models, orders, users};
         crate::dashboard::metrics::get_my_order_stats,
         crate::dashboard::metrics::get_points_journey,
         crate::dashboard::activities::get_group_activities,
+
+        // IM
+        game_im::sign::get_user_sig,
+
+        // Mini-game (IM)
+        game_im::rooms::list_rooms,
+        game_im::rooms::create_room,
+        game_im::rooms::join_room,
+        game_im::rooms::dismiss_room,
+        game_im::werewolf::set_ready,
+        game_im::werewolf::start_game,
+        game_im::werewolf::vote,
     ),
     components(
         // 用户
@@ -127,6 +139,19 @@ use crate::{foods, models, orders, users};
             crate::dashboard::metrics::OrderStatsOut,
             crate::dashboard::metrics::JourneyOrderOut,
             crate::dashboard::metrics::PointsJourneyOut,
+
+            // IM
+            models::game_im::ImUserSigOut,
+            models::game_im::ImRoomOut,
+            models::game_im::ImRoomListOut,
+            models::game_im::ImCreateRoomIn,
+            models::game_im::ImJoinRoomOut,
+            models::game_im::ImDismissRoomIn,
+            models::game_im::ImDismissRoomOut,
+            models::game_im::ImReadyIn,
+            models::game_im::ImStartGameOut,
+            models::game_im::ImVoteIn,
+            models::game_im::ImVoteOut,
         ),
     ),
     modifiers(&SecurityAddon),
@@ -136,6 +161,8 @@ use crate::{foods, models, orders, users};
         (name = "订单", description = "订单相关接口"),
         (name = "心愿", description = "心愿与兑换相关接口"),
         (name = "看板", description = "组活动与概览接口"),
+        (name = "IM", description = "腾讯云 IM（UserSig / 后台联调）"),
+        (name = "小游戏", description = "基于腾讯云 IM 的实时多人小游戏"),
     ),
     servers((url = "http://localhost:9831", description = "本地服务器"))
 )]

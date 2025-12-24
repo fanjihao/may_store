@@ -1441,12 +1441,15 @@ name = "may-store"
 version = "0.1.0"
 dependencies = [
  "argon2",
+ "base64 0.22.1",
  "chrono",
  "cookie",
  "dotenvy",
  "env_logger",
+ "flate2",
  "futures",
  "futures-util",
+ "hmac 0.12.1",
  "idgenerator",
  "jsonwebtoken",
  "lazy_static",
@@ -1465,6 +1468,7 @@ dependencies = [
  "serde",
  "serde-xml-rs",
  "serde_json",
+ "sha2",
  "sqlx",
  "tokio",
  "utoipa",

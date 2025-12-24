@@ -1,7 +1,7 @@
 use crate::{
     dashboard,
     foods,
-    game_ws,
+    game_im,
     openapi::{ openapi_json, serve_swagger },
     orders,
     upload,
@@ -13,8 +13,28 @@ use ntex::web;
 use std::sync::Arc;
 
 pub fn route(_state: Arc<AppState>, cfg: &mut web::ServiceConfig) {
-    cfg.service(web::resource("/ws/game").route(web::get().to(game_ws::ws_game)));
-    cfg.service(web::resource("/game/room-code").route(web::get().to(game_ws::get_room_code)));
+    // Tencent Cloud IM
+    cfg.service(web::resource("/im/usersig").route(web::get().to(game_im::sign::get_user_sig)));
+
+    // Mini-game (IM based)
+    cfg.service(
+        web::resource("/game/rooms")
+            .route(web::get().to(game_im::rooms::list_rooms))
+            .route(web::post().to(game_im::rooms::create_room))
+    );
+    cfg.service(web::resource("/game/rooms/dismiss").route(web::post().to(game_im::rooms::dismiss_room)));
+    cfg.service(
+        web::resource("/game/rooms/{group_id}/join").route(web::post().to(game_im::rooms::join_room))
+    );
+    cfg.service(
+        web::resource("/game/rooms/{group_id}/ready").route(web::post().to(game_im::werewolf::set_ready))
+    );
+    cfg.service(
+        web::resource("/game/rooms/{group_id}/start").route(web::post().to(game_im::werewolf::start_game))
+    );
+    cfg.service(
+        web::resource("/game/rooms/{group_id}/vote").route(web::post().to(game_im::werewolf::vote))
+    );
 
     cfg.service(web::scope("/api-doc/openapi.json").route("", web::get().to(openapi_json)))
         .service(web::scope("/swagger-ui").route("/{tail:.*}", web::get().to(serve_swagger)))
