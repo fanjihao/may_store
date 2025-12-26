@@ -9,7 +9,7 @@ use tokio::sync::Mutex;
 
 use crate::errors::CustomError;
 use crate::game_im::rest::ImRestClient;
-use crate::models::game_im::{ImReadyIn, ImStartGameOut, ImVoteIn, ImVoteOut};
+use crate::models::game_im::{ImStartGameOut, ImVoteIn, ImVoteOut};
 use crate::models::users::UserToken;
 use crate::AppState;
 
@@ -65,68 +65,6 @@ fn runtime(state: &Arc<AppState>) -> Arc<WerewolfRuntime> {
 
 #[utoipa::path(
     post,
-    path = "/game/rooms/{group_id}/ready",
-    tag = "小游戏",
-    summary = "准备/取消准备（后端记录，并通过 IM 群消息广播 READY）",
-    params(("group_id" = String, Path, description = "IM 群组 ID")),
-    request_body = ImReadyIn,
-    responses((status = 200, body = ImVoteOut), (status = 400, body = CustomError), (status = 401, body = CustomError)),
-    security(("cookie_auth" = []))
-)]
-pub async fn set_ready(
-    token: UserToken,
-    group_id: Path<String>,
-    body: Json<ImReadyIn>,
-    state: State<Arc<AppState>>,
-) -> Result<impl Responder, CustomError> {
-    let Some(cfg) = state.im_config.as_ref().map(|c| (**c).clone()) else {
-        return Err(CustomError::BadRequest(
-            "IM 未配置：请设置 TENCENT_IM_SDK_APP_ID / TENCENT_IM_SECRET_KEY".into(),
-        ));
-    };
-
-    let group_id = group_id.into_inner();
-    // Must match GET /im/usersig "identifier"
-    let identifier = token.user_id.to_string();
-    let rt = runtime(&state);
-    {
-        let mut rooms = rt.rooms.lock().await;
-        let room = rooms.entry(group_id.clone()).or_insert_with(RoomRuntime::new);
-        if body.ready {
-            room.ready.insert(identifier.clone());
-        } else {
-            room.ready.remove(&identifier);
-        }
-    }
-
-    let client = ImRestClient::new(cfg);
-    // Required by frontend: send READY event via TIMCustomElem
-    client
-        .send_group_custom(
-            &group_id,
-            serde_json::json!({
-                "type": "READY",
-                "payload": {
-                    "groupId": group_id,
-                    "userId": identifier,
-                    "ready": body.ready
-                }
-            }),
-        )
-        .await?;
-
-    // reuse ImVoteOut as a tiny ack payload (keeps schemas small for MVP)
-    Ok(HttpResponse::Ok().json(&ImVoteOut {
-        group_id,
-        voter_identifier: token.user_id.to_string(),
-        voted_count: 0,
-        total_alive: 0,
-        finished: false,
-    }))
-}
-
-#[utoipa::path(
-    post,
     path = "/game/rooms/{group_id}/start",
     tag = "小游戏",
     summary = "房主开始游戏：分配身份并通过 C2C 私聊下发",
@@ -153,11 +91,6 @@ pub async fn start_game(
         return Err(CustomError::BadRequest("房间人数不足".into()));
     }
 
-    // MVP: fixed 6 players suggested in doc; keep soft rule (allow >= 4)
-    if members.len() < 4 {
-        return Err(CustomError::BadRequest("开局人数不足（至少 4 人）".into()));
-    }
-
     // Ready check (backend authoritative)
     let rt = runtime(&state);
     {
@@ -165,14 +98,6 @@ pub async fn start_game(
         let room = rooms.entry(group_id.clone()).or_insert_with(RoomRuntime::new);
         if room.phase != RoomPhase::Lobby {
             return Err(CustomError::BadRequest("游戏已开始".into()));
-        }
-        // require the caller to be ready too
-        let caller = token.user_id.to_string();
-        if !room.ready.contains(&caller) {
-            return Err(CustomError::BadRequest("请先准备".into()));
-        }
-        if members.iter().any(|m| !room.ready.contains(m)) {
-            return Err(CustomError::BadRequest("需要全员准备".into()));
         }
 
         room.phase = RoomPhase::Started;

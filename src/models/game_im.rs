@@ -31,16 +31,6 @@ impl ImConfig {
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
-pub struct ImCreateRoomIn {
-    /// 房间显示名称（会写入 IM 群名称）
-    pub name: String,
-    /// 期望人数（一期 MVP 默认 6）
-    #[serde(default)]
-    pub expected_players: Option<u32>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
-#[serde(rename_all = "camelCase")]
 pub struct ImRoomOut {
     pub group_id: String,
     pub name: String,
@@ -52,19 +42,6 @@ pub struct ImRoomOut {
 #[serde(rename_all = "camelCase")]
 pub struct ImRoomListOut {
     pub rooms: Vec<ImRoomOut>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
-#[serde(rename_all = "camelCase")]
-pub struct ImJoinRoomOut {
-    pub group_id: String,
-    pub identifier: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
-#[serde(rename_all = "camelCase")]
-pub struct ImReadyIn {
-    pub ready: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
@@ -94,7 +71,6 @@ pub struct ImVoteOut {
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct ImDismissRoomIn {
-    #[serde(rename = "GroupId", alias = "groupId")]
     pub group_id: String,
 }
 

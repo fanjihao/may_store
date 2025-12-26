@@ -68,10 +68,6 @@ use crate::{foods, game_im, models, orders, users};
 
         // Mini-game (IM)
         game_im::rooms::list_rooms,
-        game_im::rooms::create_room,
-        game_im::rooms::join_room,
-        game_im::rooms::dismiss_room,
-        game_im::werewolf::set_ready,
         game_im::werewolf::start_game,
         game_im::werewolf::vote,
     ),
@@ -144,11 +140,6 @@ use crate::{foods, game_im, models, orders, users};
             models::game_im::ImUserSigOut,
             models::game_im::ImRoomOut,
             models::game_im::ImRoomListOut,
-            models::game_im::ImCreateRoomIn,
-            models::game_im::ImJoinRoomOut,
-            models::game_im::ImDismissRoomIn,
-            models::game_im::ImDismissRoomOut,
-            models::game_im::ImReadyIn,
             models::game_im::ImStartGameOut,
             models::game_im::ImVoteIn,
             models::game_im::ImVoteOut,

@@ -1,4 +1,9 @@
-# 腾讯云 IM（后台）接入说明
+# 腾讯云 IM（后台）接入说明（IM 模式）
+
+本项目目前支持两种小游戏联机模式：
+
+- **IM 模式**：基于腾讯云 IM（TIM/Chat），后端提供 `UserSig` 签发与房间/游戏状态 REST 接口。
+- **Socket 模式**：基于后端自建 WebSocket（`/ws/game`）与房间码（`/game/room-code`）。详见 [game-ws-backend.md](game-ws-backend.md)。
 
 本文档说明 may-store 后端如何接入腾讯云 IM（Chat/TIM）的 **UserSig** 能力，并提供后端接口给前端/管理后台联调用。
 

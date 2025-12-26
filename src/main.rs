@@ -6,6 +6,7 @@ mod routes;
 mod utils;
 
 mod game_im;
+mod game_ws;
 
 mod wx_official;
 mod users;
@@ -32,6 +33,7 @@ pub struct AppState {
     pub db_pool: Pool<Postgres>,
     pub redis_cache: Arc<RedisCache>, // 添加Redis缓存
     pub im_config: Option<Arc<ImConfig>>,
+    pub game_hub: Arc<game_ws::GameHub>,
 }
 
 #[ntex::main]
@@ -72,6 +74,7 @@ async fn main() -> Result<(), CustomError> {
             .await?,
         redis_cache,
         im_config,
+        game_hub: Arc::new(game_ws::GameHub::new()),
     });
     let app_state_clone = Arc::clone(&app_state);
 

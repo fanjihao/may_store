@@ -7,5 +7,6 @@ pub mod wishes;
 pub mod dashboard;
 
 pub mod game_im;
+pub mod game_ws;
 
 pub mod wx_official;
