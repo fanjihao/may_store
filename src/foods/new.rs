@@ -2,8 +2,8 @@ use crate::{
     errors::CustomError,
     models::{
         foods::{
-            ApplyStatusEnum, FoodCreateInput, FoodOut, FoodRecord, FoodStatusEnum,
-            FoodTagOut, SubmitRoleEnum, TagRecord,
+            ApplyStatusEnum, FoodCreateInput, FoodOut, FoodRecord, FoodStatusEnum, FoodTagOut,
+            SubmitRoleEnum, TagRecord,
         },
         users::UserToken,
     },
@@ -44,11 +44,11 @@ pub async fn create_food(
 
     // 业务：不同角色提交方式
     let submit_role = if role == "RECEIVING" {
-        SubmitRoleEnum::RECEIVING_CREATE
+        SubmitRoleEnum::ReceivingCreate
     } else {
-        SubmitRoleEnum::ORDERING_APPLY
+        SubmitRoleEnum::OrderingApply
     };
-    let apply_status = if matches!(submit_role, SubmitRoleEnum::RECEIVING_CREATE) {
+    let apply_status = if matches!(submit_role, SubmitRoleEnum::ReceivingCreate) {
         ApplyStatusEnum::APPROVED
     } else {
         ApplyStatusEnum::PENDING
@@ -101,7 +101,7 @@ pub async fn create_food(
         .into_iter()
         .filter_map(|s| match s.as_str() {
             "LIKE" => Some(crate::models::foods::MarkTypeEnum::LIKE),
-            "NOT_RECOMMEND" => Some(crate::models::foods::MarkTypeEnum::NOT_RECOMMEND),
+            "NOT_RECOMMEND" => Some(crate::models::foods::MarkTypeEnum::NotRecommend),
             _ => None,
         })
         .collect::<Vec<_>>();
@@ -127,7 +127,9 @@ pub async fn create_tag(
     state: State<Arc<AppState>>,
 ) -> Result<impl Responder, CustomError> {
     let db = &state.db_pool;
-    let gid = data.group_id.or(token.user.as_ref().and_then(|u| u.group_id));
+    let gid = data
+        .group_id
+        .or(token.user.as_ref().and_then(|u| u.group_id));
     let rec = sqlx::query_as::<_, TagRecord>(
 		"INSERT INTO tags (tag_name, group_id, sort) VALUES ($1,$2,$3) RETURNING tag_id, tag_name, group_id, sort, created_at"
 	)

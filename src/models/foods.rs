@@ -16,10 +16,12 @@ pub enum FoodStatusEnum {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema, sqlx::Type)]
-#[sqlx(type_name = "submit_role_enum", rename_all = "SCREAMING_SNAKE_CASE")]
+#[sqlx(type_name = "submit_role_enum")]
 pub enum SubmitRoleEnum {
-    ORDERING_APPLY,
-    RECEIVING_CREATE,
+    #[serde(rename = "ORDERING_APPLY")]
+    OrderingApply,
+    #[serde(rename = "RECEIVING_CREATE")]
+    ReceivingCreate,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema, sqlx::Type)]
@@ -36,44 +38,14 @@ pub enum ApplyStatusEnum {
 pub enum MarkTypeEnum {
     #[serde(alias = "like")]
     LIKE,
-    #[serde(alias = "not_recommend", alias = "not-recommend", alias = "notRecommend")]
-    NOT_RECOMMEND,
-}
-
-// food_types 数值型类别：1早餐 2午餐 3下午茶 4晚餐 5夜宵
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
-pub enum FoodCategory {
-    Breakfast = 1,
-    Lunch = 2,
-    AfternoonTea = 3,
-    Dinner = 4,
-    MidnightSnack = 5,
-}
-impl FoodCategory {
-    pub fn from_i32(v: i32) -> Option<Self> {
-        match v {
-            1 => Some(Self::Breakfast),
-            2 => Some(Self::Lunch),
-            3 => Some(Self::AfternoonTea),
-            4 => Some(Self::Dinner),
-            5 => Some(Self::MidnightSnack),
-            _ => None,
-        }
-    }
-    pub fn zh_label(&self) -> &'static str {
-        match self {
-            Self::Breakfast => "早餐",
-            Self::Lunch => "午餐",
-            Self::AfternoonTea => "下午茶",
-            Self::Dinner => "晚餐",
-            Self::MidnightSnack => "夜宵",
-        }
-    }
+    #[serde(rename = "NOT_RECOMMEND")]
+    NotRecommend,
 }
 
 // ================= Core DB Row Representations =================
 
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow, ToSchema)]
+#[serde(rename_all = "camelCase")]
 pub struct FoodRecord {
     pub food_id: i64,
     pub food_name: String,
@@ -97,6 +69,7 @@ pub struct FoodRecord {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow, ToSchema)]
+#[serde(rename_all = "camelCase")]
 pub struct TagRecord {
     pub tag_id: i64,
     pub tag_name: String,
@@ -105,19 +78,15 @@ pub struct TagRecord {
     pub created_at: DateTime<Utc>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow, ToSchema)]
-pub struct FoodTagMapRecord {
-    pub food_id: i64,
-    pub tag_id: i64,
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
 pub struct FoodTagOut {
     pub tag_id: i64,
     pub tag_name: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
 pub struct FoodOut {
     pub food_id: i64,
     pub food_name: String,
@@ -147,7 +116,7 @@ impl From<(FoodRecord, Option<TagRecord>, Vec<MarkTypeEnum>)> for FoodOut {
         let like = marks.iter().any(|m| matches!(m, MarkTypeEnum::LIKE));
         let not_rec = marks
             .iter()
-            .any(|m| matches!(m, MarkTypeEnum::NOT_RECOMMEND));
+            .any(|m| matches!(m, MarkTypeEnum::NotRecommend));
         Self {
             food_id: f.food_id,
             food_name: f.food_name,
@@ -176,6 +145,7 @@ impl From<(FoodRecord, Option<TagRecord>, Vec<MarkTypeEnum>)> for FoodOut {
 
 // 专用于列表/详情的合并行（含统计）
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
+#[serde(rename_all = "camelCase")]
 pub struct FoodWithStatsRecord {
     pub food_id: i64,
     pub food_name: String,
@@ -209,7 +179,9 @@ impl FoodOut {
         marks: Vec<MarkTypeEnum>,
     ) -> Self {
         let like = marks.iter().any(|m| matches!(m, MarkTypeEnum::LIKE));
-        let not_rec = marks.iter().any(|m| matches!(m, MarkTypeEnum::NOT_RECOMMEND));
+        let not_rec = marks
+            .iter()
+            .any(|m| matches!(m, MarkTypeEnum::NotRecommend));
         FoodOut {
             food_id: row.food_id,
             food_name: row.food_name,
@@ -239,17 +211,19 @@ impl FoodOut {
 // ================ Create / Update DTOs ==================
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
 pub struct FoodCreateInput {
     pub food_name: String,
     pub food_photo: Option<String>,
     // food_types removed
     pub ingredients: Option<String>,
     pub steps: Option<String>,
-    pub tag_id: Option<i64>, // 关联标签
-    pub group_id: Option<i64>,     // 归属组（可选）
+    pub tag_id: Option<i64>,   // 关联标签
+    pub group_id: Option<i64>, // 归属组（可选）
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
 pub struct FoodUpdateInput {
     pub food_id: i64,
     pub food_name: Option<String>,
@@ -264,6 +238,7 @@ pub struct FoodUpdateInput {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
 pub struct TagCreateInput {
     pub tag_name: String,
     pub group_id: Option<i64>,
@@ -271,6 +246,7 @@ pub struct TagCreateInput {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
 pub struct FoodFilterQuery {
     pub keyword: Option<String>,
     pub food_status: Option<FoodStatusEnum>,
@@ -286,28 +262,24 @@ pub struct FoodFilterQuery {
 // ================ 收藏/标记 DTOs ==================
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
 pub struct FoodMarkActionInput {
     pub food_id: i64,
     pub mark_type: MarkTypeEnum,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
-pub struct FoodMarkOut {
-    pub food_id: i64,
-    pub mark_type: MarkTypeEnum,
-    pub created_at: DateTime<Utc>,
-}
-
 // ================ Blind Box (抽取盲盒) ==================
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
 pub struct BlindBoxDrawInput {
-    pub group_id: Option<i64>,         // 若为空则按用户所属主 group
-    pub tag_ids: Vec<i64>,             // 抽取的标签ID列表
-    pub limit_each: Option<u32>,       // 每个类型最多抽取数量
+    pub group_id: Option<i64>,   // 若为空则按用户所属主 group
+    pub tag_ids: Vec<i64>,       // 抽取的标签ID列表
+    pub limit_each: Option<u32>, // 每个类型最多抽取数量
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
 pub struct BlindBoxFoodSnapshot {
     pub food_id: i64,
     pub food_name: String,
@@ -316,6 +288,7 @@ pub struct BlindBoxFoodSnapshot {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
 pub struct BlindBoxDrawResultOut {
     pub results: Vec<BlindBoxFoodSnapshot>,
     pub requested_tags: Vec<i64>,

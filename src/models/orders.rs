@@ -13,10 +13,12 @@ pub enum OrderStatusEnum {
     CANCELLED,
     EXPIRED,
     REJECTED,
-    SYSTEM_CLOSED,
+    #[serde(rename = "SYSTEM_CLOSED")]
+    SystemClosed,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema, sqlx::FromRow)]
+#[serde(rename_all = "camelCase")]
 pub struct OrderRecord {
     pub order_id: i64,
     pub user_id: i64,
@@ -31,11 +33,12 @@ pub struct OrderRecord {
     pub last_status_change_at: Option<DateTime<Utc>>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
-    #[sqlx(default)]
+    #[serde(default)]
     pub is_guest: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema, sqlx::FromRow)]
+#[serde(rename_all = "camelCase")]
 pub struct OrderItemRecord {
     pub id: i64,
     pub order_id: i64,
@@ -46,26 +49,17 @@ pub struct OrderItemRecord {
     pub created_at: DateTime<Utc>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema, sqlx::FromRow)]
-pub struct OrderStatusHistoryRecord {
-    pub id: i64,
-    pub order_id: i64,
-    pub from_status: Option<OrderStatusEnum>,
-    pub to_status: OrderStatusEnum,
-    pub changed_by: Option<i64>,
-    pub remark: Option<String>,
-    pub changed_at: DateTime<Utc>,
-}
-
 // ================== Public API DTOs ==================
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
 pub struct OrderItemCreateInput {
     pub food_id: i64,
     pub quantity: Option<i32>, // default 1
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
 pub struct OrderCreateInput {
     pub group_id: Option<i64>,
     pub invite_code: Option<String>,
@@ -76,6 +70,7 @@ pub struct OrderCreateInput {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
 pub struct OrderStatusUpdateInput {
     pub order_id: i64,
     pub to_status: OrderStatusEnum,
@@ -84,9 +79,10 @@ pub struct OrderStatusUpdateInput {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema, utoipa::IntoParams)]
+#[serde(rename_all = "camelCase")]
 pub struct OrderQuery {
-    pub user_id: Option<i64>,     // 下单人过滤
-    pub group_id: Option<i64>,    // 组过滤
+    pub user_id: Option<i64>,  // 下单人过滤
+    pub group_id: Option<i64>, // 组过滤
     pub status: Option<OrderStatusEnum>,
     pub limit: Option<i64>,
     /// 仅返回已经失效(状态=EXPIRED， CANCELLED， REJECTED， SYSTEM_CLOSED)的订单；与 status 同时出现时优先 status
@@ -94,6 +90,7 @@ pub struct OrderQuery {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
 pub struct OrderItemOut {
     pub id: i64,
     pub food_id: i64,
@@ -104,6 +101,7 @@ pub struct OrderItemOut {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
 pub struct OrderStatusHistoryOut {
     pub from_status: Option<OrderStatusEnum>,
     pub to_status: OrderStatusEnum,
@@ -113,6 +111,7 @@ pub struct OrderStatusHistoryOut {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
 pub struct OrderOutNew {
     pub order_id: i64,
     pub user_id: i64,
@@ -137,6 +136,7 @@ pub struct OrderOutNew {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
 pub struct GroupInfoSimple {
     pub group_id: i64,
     pub group_name: Option<String>,
@@ -162,16 +162,17 @@ impl From<(OrderRecord, Vec<OrderItemOut>, Vec<OrderStatusHistoryOut>)> for Orde
             items,
             status_history: history,
             is_guest: r.is_guest,
-            group_name: None, // Will be filled by query
-            group_info: None, // Will be filled by query
+            group_name: None,         // Will be filled by query
+            group_info: None,         // Will be filled by query
             receiver_nick_name: None, // Will be filled by query
-            receiver_avatar: None, // Will be filled by query
+            receiver_avatar: None,    // Will be filled by query
         }
     }
 }
 
 // ================= Ratings (Post-Finish +/- points) =================
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
 pub struct OrderRatingCreateInput {
     pub order_id: i64,
     pub delta: i32, // -5..5 (非0)
@@ -180,6 +181,7 @@ pub struct OrderRatingCreateInput {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
 pub struct OrderRatingOut {
     pub rating_id: i64,
     pub order_id: i64,
@@ -201,7 +203,7 @@ impl OrderStatusEnum {
             (FINISHED, _) => false,
             (CANCELLED, _) => false,
             (EXPIRED, _) => false,
-            (SYSTEM_CLOSED, _) => false,
+            (SystemClosed, _) => false,
             _ => false,
         }
     }

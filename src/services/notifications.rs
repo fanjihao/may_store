@@ -1,26 +1,28 @@
 use chrono::Utc;
 use reqwest::Client;
-use sqlx::Row;
 use sqlx::postgres::PgPool;
+use sqlx::Row;
 
+use crate::wx_official::auth::{fetch_set_access_token, get_access_token};
 use crate::{
     errors::CustomError,
     models::{orders::OrderStatusEnum, wx_official::TemplateMessage},
     utils::ORDER_TEMPLATE_ID,
 };
-use crate::wx_official::auth::{fetch_set_access_token, get_access_token};
 
 // 推送订单状态变更（根据 order_id 查询订单、菜品、用户 push_id 并发送模板消息）
 // 失败时只记录日志，不影响主流程。
 pub async fn push_order_status(order_id: i64, db_pool: PgPool) -> Result<(), CustomError> {
     // 查询订单 + 相关用户 push_id
-    let order_row = sqlx::query(
-        "SELECT order_id, user_id, receiver_id, status FROM orders WHERE order_id=$1"
-    )
-        .bind(order_id)
-        .fetch_optional(&db_pool)
-        .await?;
-    let row = match order_row { Some(r) => r, None => return Ok(()), };
+    let order_row =
+        sqlx::query("SELECT order_id, user_id, receiver_id, status FROM orders WHERE order_id=$1")
+            .bind(order_id)
+            .fetch_optional(&db_pool)
+            .await?;
+    let row = match order_row {
+        Some(r) => r,
+        None => return Ok(()),
+    };
     let status_str: String = row.get("status");
     let status = match status_str.as_str() {
         "PENDING" => OrderStatusEnum::PENDING,
@@ -29,7 +31,7 @@ pub async fn push_order_status(order_id: i64, db_pool: PgPool) -> Result<(), Cus
         "CANCELLED" => OrderStatusEnum::CANCELLED,
         "EXPIRED" => OrderStatusEnum::EXPIRED,
         "REJECTED" => OrderStatusEnum::REJECTED,
-        "SYSTEM_CLOSED" => OrderStatusEnum::SYSTEM_CLOSED,
+        "SYSTEM_CLOSED" => OrderStatusEnum::SystemClosed,
         _ => OrderStatusEnum::PENDING,
     };
 
@@ -44,19 +46,35 @@ pub async fn push_order_status(order_id: i64, db_pool: PgPool) -> Result<(), Cus
         .fetch_all(&db_pool)
         .await?;
     let mut names: Vec<String> = Vec::new();
-    for fr in food_rows { names.push(fr.get::<String, _>("food_name")); }
-    let foods_summary = if names.is_empty() { "-".to_string() } else { names.join(" / ") };
+    for fr in food_rows {
+        names.push(fr.get::<String, _>("food_name"));
+    }
+    let foods_summary = if names.is_empty() {
+        "-".to_string()
+    } else {
+        names.join(" / ")
+    };
 
     // 获取 push_id（下单人 + 接单人）
     let mut push_ids: Vec<String> = Vec::new();
-    if let Some(pid) = fetch_push_id(user_id, &db_pool).await? { push_ids.push(pid); }
-    if let Some(rid) = receiver_id { if let Some(pid) = fetch_push_id(rid, &db_pool).await? { push_ids.push(pid); } }
-    if push_ids.is_empty() { return Ok(()); }
+    if let Some(pid) = fetch_push_id(user_id, &db_pool).await? {
+        push_ids.push(pid);
+    }
+    if let Some(rid) = receiver_id {
+        if let Some(pid) = fetch_push_id(rid, &db_pool).await? {
+            push_ids.push(pid);
+        }
+    }
+    if push_ids.is_empty() {
+        return Ok(());
+    }
 
     // 获取 access_token
     fetch_set_access_token().await?;
     let token_opt = get_access_token().await;
-    let Some(access_token) = token_opt else { return Ok(()); };
+    let Some(access_token) = token_opt else {
+        return Ok(());
+    };
 
     let client = Client::new();
     let status_cn = status_to_cn(status);
@@ -86,9 +104,17 @@ pub async fn push_order_status(order_id: i64, db_pool: PgPool) -> Result<(), Cus
                 "order_status": {"value": msg.order_status, "color": "#173177" }
             }
         });
-        if let Err(e) = client.post(
-            format!("https://api.weixin.qq.com/cgi-bin/message/template/send?access_token={}", access_token)
-        ).json(&json_data).send().await { log::warn!("push order status send error: {}", e); }
+        if let Err(e) = client
+            .post(format!(
+                "https://api.weixin.qq.com/cgi-bin/message/template/send?access_token={}",
+                access_token
+            ))
+            .json(&json_data)
+            .send()
+            .await
+        {
+            log::warn!("push order status send error: {}", e);
+        }
     }
 
     Ok(())
@@ -99,7 +125,9 @@ async fn fetch_push_id(user_id: i64, db_pool: &PgPool) -> Result<Option<String>,
         .bind(user_id)
         .fetch_optional(db_pool)
         .await?;
-    Ok(row.and_then(|r| r.try_get::<Option<String>, _>("push_id").ok()).flatten())
+    Ok(row
+        .and_then(|r| r.try_get::<Option<String>, _>("push_id").ok())
+        .flatten())
 }
 
 fn status_to_cn(s: OrderStatusEnum) -> &'static str {
@@ -110,6 +138,6 @@ fn status_to_cn(s: OrderStatusEnum) -> &'static str {
         OrderStatusEnum::CANCELLED => "已取消",
         OrderStatusEnum::EXPIRED => "已过期",
         OrderStatusEnum::REJECTED => "已拒绝",
-        OrderStatusEnum::SYSTEM_CLOSED => "系统关闭",
+        OrderStatusEnum::SystemClosed => "系统关闭",
     }
 }

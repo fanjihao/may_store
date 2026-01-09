@@ -1,8 +1,8 @@
 use crate::{
     errors::CustomError,
     models::foods::{
-        BlindBoxDrawInput, BlindBoxDrawResultOut, BlindBoxFoodSnapshot, FoodCategory,
-        FoodFilterQuery, FoodOut, FoodTagOut, FoodWithStatsRecord, MarkTypeEnum, TagRecord,
+        BlindBoxDrawInput, BlindBoxDrawResultOut, BlindBoxFoodSnapshot, FoodFilterQuery, FoodOut,
+        FoodTagOut, FoodWithStatsRecord, MarkTypeEnum, TagRecord,
     },
     models::users::UserToken,
     AppState,
@@ -70,19 +70,18 @@ pub async fn get_foods(
     let tag_ids: Vec<i64> = rows.iter().filter_map(|r| r.tag_id).collect();
     let mut tags_map: std::collections::HashMap<i64, TagRecord> = std::collections::HashMap::new();
     if !tag_ids.is_empty() {
-        let tag_rows = sqlx::query_as::<_, TagRecord>(
-            "SELECT * FROM tags WHERE tag_id = ANY($1)"
-        )
-        .bind(&tag_ids)
-        .fetch_all(db)
-        .await?;
+        let tag_rows = sqlx::query_as::<_, TagRecord>("SELECT * FROM tags WHERE tag_id = ANY($1)")
+            .bind(&tag_ids)
+            .fetch_all(db)
+            .await?;
         for t in tag_rows {
             tags_map.insert(t.tag_id, t);
         }
     }
 
     // ===== 批量用户标记查询 =====
-    let mut marks_map: std::collections::HashMap<i64, Vec<MarkTypeEnum>> = std::collections::HashMap::new();
+    let mut marks_map: std::collections::HashMap<i64, Vec<MarkTypeEnum>> =
+        std::collections::HashMap::new();
     if !rows.is_empty() {
         let food_ids: Vec<i64> = rows.iter().map(|r| r.food_id).collect();
         let mark_rows = sqlx::query(
@@ -97,10 +96,12 @@ pub async fn get_foods(
             let mtxt: String = r.get("mark_type");
             let enum_val = match mtxt.as_str() {
                 "LIKE" => Some(MarkTypeEnum::LIKE),
-                "NOT_RECOMMEND" => Some(MarkTypeEnum::NOT_RECOMMEND),
+                "NOT_RECOMMEND" => Some(MarkTypeEnum::NotRecommend),
                 _ => None,
             };
-            if let Some(ev) = enum_val { marks_map.entry(fid).or_default().push(ev); }
+            if let Some(ev) = enum_val {
+                marks_map.entry(fid).or_default().push(ev);
+            }
         }
     }
 
@@ -161,7 +162,7 @@ pub async fn get_food_detail(
         .into_iter()
         .filter_map(|s| match s.as_str() {
             "LIKE" => Some(MarkTypeEnum::LIKE),
-            "NOT_RECOMMEND" => Some(MarkTypeEnum::NOT_RECOMMEND),
+            "NOT_RECOMMEND" => Some(MarkTypeEnum::NotRecommend),
             _ => None,
         })
         .collect();
@@ -184,13 +185,15 @@ pub async fn get_tags(
     q: Query<FoodFilterQuery>,
 ) -> Result<impl Responder, CustomError> {
     let db = &state.db_pool;
-    let mut qb = QueryBuilder::new("SELECT tag_id, tag_name, group_id, sort, created_at FROM tags WHERE 1=1");
-    
+    let mut qb = QueryBuilder::new(
+        "SELECT tag_id, tag_name, group_id, sort, created_at FROM tags WHERE 1=1",
+    );
+
     let gid = q.group_id.or(token.user.as_ref().and_then(|u| u.group_id));
     if let Some(g) = gid {
         qb.push(" AND group_id = ").push_bind(g);
     }
-    
+
     qb.push(" ORDER BY sort NULLS LAST, tag_id");
 
     let rows: Vec<TagRecord> = qb.build_query_as().fetch_all(db).await?;

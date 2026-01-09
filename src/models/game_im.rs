@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
-use utoipa::ToSchema;
 use std::env;
+use utoipa::ToSchema;
 
 use crate::errors::CustomError;
 
@@ -67,17 +67,6 @@ pub struct ImVoteOut {
     pub voted_count: u32,
     pub total_alive: u32,
     pub finished: bool,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
-pub struct ImDismissRoomIn {
-    pub group_id: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
-#[serde(rename_all = "camelCase")]
-pub struct ImDismissRoomOut {
-    pub group_id: String,
 }
 
 impl ImConfig {

@@ -1,9 +1,10 @@
 use serde::{Deserialize, Serialize};
-use utoipa::ToSchema;
 use sqlx::FromRow;
+use utoipa::ToSchema;
 
 // ========== 新的邀请/绑定相关模型 (替换旧 Invitation/BindStruct) ==========
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema, FromRow)]
+#[serde(rename_all = "camelCase")]
 pub struct InvitationRequestOut {
     pub request_id: i64,
     pub requester_id: i64,
@@ -17,29 +18,34 @@ pub struct InvitationRequestOut {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
 pub struct NewInvitationInput {
     pub target_user_id: i64,
     pub remark: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
 pub struct ConfirmInvitationInput {
     pub accept: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
 pub struct InvitationListOut {
     pub incoming: Vec<InvitationRequestOut>,
     pub outgoing: Vec<InvitationRequestOut>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
 pub struct UnbindRequestInput {
     pub target_user_id: i64,
     pub remark: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
 pub struct GroupMemberOut {
     pub user_id: i64,
     pub nick_name: Option<String>,
@@ -49,6 +55,7 @@ pub struct GroupMemberOut {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
 pub struct GroupInfoOut {
     pub group_id: i64,
     pub group_name: Option<String>,
@@ -63,6 +70,7 @@ pub struct GroupInfoOut {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
 pub struct BindUserDirectlyInput {
     pub target_user_id: i64,
 }

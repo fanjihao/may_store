@@ -35,11 +35,12 @@ pub enum LoginMethodEnum {
     PhoneCode,
     OAUTH,
     MIXED,
-    WEIXIN
+    WEIXIN,
 }
 
 // ========== 输入 DTO ==========
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
 pub struct LoginInput {
     pub username: String,
     pub password: Option<String>,
@@ -49,6 +50,7 @@ pub struct LoginInput {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
 pub struct RegisterInput {
     pub username: String,
     pub password: String,
@@ -61,6 +63,7 @@ pub struct RegisterInput {
 }
 // ========== 输出 DTO ==========
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
 pub struct UserPublic {
     pub user_id: i64,
     pub username: String,
@@ -88,17 +91,20 @@ pub struct UserPublic {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
 pub struct LoginResponse {
     pub token: String,
     pub user: UserPublic,
 }
 
 #[derive(Debug, Serialize, Deserialize, utoipa::ToSchema)]
+#[serde(rename_all = "camelCase")]
 pub struct IsRegisterResponse {
     pub registered: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
 pub struct DailyCheckinOut {
     pub added: i32,
     pub balance_after: i32,
@@ -106,6 +112,7 @@ pub struct DailyCheckinOut {
 
 // ========== 数据库映射结构 ==========
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+#[serde(rename_all = "camelCase")]
 pub struct UserRecord {
     pub user_id: i64,
     pub username: String,
@@ -164,12 +171,14 @@ impl From<UserRecord> for UserPublic {
 
 // ========== Token Claims ==========
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct UserTokenClaims {
     pub exp: i64,
     pub user_id: i64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct UserToken {
     pub exp: i64,
     pub user_id: i64,

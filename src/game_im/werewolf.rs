@@ -73,7 +73,7 @@ fn runtime(state: &Arc<AppState>) -> Arc<WerewolfRuntime> {
     security(("cookie_auth" = []))
 )]
 pub async fn start_game(
-    token: UserToken,
+    _token: UserToken,
     group_id: Path<String>,
     state: State<Arc<AppState>>,
 ) -> Result<impl Responder, CustomError> {

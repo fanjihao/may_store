@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
 pub struct MsgTemplate {
     pub ship_id: Option<i32>,
     pub user_id: Option<i32>,
@@ -20,6 +21,7 @@ pub struct MsgTemplate {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
 pub struct TemplateMessage {
     pub template_id: String,
     pub push_id: String,
@@ -30,6 +32,7 @@ pub struct TemplateMessage {
     pub order_status: String,
 }
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
 pub struct Offical {
     pub signature: Option<String>,
     pub timestamp: Option<String>,

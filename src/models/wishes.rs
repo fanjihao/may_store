@@ -1,5 +1,5 @@
-use chrono::{ DateTime, Utc };
-use serde::{ Deserialize, Serialize };
+use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
 // ================= Enums =================
@@ -11,7 +11,10 @@ pub enum WishStatusEnum {
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, ToSchema, sqlx::Type, PartialEq, Eq)]
-#[sqlx(type_name = "wish_claim_status_enum", rename_all = "SCREAMING_SNAKE_CASE")]
+#[sqlx(
+    type_name = "wish_claim_status_enum",
+    rename_all = "SCREAMING_SNAKE_CASE"
+)]
 pub enum WishClaimStatusEnum {
     PROCESSING,
     DONE,
@@ -20,6 +23,7 @@ pub enum WishClaimStatusEnum {
 
 // ================= Records =================
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema, sqlx::FromRow)]
+#[serde(rename_all = "camelCase")]
 pub struct WishRecord {
     pub wish_id: i64,
     pub wish_name: String,
@@ -31,6 +35,7 @@ pub struct WishRecord {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema, sqlx::FromRow)]
+#[serde(rename_all = "camelCase")]
 pub struct WishClaimRecord {
     pub id: i64,
     pub wish_id: i64,
@@ -45,6 +50,7 @@ pub struct WishClaimRecord {
 
 // ================= DTOs =================
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
 pub struct WishCreateInput {
     pub wish_name: String,
     pub wish_cost: i32,
@@ -52,6 +58,7 @@ pub struct WishCreateInput {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
 pub struct WishUpdateInput {
     pub wish_id: i64,
     pub wish_name: Option<String>,
@@ -60,6 +67,7 @@ pub struct WishUpdateInput {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema, utoipa::IntoParams)]
+#[serde(rename_all = "camelCase")]
 pub struct WishQuery {
     pub status: Option<WishStatusEnum>,
     pub created_by: Option<i64>,
@@ -67,6 +75,7 @@ pub struct WishQuery {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
 pub struct WishOut {
     pub wish_id: i64,
     pub wish_name: String,
@@ -94,12 +103,14 @@ impl From<WishRecord> for WishOut {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
 pub struct WishClaimCreateInput {
     pub wish_id: i64,
     pub remark: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
 pub struct WishClaimUpdateInput {
     pub claim_id: i64,
     pub to_status: WishClaimStatusEnum,
@@ -107,6 +118,7 @@ pub struct WishClaimUpdateInput {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
 pub struct WishClaimOut {
     pub id: i64,
     pub wish_id: i64,
@@ -150,6 +162,7 @@ impl WishClaimStatusEnum {
 
 // ================= Post-Fulfillment Check-in =================
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema, sqlx::FromRow)]
+#[serde(rename_all = "camelCase")]
 pub struct WishClaimCheckinRecord {
     pub id: i64,
     pub claim_id: i64,
@@ -163,6 +176,7 @@ pub struct WishClaimCheckinRecord {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
 pub struct WishClaimCheckinCreateInput {
     pub claim_id: i64,
     pub photo_url: Option<String>,
@@ -173,6 +187,7 @@ pub struct WishClaimCheckinCreateInput {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
 pub struct WishClaimCheckinOut {
     pub id: i64,
     pub claim_id: i64,

@@ -1,6 +1,8 @@
 use crate::{
     errors::CustomError,
-    models::foods::{FoodOut, FoodRecord, FoodUpdateInput, MarkTypeEnum, SubmitRoleEnum, TagRecord},
+    models::foods::{
+        FoodOut, FoodRecord, FoodUpdateInput, MarkTypeEnum, SubmitRoleEnum, TagRecord,
+    },
     models::users::UserToken,
     AppState,
 };
@@ -55,8 +57,10 @@ pub async fn update_food(
     let uid = token.user_id as i64;
 
     let can_update = match rec.submit_role {
-        SubmitRoleEnum::RECEIVING_CREATE => is_admin || rec.created_by == uid,
-        SubmitRoleEnum::ORDERING_APPLY => is_admin || rec.created_by == uid || (is_receiving && rec.created_by != uid),
+        SubmitRoleEnum::ReceivingCreate => is_admin || rec.created_by == uid,
+        SubmitRoleEnum::OrderingApply => {
+            is_admin || rec.created_by == uid || (is_receiving && rec.created_by != uid)
+        }
     };
     if !can_update {
         return Err(CustomError::BadRequest("无权限修改".into()));
@@ -65,7 +69,7 @@ pub async fn update_food(
     // 禁止自审：如果是 ORDERING 申请菜品，创建者本人不允许修改 apply_status。
     // （即使该用户通过“角色互换”切到 RECEIVING，也不能审核自己提交的申请。）
     if !is_admin
-        && matches!(rec.submit_role, SubmitRoleEnum::ORDERING_APPLY)
+        && matches!(rec.submit_role, SubmitRoleEnum::OrderingApply)
         && rec.created_by == uid
         && data.apply_status.is_some()
     {
@@ -74,7 +78,7 @@ pub async fn update_food(
 
     // 非管理员审核必须是 RECEIVING
     if !is_admin
-        && matches!(rec.submit_role, SubmitRoleEnum::ORDERING_APPLY)
+        && matches!(rec.submit_role, SubmitRoleEnum::OrderingApply)
         && data.apply_status.is_some()
         && !is_receiving
     {
@@ -145,7 +149,7 @@ pub async fn update_food(
         .into_iter()
         .filter_map(|s| match s.as_str() {
             "LIKE" => Some(MarkTypeEnum::LIKE),
-            "NOT_RECOMMEND" => Some(MarkTypeEnum::NOT_RECOMMEND),
+            "NOT_RECOMMEND" => Some(MarkTypeEnum::NotRecommend),
             _ => None,
         })
         .collect::<Vec<_>>();
@@ -194,13 +198,11 @@ pub async fn unmark_food(
 ) -> Result<impl Responder, CustomError> {
     let (food_id, mark_type) = (path.0, path.1);
     let db = &state.db_pool;
-    sqlx::query(
-        "DELETE FROM user_food_mark WHERE user_id=$1 AND food_id=$2 AND mark_type=$3",
-    )
-    .bind(token.user_id as i64)
-    .bind(food_id)
-    .bind(mark_type)
-    .execute(db)
-    .await?;
+    sqlx::query("DELETE FROM user_food_mark WHERE user_id=$1 AND food_id=$2 AND mark_type=$3")
+        .bind(token.user_id as i64)
+        .bind(food_id)
+        .bind(mark_type)
+        .execute(db)
+        .await?;
     Ok(HttpResponse::Ok().body("ok"))
 }
