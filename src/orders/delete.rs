@@ -58,9 +58,9 @@ pub async fn delete_order(
         updated_at: row.get("updated_at"),
         is_guest: false,
     };
-    if order.status != OrderStatusEnum::PENDING {
+    if order.status != OrderStatusEnum::PENDING && order.status != OrderStatusEnum::EXPIRED {
         tx.rollback().await.ok();
-        return Err(CustomError::BadRequest("仅待处理订单可取消".into()));
+        return Err(CustomError::BadRequest("仅待处理或已过期订单可取消".into()));
     }
     if order.user_id != user_token.user_id {
         tx.rollback().await.ok();

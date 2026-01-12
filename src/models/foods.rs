@@ -18,8 +18,10 @@ pub enum FoodStatusEnum {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema, sqlx::Type)]
 #[sqlx(type_name = "submit_role_enum")]
 pub enum SubmitRoleEnum {
+    #[sqlx(rename = "ORDERING_APPLY")]
     #[serde(rename = "ORDERING_APPLY")]
     OrderingApply,
+    #[sqlx(rename = "RECEIVING_CREATE")]
     #[serde(rename = "RECEIVING_CREATE")]
     ReceivingCreate,
 }
