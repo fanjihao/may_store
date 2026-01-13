@@ -38,6 +38,12 @@ use crate::{foods, game_im, models, orders, users};
         foods::update::unmark_food,
         foods::view::get_marked_foods,
         foods::view::draw_blind_box,
+        // 食材相关
+        foods::ingredients::list_ingredients,
+        foods::ingredients::get_ingredient,
+        foods::ingredients::create_ingredient,
+        foods::ingredients::update_ingredient,
+        foods::ingredients::delete_ingredient,
         // 订单相关（新结构）
         orders::new::create_order,
         orders::update::update_order_status,
@@ -103,6 +109,11 @@ use crate::{foods, game_im, models, orders, users};
             models::foods::FoodMarkActionInput,
             models::foods::BlindBoxDrawInput,
             models::foods::BlindBoxDrawResultOut,
+            // 食材
+            models::foods::IngredientCreateInput,
+            models::foods::IngredientUpdateInput,
+            models::foods::IngredientOut,
+            foods::ingredients::IngredientQuery,
         ),
         // 订单新模型
         schemas(
@@ -149,6 +160,7 @@ use crate::{foods, game_im, models, orders, users};
     tags(
         (name = "用户", description = "用户相关接口"),
         (name = "菜品", description = "菜品相关接口"),
+        (name = "食材", description = "食材字典相关接口"),
         (name = "订单", description = "订单相关接口"),
         (name = "心愿", description = "心愿与兑换相关接口"),
         (name = "看板", description = "组活动与概览接口"),

@@ -200,6 +200,7 @@ CREATE INDEX idx_food_types ON foods(food_types);
 CREATE TABLE tags (
     tag_id BIGSERIAL PRIMARY KEY,
     tag_name VARCHAR(64) NOT NULL,
+    icon VARCHAR(256),
     group_id BIGINT REFERENCES association_groups(group_id) ON DELETE CASCADE,
     sort INT DEFAULT 0,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -208,8 +209,34 @@ CREATE TABLE tags (
 COMMENT ON TABLE tags IS '菜品标签';
 COMMENT ON COLUMN tags.tag_id IS '标签主键ID';
 COMMENT ON COLUMN tags.tag_name IS '标签名称唯一';
+COMMENT ON COLUMN tags.icon IS '标签图标URL';
 COMMENT ON COLUMN tags.sort IS '排序值-越大越靠前';
 COMMENT ON COLUMN tags.created_at IS '创建时间';
+
+-- ================= INGREDIENTS =================
+CREATE TABLE ingredients (
+    ingredient_id BIGSERIAL PRIMARY KEY,
+    name VARCHAR(128) NOT NULL,
+    group_id BIGINT REFERENCES association_groups(group_id) ON DELETE CASCADE,
+    unit VARCHAR(32) DEFAULT '份',
+    calories INT DEFAULT 0,
+    description TEXT,
+    icon VARCHAR(256),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE (name, group_id)
+);
+COMMENT ON TABLE ingredients IS '食材库（按组管理的字典表）';
+COMMENT ON COLUMN ingredients.ingredient_id IS '食材主键ID';
+COMMENT ON COLUMN ingredients.name IS '食材名称（同一组内唯一）';
+COMMENT ON COLUMN ingredients.group_id IS '所属组ID（关联association_groups）';
+COMMENT ON COLUMN ingredients.unit IS '计量单位（如：克、斤、个）';
+COMMENT ON COLUMN ingredients.calories IS '每100g的卡路里';
+COMMENT ON COLUMN ingredients.description IS '食材描述/说明';
+COMMENT ON COLUMN ingredients.icon IS '食材图标URL';
+COMMENT ON COLUMN ingredients.created_at IS '创建时间';
+COMMENT ON COLUMN ingredients.updated_at IS '更新时间';
+CREATE INDEX idx_ingredient_group ON ingredients(group_id);
 
 CREATE TABLE user_food_mark (
     user_id BIGINT NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,

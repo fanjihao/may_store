@@ -75,6 +75,7 @@ pub struct FoodRecord {
 pub struct TagRecord {
     pub tag_id: i64,
     pub tag_name: String,
+    pub icon: Option<String>,
     pub group_id: Option<i64>,
     pub sort: Option<i32>,
     pub created_at: DateTime<Utc>,
@@ -85,6 +86,37 @@ pub struct TagRecord {
 pub struct FoodTagOut {
     pub tag_id: i64,
     pub tag_name: String,
+    pub icon: Option<String>,
+}
+
+// ================= Ingredients =================
+
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct IngredientRecord {
+    #[serde(rename = "ingredientId")]
+    pub ingredient_id: i64,
+    pub name: String,
+    pub group_id: Option<i64>,
+    pub unit: Option<String>,
+    pub calories: Option<i32>,
+    pub description: Option<String>,
+    pub icon: Option<String>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct IngredientOut {
+    #[serde(rename = "ingredientId")]
+    pub ingredient_id: i64,
+    pub name: String,
+    pub group_id: Option<i64>,
+    pub unit: Option<String>,
+    pub calories: Option<i32>,
+    pub description: Option<String>,
+    pub icon: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
@@ -132,6 +164,7 @@ impl From<(FoodRecord, Option<TagRecord>, Vec<MarkTypeEnum>)> for FoodOut {
             tag: tag.map(|t| FoodTagOut {
                 tag_id: t.tag_id,
                 tag_name: t.tag_name,
+                icon: t.icon,
             }),
             is_marked_like: like,
             is_marked_not_recommend: not_rec,
@@ -197,6 +230,7 @@ impl FoodOut {
             tag: tag.map(|t| FoodTagOut {
                 tag_id: t.tag_id,
                 tag_name: t.tag_name,
+                icon: t.icon,
             }),
             is_marked_like: like,
             is_marked_not_recommend: not_rec,
@@ -243,8 +277,44 @@ pub struct FoodUpdateInput {
 #[serde(rename_all = "camelCase")]
 pub struct TagCreateInput {
     pub tag_name: String,
+    pub icon: Option<String>,
     pub group_id: Option<i64>,
     pub sort: Option<i32>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct TagUpdateInput {
+    pub tag_id: i64,
+    pub tag_name: Option<String>,
+    pub icon: Option<String>,
+    pub sort: Option<i32>,
+}
+
+// ================ Ingredients DTOs ==================
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct IngredientCreateInput {
+    #[serde(rename = "ingredientName")]
+    pub name: String,
+    pub group_id: Option<i64>,
+    pub unit: Option<String>,
+    pub calories: Option<i32>,
+    pub description: Option<String>,
+    pub icon: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct IngredientUpdateInput {
+    #[serde(rename = "ingredientId")]
+    pub ingredient_id: i64,
+    pub name: Option<String>,
+    pub unit: Option<String>,
+    pub calories: Option<i32>,
+    pub description: Option<String>,
+    pub icon: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]

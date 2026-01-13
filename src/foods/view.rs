@@ -186,7 +186,7 @@ pub async fn get_tags(
 ) -> Result<impl Responder, CustomError> {
     let db = &state.db_pool;
     let mut qb = QueryBuilder::new(
-        "SELECT tag_id, tag_name, group_id, sort, created_at FROM tags WHERE 1=1",
+        "SELECT tag_id, tag_name, icon, group_id, sort, created_at FROM tags WHERE 1=1",
     );
 
     let gid = q.group_id.or(token.user.as_ref().and_then(|u| u.group_id));
@@ -203,6 +203,7 @@ pub async fn get_tags(
             .map(|r| FoodTagOut {
                 tag_id: r.tag_id,
                 tag_name: r.tag_name,
+                icon: r.icon,
             })
             .collect::<Vec<_>>(),
     ))

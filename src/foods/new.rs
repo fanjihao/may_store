@@ -131,9 +131,10 @@ pub async fn create_tag(
         .group_id
         .or(token.user.as_ref().and_then(|u| u.group_id));
     let rec = sqlx::query_as::<_, TagRecord>(
-		"INSERT INTO tags (tag_name, group_id, sort) VALUES ($1,$2,$3) RETURNING tag_id, tag_name, group_id, sort, created_at"
+		"INSERT INTO tags (tag_name, icon, group_id, sort) VALUES ($1,$2,$3,$4) RETURNING tag_id, tag_name, icon, group_id, sort, created_at"
 	)
 	.bind(&data.tag_name)
+    .bind(data.icon.as_ref())
     .bind(gid)
 	.bind(data.sort)
 	.fetch_one(db)
@@ -141,5 +142,6 @@ pub async fn create_tag(
     Ok(HttpResponse::Created().json(&FoodTagOut {
         tag_id: rec.tag_id,
         tag_name: rec.tag_name,
+        icon: rec.icon,
     }))
 }

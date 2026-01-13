@@ -102,6 +102,16 @@ pub fn route(_state: Arc<AppState>, cfg: &mut web::ServiceConfig) {
             .route("/{id}", web::delete().to(foods::delete::delete_tag)),
     );
 
+    // 食材相关路由
+    cfg.service(
+        web::scope("/ingredients")
+            .route("", web::get().to(foods::ingredients::list_ingredients))
+            .route("", web::post().to(foods::ingredients::create_ingredient))
+            .route("/{id}", web::get().to(foods::ingredients::get_ingredient))
+            .route("/{id}", web::put().to(foods::ingredients::update_ingredient))
+            .route("/{id}", web::delete().to(foods::ingredients::delete_ingredient)),
+    );
+
     // 订单相关路由
     cfg.service(
         web::scope("/orders")
