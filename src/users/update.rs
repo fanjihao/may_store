@@ -101,7 +101,7 @@ pub async fn change_info(
             }
         }
         let (hash, algo) =
-            hash_password(new_pwd).map_err(|e| CustomError::InternalError(e.into()))?;
+            hash_password(new_pwd).map_err(|e| CustomError::internal(e))?;
         sqlx::query("UPDATE users SET password_hash = $2, password_algo = $3, password_updated_at = $4, is_temp_password = FALSE WHERE username = $1")
             .bind(&current_username)
             .bind(&hash)

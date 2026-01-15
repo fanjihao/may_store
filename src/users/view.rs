@@ -94,7 +94,7 @@ pub async fn login(
         &claims,
         &EncodingKey::from_secret(TOKEN_SECRET_KEY),
     )
-    .map_err(|e| CustomError::InternalError(e.to_string().into()))?;
+    .map_err(|e| CustomError::internal(e.to_string()))?;
 
     // 缓存用户公开信息
     let _ = state.redis_cache.set_user_public(&public, 3600).await;

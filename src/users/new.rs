@@ -40,7 +40,7 @@ pub async fn register(
     }
 
     let (pwd_hash, algo) = hash_password(&data.password).map_err(|e|
-        CustomError::InternalError(e.into())
+        CustomError::internal(e)
     )?;
 
     // 仅执行插入，不再返回用户信息；执行结果不需要获取行，避免无 RETURNING 时的错误

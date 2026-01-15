@@ -63,7 +63,7 @@ async fn main() -> Result<(), CustomError> {
         Ok(cache) => Arc::new(cache),
         Err(err) => {
             eprintln!("Failed to connect to Redis: {}", err);
-            return Err(CustomError::RedisError(err.to_string()));
+            return Err(CustomError::internal(format!("Redis连接失败: {err}")));
         }
     };
     // state

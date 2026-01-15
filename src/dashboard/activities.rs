@@ -1,35 +1,13 @@
-use crate::{errors::CustomError, models::users::UserToken, AppState};
+use crate::{errors::CustomError, models::dashboard::{GroupActivityEventOut, GroupActivityQuery}, models::users::UserToken, AppState};
 use chrono::{DateTime, Utc};
 use ntex::web::{
     types::{Path, Query, State},
     HttpResponse, Responder,
 };
-use serde::{Deserialize, Serialize};
 use sqlx::Row;
 use std::sync::Arc;
 
-#[derive(Debug, Deserialize, utoipa::IntoParams)]
-pub struct GroupActivityQuery {
-    /// 返回条数，默认50，最大200
-    pub limit: Option<i64>,
-    /// 仅返回该时间点之前的事件（用于下拉分页）
-    pub before: Option<DateTime<Utc>>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
-pub struct GroupActivityEventOut {
-    pub event_type: String,
-    pub actor_user_id: Option<i64>,
-    pub ref_id: Option<i64>,
-    pub ref_name: Option<String>,
-    pub occurred_at: DateTime<Utc>,
-    /// 积分流水相关：本次变动的积分值（正增负减）
-    pub point_amount: Option<i32>,
-    /// 积分类型（枚举值文本）
-    pub point_tx_type: Option<String>,
-    /// 变动后余额
-    pub point_balance_after: Option<i32>,
-}
+// GroupActivityQuery and GroupActivityEventOut are now in models::dashboard
 
 #[utoipa::path(
     get, 
@@ -178,16 +156,17 @@ pub async fn get_group_activities(
 
             UNION ALL
             -- 积分流水（组内成员）
-            SELECT 
+            SELECT
                 pt.id AS ref_id,
                 pt.user_id AS actor_user_id,
-                CASE 
+                CASE
                     WHEN pt.type='ORDER_REWARD' THEN 'POINT_GAIN_ORDER'
                     WHEN pt.type='FINISH_REWARD' THEN 'POINT_GAIN_FINISH'
                     WHEN pt.type='WISH_COST' THEN 'POINT_COST_WISH'
                     WHEN pt.type='ORDER_RATING' THEN 'POINT_DELTA_RATING'
                     WHEN pt.type='ADMIN_ADJUST' THEN 'POINT_ADJUST_ADMIN'
                     WHEN pt.type='LOTTERY_REWARD' THEN 'POINT_GAIN_LOTTERY'
+                    WHEN pt.type='SIGN_IN_REWARD' THEN 'POINT_GAIN_SIGN_IN'
                     ELSE 'POINT_OTHER'
                 END AS event_type,
                 pt.created_at AS occurred_at,
@@ -198,6 +177,21 @@ pub async fn get_group_activities(
             FROM point_transactions pt
             JOIN association_group_members agm ON agm.user_id=pt.user_id AND agm.group_id=$1
             WHERE pt.created_at < $2
+
+            UNION ALL
+            -- 签到记录（组内成员）
+            SELECT
+                sr.sign_id AS ref_id,
+                sr.user_id AS actor_user_id,
+                'SIGN_IN' AS event_type,
+                sr.created_at AS occurred_at,
+                NULL::text AS ref_name,
+                sr.points_earned AS point_amount,
+                'SIGN_IN_REWARD'::text AS point_tx_type,
+                NULL::int AS point_balance_after
+            FROM sign_records sr
+            JOIN association_group_members agm ON agm.user_id=sr.user_id AND agm.group_id=$1
+            WHERE sr.created_at < $2
         ) all_events
         ORDER BY occurred_at DESC
         LIMIT $3

@@ -73,12 +73,14 @@ pub async fn create_order(
 
     let points_cost = data.points_cost.unwrap_or(0);
     let points_reward = data.points_reward.unwrap_or(0);
+    // 如果没有传 is_guest，则根据是否有 group_id 来判断
+    let is_guest = data.is_guest.unwrap_or(data.group_id.is_none());
 
     // 插入订单并直接解码枚举
     let rec: OrderRecord = sqlx::query_as::<_, OrderRecord>(
-        "INSERT INTO orders (user_id, receiver_id, group_id, goal_time, points_cost, points_reward) \
-         VALUES ($1,$2,$3,$4,$5,$6) \
-         RETURNING order_id, user_id, receiver_id, group_id, status, goal_time, points_cost, points_reward, cancel_reason, reject_reason, last_status_change_at, created_at, updated_at"
+        "INSERT INTO orders (user_id, receiver_id, group_id, goal_time, points_cost, points_reward, is_guest) \
+         VALUES ($1,$2,$3,$4,$5,$6,$7) \
+         RETURNING order_id, user_id, receiver_id, group_id, status, goal_time, points_cost, points_reward, cancel_reason, reject_reason, last_status_change_at, created_at, updated_at, is_guest"
     )
     .bind(user_token.user_id as i64)
     .bind::<Option<i64>>(None)
@@ -86,6 +88,7 @@ pub async fn create_order(
     .bind(data.goal_time)
     .bind(points_cost)
     .bind(points_reward)
+    .bind(is_guest)
     .fetch_one(&mut *tx)
     .await?;
 

@@ -67,6 +67,7 @@ pub struct OrderCreateInput {
     pub items: Vec<OrderItemCreateInput>,
     pub points_cost: Option<i32>,
     pub points_reward: Option<i32>, // 预设奖励（可由系统校验/忽略）
+    pub is_guest: Option<bool>, // 是否访客订单（无组时为true）
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]

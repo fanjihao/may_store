@@ -1,32 +1,19 @@
-use crate::{errors::CustomError, models::users::UserToken, AppState};
+use crate::{errors::CustomError, models::dashboard::{DateFoodOut, DateFoodsResponse, DateQuery, JourneyOrderOut, OrderStatsOut, PointsJourneyOut, TodayOrderEntryOut, TodayOrdersResponse, TopFoodOrderOut, TopFoodRankingResponse, WeekDateInfo, WeekOrderDatesOut}, models::users::UserToken, AppState};
+use chrono::{Datelike, Local, NaiveDate};
 use ntex::web::{
-    types::State,
+    types::{Query, State},
     HttpResponse, Responder,
 };
-use serde::{Deserialize, Serialize};
 use sqlx::Row;
 use std::sync::Arc;
 
-// ============== Top Ordered Foods Ranking ==============
-#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
-pub struct TopFoodOrderOut {
-    pub food_id: i64,
-    pub food_name: String,
-    pub food_photo: String,
-    pub order_count: i64,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
-pub struct TopFoodRankingResponse {
-    pub list: Vec<TopFoodOrderOut>,
-    pub message: Option<String>,
-}
+// TopFoodOrderOut, TopFoodRankingResponse, etc. are now in models::dashboard
 
 #[utoipa::path(
-    get, 
-    path="/dashboard/top-foods", 
-    tag="看板", 
-    responses((status=200, body=TopFoodRankingResponse)), 
+    get,
+    path="/dashboard/top-foods",
+    tag="看板",
+    responses((status=200, body=TopFoodRankingResponse)),
     security(("cookie_auth"=[]))
 )]
 pub async fn get_top_food_orders(
@@ -78,20 +65,7 @@ pub async fn get_top_food_orders(
     }))
 }
 
-// ============== Today's Orders Tree ==============
-#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
-pub struct TodayOrderEntryOut {
-    pub order_id: i64,
-    pub category: String,
-    pub foods_text: String,
-    pub status: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
-pub struct TodayOrdersResponse {
-    pub list: Vec<TodayOrderEntryOut>,
-    pub message: Option<String>,
-}
+// TodayOrderEntryOut and TodayOrdersResponse are now in models::dashboard
 
 #[utoipa::path(get, path="/dashboard/my/orders-today", tag="看板", responses((status=200, body=TodayOrdersResponse)), security(("cookie_auth"=[])))]
 pub async fn get_my_today_orders(
@@ -146,13 +120,7 @@ pub async fn get_my_today_orders(
     }))
 }
 
-// ============== Order Stats ==============
-#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
-pub struct OrderStatsOut {
-    pub total_orders: i64,
-    pub finished_orders: i64,
-    pub rejected_orders: i64,
-}
+// OrderStatsOut is now in models::dashboard
 
 #[utoipa::path(get, path="/dashboard/my/order-stats", tag="看板", responses((status=200, body=OrderStatsOut)), security(("cookie_auth"=[])))]
 pub async fn get_my_order_stats(
@@ -184,23 +152,7 @@ pub async fn get_my_order_stats(
     Ok(HttpResponse::Ok().json(&out))
 }
 
-// ============== Points Journey ==============
-#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
-pub struct JourneyOrderOut {
-    pub order_id: i64,
-    pub foods_text: String,
-    pub status: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
-pub struct PointsJourneyOut {
-    pub today_orders: Vec<JourneyOrderOut>,
-    pub today_points: i64,
-    pub current_points: i32,
-    pub total_gain_points: i64,
-    pub total_cost_points: i64,
-    pub message: Option<String>,
-}
+// JourneyOrderOut and PointsJourneyOut are now in models::dashboard
 
 #[utoipa::path(get, path="/dashboard/my/points-journey", tag="看板", responses((status=200, body=PointsJourneyOut)), security(("cookie_auth"=[])))]
 pub async fn get_points_journey(
@@ -255,4 +207,147 @@ pub async fn get_points_journey(
         },
     };
     Ok(HttpResponse::Ok().json(&out))
+}
+
+// WeekOrderDatesOut and WeekDateInfo are now in models::dashboard
+
+#[utoipa::path(
+    get,
+    path = "/dashboard/week-order-dates",
+    tag = "看板",
+    responses((status = 200, body = WeekOrderDatesOut)),
+    security(("cookie_auth" = []))
+)]
+pub async fn get_week_order_dates(
+    state: State<Arc<AppState>>,
+    user: UserToken,
+) -> Result<impl Responder, CustomError> {
+    let db = &state.db_pool;
+
+    // 获取本周的周一
+    let today = Local::now().date_naive();
+    let day_of_week = today.weekday().num_days_from_monday(); // 0=周一, 6=周日
+    let monday = today
+        .checked_sub_days(chrono::Days::new(day_of_week as u64))
+        .unwrap_or(today);
+
+    // 查询本周有订单的日期
+    use chrono::{TimeZone, Utc};
+    let monday_at_time = Utc.with_ymd_and_hms(monday.year(), monday.month(), monday.day(), 0, 0, 0).unwrap();
+    let order_dates = sqlx::query!(
+        r#"
+        SELECT DATE(goal_time)::date as order_date, COUNT(*)::int as cnt
+        FROM orders
+        WHERE user_id = $1
+          AND goal_time >= $2
+          AND goal_time < $2 + INTERVAL '7 days'
+        GROUP BY DATE(goal_time)
+        "#,
+        user.user_id as i64,
+        monday_at_time
+    )
+    .fetch_all(db)
+    .await?;
+
+    let order_date_set: std::collections::HashSet<NaiveDate> = order_dates
+        .iter()
+        .filter_map(|r| r.order_date)
+        .collect();
+
+    let mut week_dates: Vec<WeekDateInfo> = Vec::new();
+    for i in 0..7 {
+        if let Some(date) = monday.checked_add_days(chrono::Days::new(i)) {
+            let has_order = order_date_set.contains(&date);
+            let count = if has_order {
+                order_dates
+                    .iter()
+                    .find(|r| r.order_date == Some(date))
+                    .and_then(|r| r.cnt)
+                    .unwrap_or(0)
+            } else {
+                0
+            };
+            week_dates.push(WeekDateInfo {
+                date,
+                day_of_week: i as i32 + 1, // 1-7
+                has_order,
+                order_count: count,
+            });
+        }
+    }
+
+    Ok(HttpResponse::Ok().json(&WeekOrderDatesOut {
+        week_dates,
+        message: None,
+    }))
+}
+
+// DateFoodOut, DateFoodsResponse, and DateQuery are now in models::dashboard
+
+#[utoipa::path(
+    get,
+    path = "/dashboard/date-foods",
+    tag = "看板",
+    params(DateQuery),
+    responses((status = 200, body = DateFoodsResponse)),
+    security(("cookie_auth" = []))
+)]
+pub async fn get_date_foods(
+    state: State<Arc<AppState>>,
+    user: UserToken,
+    query: Query<DateQuery>,
+) -> Result<impl Responder, CustomError> {
+    let db = &state.db_pool;
+
+    // 如果没有提供日期，默认今天
+    let target_date = query.date.unwrap_or_else(|| Local::now().date_naive());
+
+    // 查询当天订单中的菜品（去重）
+    let rows = sqlx::query(
+        r#"
+        SELECT
+            f.food_id,
+            f.food_name,
+            f.food_photo,
+            f.ingredients,
+            f.steps,
+            t.tag_name
+        FROM orders o
+        JOIN order_items oi ON o.order_id = oi.order_id
+        JOIN foods f ON oi.food_id = f.food_id
+        LEFT JOIN tags t ON f.tag_id = t.tag_id
+        WHERE o.user_id = $1
+          AND DATE(o.goal_time) = $2
+        GROUP BY f.food_id, f.food_name, f.food_photo, f.ingredients, f.steps, t.tag_name
+        ORDER BY f.food_id
+        "#,
+    )
+    .bind(user.user_id as i64)
+    .bind(target_date)
+    .fetch_all(db)
+    .await?;
+
+    let foods_list: Vec<DateFoodOut> = rows
+        .into_iter()
+        .map(|r| DateFoodOut {
+            food_id: r.get("food_id"),
+            food_name: r.get("food_name"),
+            food_photo: r.try_get("food_photo").ok(),
+            ingredients: r.try_get("ingredients").ok(),
+            steps: r.try_get("steps").ok(),
+            tag_name: r.try_get("tag_name").ok(),
+        })
+        .collect();
+
+    let message = if foods_list.is_empty() {
+        Some("当天暂无订单数据".into())
+    } else {
+        None
+    };
+
+    Ok(HttpResponse::Ok().json(&DateFoodsResponse {
+        date: target_date,
+        foods: foods_list,
+        message,
+    }))
 }

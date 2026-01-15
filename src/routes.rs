@@ -167,6 +167,13 @@ pub fn route(_state: Arc<AppState>, cfg: &mut web::ServiceConfig) {
         web::scope("/upload-token").route("", web::get().to(upload::upload::get_qiniu_token)),
     );
 
+    // 签到相关路由
+    cfg.service(
+        web::scope("/sign")
+            .route("", web::post().to(users::sign::sign_in))
+            .route("/info", web::get().to(users::sign::get_sign_info)),
+    );
+
     // 看板 / 组活动
     cfg.service(web::scope("/groups").route(
         "/{group_id}/activities",
@@ -190,6 +197,14 @@ pub fn route(_state: Arc<AppState>, cfg: &mut web::ServiceConfig) {
             .route(
                 "/my/points-journey",
                 web::get().to(dashboard::metrics::get_points_journey),
+            )
+            .route(
+                "/week-order-dates",
+                web::get().to(dashboard::metrics::get_week_order_dates),
+            )
+            .route(
+                "/date-foods",
+                web::get().to(dashboard::metrics::get_date_foods),
             ),
     );
 }

@@ -5,6 +5,7 @@ pub mod invitation;
 pub mod role;
 pub mod group_update;
 pub mod checkin;
+pub mod sign;
 
 use argon2::{ Argon2, PasswordHash, PasswordHasher, PasswordVerifier };
 use password_hash::{ SaltString };

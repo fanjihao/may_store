@@ -28,6 +28,7 @@ CREATE TYPE point_tx_type_enum AS ENUM (
     'ORDER_RATING',
     'ADMIN_ADJUST',
     'LOTTERY_REWARD',
+    'SIGN_IN_REWARD',
     'OTHER'
 );
 CREATE TYPE wish_status_enum AS ENUM ('ON', 'OFF');
@@ -371,6 +372,24 @@ COMMENT ON COLUMN point_transactions.created_at IS '记录创建时间';
 CREATE INDEX idx_pt_user_created ON point_transactions(user_id, created_at);
 CREATE INDEX idx_pt_ref ON point_transactions(ref_type, ref_id);
 CREATE INDEX idx_pt_type ON point_transactions(type);
+-- ================= SIGN IN =================
+CREATE TABLE sign_records (
+    sign_id BIGSERIAL PRIMARY KEY,
+    user_id BIGINT NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+    sign_date DATE NOT NULL,
+    consecutive_days INT NOT NULL DEFAULT 1,
+    points_earned INT NOT NULL DEFAULT 0,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE(user_id, sign_date)
+);
+COMMENT ON TABLE sign_records IS '用户签到记录';
+COMMENT ON COLUMN sign_records.sign_id IS '签到记录主键ID';
+COMMENT ON COLUMN sign_records.user_id IS '用户ID';
+COMMENT ON COLUMN sign_records.sign_date IS '签到日期';
+COMMENT ON COLUMN sign_records.consecutive_days IS '连续签到天数';
+COMMENT ON COLUMN sign_records.points_earned IS '本次签到获得积分';
+COMMENT ON COLUMN sign_records.created_at IS '签到时间';
+CREATE INDEX idx_sr_user_date ON sign_records(user_id, sign_date DESC);
 -- ================= WISHES =================
 CREATE TABLE wishes (
     wish_id BIGSERIAL PRIMARY KEY,

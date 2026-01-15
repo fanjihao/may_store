@@ -4,7 +4,7 @@ use utoipa::openapi::security::{ApiKey, ApiKeyValue, SecurityScheme};
 use utoipa::{Modify, OpenApi};
 
 // Re-export model modules for macro path resolution
-use crate::{foods, game_im, models, orders, users};
+use crate::{foods, game_im, models, models::dashboard, orders, users};
 // 注意：不要导入 models::wishes 为 wishes 避免遮蔽根模块 wishes
 
 #[derive(OpenApi)]
@@ -25,6 +25,9 @@ use crate::{foods, game_im, models, orders, users};
         users::invitation::unbind_request,
         users::invitation::get_group_info,
         users::role::switch_role,
+        // 签到相关
+        users::sign::sign_in,
+        users::sign::get_sign_info,
         // 菜品相关
         foods::new::create_food,
         foods::update::update_food,
@@ -67,6 +70,8 @@ use crate::{foods, game_im, models, orders, users};
         crate::dashboard::metrics::get_my_today_orders,
         crate::dashboard::metrics::get_my_order_stats,
         crate::dashboard::metrics::get_points_journey,
+        crate::dashboard::metrics::get_week_order_dates,
+        crate::dashboard::metrics::get_date_foods,
         crate::dashboard::activities::get_group_activities,
 
         // IM
@@ -87,6 +92,10 @@ use crate::{foods, game_im, models, orders, users};
             models::users::DailyCheckinOut,
             users::role::RoleSwitchResult,
             users::role::RoleSwitchInput,
+            // 签到
+            models::sign::SignInResponse,
+            models::sign::SignRecordOut,
+            models::sign::SignInfoResponse,
         ),
         // 邀请
         schemas(
@@ -138,14 +147,18 @@ use crate::{foods, game_im, models, orders, users};
             models::wishes::WishClaimOut,
             models::wishes::WishClaimCheckinCreateInput,
             models::wishes::WishClaimCheckinOut,
-            crate::dashboard::activities::GroupActivityEventOut,
-            crate::dashboard::metrics::TopFoodOrderOut,
-            crate::dashboard::metrics::TopFoodRankingResponse,
-            crate::dashboard::metrics::TodayOrderEntryOut,
-            crate::dashboard::metrics::TodayOrdersResponse,
-            crate::dashboard::metrics::OrderStatsOut,
-            crate::dashboard::metrics::JourneyOrderOut,
-            crate::dashboard::metrics::PointsJourneyOut,
+            dashboard::GroupActivityEventOut,
+            dashboard::TopFoodOrderOut,
+            dashboard::TopFoodRankingResponse,
+            dashboard::TodayOrderEntryOut,
+            dashboard::TodayOrdersResponse,
+            dashboard::OrderStatsOut,
+            dashboard::JourneyOrderOut,
+            dashboard::PointsJourneyOut,
+            dashboard::WeekOrderDatesOut,
+            dashboard::WeekDateInfo,
+            dashboard::DateFoodsResponse,
+            dashboard::DateFoodOut,
 
             // IM
             models::game_im::ImUserSigOut,
@@ -159,6 +172,7 @@ use crate::{foods, game_im, models, orders, users};
     modifiers(&SecurityAddon),
     tags(
         (name = "用户", description = "用户相关接口"),
+        (name = "签到", description = "签到相关接口"),
         (name = "菜品", description = "菜品相关接口"),
         (name = "食材", description = "食材字典相关接口"),
         (name = "订单", description = "订单相关接口"),

@@ -199,9 +199,9 @@ impl<E: ErrorRenderer> FromRequest<E> for UserToken {
         // println!("Authenticating request for path: {:#?}", auth_header);
         async move {
             let mut raw = auth_header
-                .ok_or_else(|| CustomError::AuthFailed("No login authorization".into()))?
+                .ok_or_else(|| CustomError::unauthorized("No login authorization"))?
                 .to_str()
-                .map_err(|_| CustomError::AuthFailed("Invalid header".into()))?
+                .map_err(|_| CustomError::unauthorized("Invalid header"))?
                 .to_string();
             // 支持 'Bearer <token>' 前缀
             if let Some(stripped) = raw.strip_prefix("Bearer ") {
@@ -212,7 +212,7 @@ impl<E: ErrorRenderer> FromRequest<E> for UserToken {
             let validation = Validation::new(Algorithm::HS256);
             let data =
                 decode::<UserTokenClaims>(&raw, &decoding_key, &validation).map_err(|e| {
-                    CustomError::AuthFailed(format!("decode token error: {}", e).into())
+                    CustomError::unauthorized(format!("decode token error: {}", e))
                 })?;
             let uid = data.claims.user_id;
 
