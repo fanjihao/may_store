@@ -154,11 +154,27 @@ COMMENT ON COLUMN association_group_requests.created_at IS '创建时间';
 COMMENT ON COLUMN association_group_requests.handled_at IS '处理时间';
 CREATE INDEX idx_agr_target_status ON association_group_requests(target_user_id, status);
 -- ================= FOODS =================
+-- 先创建 tags 表（因为 foods 表引用它）
+CREATE TABLE tags (
+    tag_id BIGSERIAL PRIMARY KEY,
+    tag_name VARCHAR(64) NOT NULL,
+    icon VARCHAR(256),
+    group_id BIGINT REFERENCES association_groups(group_id) ON DELETE CASCADE,
+    sort INT DEFAULT 0,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE (tag_name, group_id)
+);
+COMMENT ON TABLE tags IS '菜品标签';
+COMMENT ON COLUMN tags.tag_id IS '标签主键ID';
+COMMENT ON COLUMN tags.tag_name IS '标签名称唯一';
+COMMENT ON COLUMN tags.icon IS '标签图标URL';
+COMMENT ON COLUMN tags.sort IS '排序值-越大越靠前';
+COMMENT ON COLUMN tags.created_at IS '创建时间';
+
 CREATE TABLE foods (
     food_id BIGSERIAL PRIMARY KEY,
     food_name VARCHAR(128) NOT NULL,
     food_photo VARCHAR(256),
-    -- food_types removed
     tag_id BIGINT REFERENCES tags(tag_id) ON DELETE SET NULL,
     ingredients TEXT,
     steps TEXT,
@@ -182,7 +198,9 @@ COMMENT ON TABLE foods IS '菜品（含申请与审核）';
 COMMENT ON COLUMN foods.food_id IS '菜品主键ID';
 COMMENT ON COLUMN foods.food_name IS '菜品名称';
 COMMENT ON COLUMN foods.food_photo IS '菜品图片URL';
-COMMENT ON COLUMN foods.food_types IS '类型：1早餐 2午餐 3下午茶 4晚餐';
+COMMENT ON COLUMN foods.tag_id IS '标签ID';
+COMMENT ON COLUMN foods.ingredients IS '配料/食材';
+COMMENT ON COLUMN foods.steps IS '制作步骤';
 COMMENT ON COLUMN foods.food_status IS '状态：NORMAL/OFF/AUDITING/REJECTED';
 COMMENT ON COLUMN foods.submit_role IS '提交来源：ORDERING_APPLY/RECEIVING_CREATE';
 COMMENT ON COLUMN foods.apply_status IS '审核状态：PENDING/APPROVED/REJECTED';
@@ -197,22 +215,6 @@ COMMENT ON COLUMN foods.created_at IS '创建时间';
 COMMENT ON COLUMN foods.updated_at IS '更新时间';
 CREATE INDEX idx_food_group_apply ON foods(group_id, apply_status);
 CREATE INDEX idx_food_owner ON foods(owner_user_id);
-CREATE INDEX idx_food_types ON foods(food_types);
-CREATE TABLE tags (
-    tag_id BIGSERIAL PRIMARY KEY,
-    tag_name VARCHAR(64) NOT NULL,
-    icon VARCHAR(256),
-    group_id BIGINT REFERENCES association_groups(group_id) ON DELETE CASCADE,
-    sort INT DEFAULT 0,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    UNIQUE (tag_name, group_id)
-);
-COMMENT ON TABLE tags IS '菜品标签';
-COMMENT ON COLUMN tags.tag_id IS '标签主键ID';
-COMMENT ON COLUMN tags.tag_name IS '标签名称唯一';
-COMMENT ON COLUMN tags.icon IS '标签图标URL';
-COMMENT ON COLUMN tags.sort IS '排序值-越大越靠前';
-COMMENT ON COLUMN tags.created_at IS '创建时间';
 
 -- ================= INGREDIENTS =================
 CREATE TABLE ingredients (
