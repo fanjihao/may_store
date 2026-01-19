@@ -22,7 +22,7 @@ pub enum OrderStatusEnum {
 pub struct OrderRecord {
     pub order_id: i64,
     pub user_id: i64,
-    pub receiver_id: Option<i64>,
+    pub guest_id: Option<i64>,
     pub group_id: Option<i64>,
     pub status: OrderStatusEnum,
     pub goal_time: Option<DateTime<Utc>>,
@@ -116,7 +116,7 @@ pub struct OrderStatusHistoryOut {
 pub struct OrderOutNew {
     pub order_id: i64,
     pub user_id: i64,
-    pub receiver_id: Option<i64>,
+    pub guest_id: Option<i64>,
     pub group_id: Option<i64>,
     pub status: OrderStatusEnum,
     pub goal_time: Option<DateTime<Utc>>,
@@ -149,7 +149,7 @@ impl From<(OrderRecord, Vec<OrderItemOut>, Vec<OrderStatusHistoryOut>)> for Orde
         Self {
             order_id: r.order_id,
             user_id: r.user_id,
-            receiver_id: r.receiver_id,
+            guest_id: r.guest_id,
             group_id: r.group_id,
             status: r.status,
             goal_time: r.goal_time,

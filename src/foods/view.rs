@@ -174,29 +174,27 @@ pub async fn get_food_detail(
 	path = "/food_tags",
 	tag = "菜品",
     params(
-        ("group_id"=Option<i64>, Query)
+        ("group_id" = i64, Query, description = "团队ID")
     ),
 	responses((status = 200, body = Vec<FoodTagOut>)),
     security(("cookie_auth" = []))
 )]
 pub async fn get_tags(
     state: State<Arc<AppState>>,
-    token: UserToken,
     q: Query<FoodFilterQuery>,
 ) -> Result<impl Responder, CustomError> {
     let db = &state.db_pool;
-    let mut qb = QueryBuilder::new(
-        "SELECT tag_id, tag_name, icon, group_id, sort, created_at FROM tags WHERE 1=1",
-    );
+    let group_id = match q.group_id {
+        Some(id) => id,
+        None => return Err(CustomError::BadRequest("缺少group_id参数".into())),
+    };
 
-    let gid = q.group_id.or(token.user.as_ref().and_then(|u| u.group_id));
-    if let Some(g) = gid {
-        qb.push(" AND group_id = ").push_bind(g);
-    }
-
-    qb.push(" ORDER BY sort NULLS LAST, tag_id");
-
-    let rows: Vec<TagRecord> = qb.build_query_as().fetch_all(db).await?;
+    let rows: Vec<TagRecord> = sqlx::query_as(
+        "SELECT tag_id, tag_name, icon, group_id, sort, created_at FROM tags WHERE group_id=$1 ORDER BY sort NULLS LAST, tag_id"
+    )
+    .bind(group_id)
+    .fetch_all(db)
+    .await?;
     Ok(HttpResponse::Ok().json(
         &rows
             .into_iter()

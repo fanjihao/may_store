@@ -278,7 +278,7 @@ CREATE INDEX idx_fal_actor ON food_audit_logs(acted_by);
 CREATE TABLE orders (
     order_id BIGSERIAL PRIMARY KEY,
     user_id BIGINT NOT NULL REFERENCES users(user_id) ON DELETE RESTRICT,
-    receiver_id BIGINT REFERENCES users(user_id) ON DELETE
+    guest_id BIGINT REFERENCES users(user_id) ON DELETE
     SET NULL,
         group_id BIGINT REFERENCES association_groups(group_id) ON DELETE
     SET NULL,
@@ -295,7 +295,7 @@ CREATE TABLE orders (
 COMMENT ON TABLE orders IS '订单主表';
 COMMENT ON COLUMN orders.order_id IS '订单主键ID';
 COMMENT ON COLUMN orders.user_id IS '下单用户ID';
-COMMENT ON COLUMN orders.receiver_id IS '接单用户ID';
+COMMENT ON COLUMN orders.guest_id IS '下单客人ID';
 COMMENT ON COLUMN orders.group_id IS '所属关联组ID';
 COMMENT ON COLUMN orders.status IS '订单状态';
 COMMENT ON COLUMN orders.goal_time IS '期望完成/消费时间';
@@ -307,7 +307,7 @@ COMMENT ON COLUMN orders.last_status_change_at IS '最后状态变更时间';
 COMMENT ON COLUMN orders.created_at IS '创建时间';
 COMMENT ON COLUMN orders.updated_at IS '更新时间';
 CREATE INDEX idx_order_user ON orders(user_id);
-CREATE INDEX idx_order_receiver ON orders(receiver_id);
+CREATE INDEX idx_order_guest ON orders(guest_id);
 CREATE INDEX idx_order_group_status ON orders(group_id, status);
 CREATE INDEX idx_order_status_goal ON orders(status, goal_time);
 CREATE TABLE order_items (

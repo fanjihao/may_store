@@ -132,16 +132,16 @@ pub async fn get_order_rating(
     order_id: Path<i64>
 ) -> Result<impl Responder, CustomError> {
     let db = &state.db_pool;
-    // 订单存在性与权限（必须为下单用户或接单用户之一）
+    // 订单存在性与权限（必须为下单用户或客人之一）
     let order_row = sqlx
-        ::query("SELECT user_id, receiver_id FROM orders WHERE order_id=$1")
+        ::query("SELECT user_id, guest_id FROM orders WHERE order_id=$1")
         .bind(*order_id)
         .fetch_optional(db).await?;
     let Some(or) = order_row else {
         return Err(CustomError::BadRequest("订单不存在".into()));
     };
     let ouid: i64 = or.get("user_id");
-    let rid_opt: Option<i64> = or.try_get("receiver_id").ok();
+    let rid_opt: Option<i64> = or.try_get("guest_id").ok();
     if ouid != user_token.user_id && rid_opt != Some(user_token.user_id) {
         return Err(CustomError::BadRequest("无权查看该订单评分".into()));
     }

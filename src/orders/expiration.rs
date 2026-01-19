@@ -5,7 +5,7 @@ use sqlx::Acquire;
 use sqlx::Row;
 use std::sync::Arc; // bring trait for row.get
 
-// Runs periodic expiration: any PENDING order older than 30 minutes without receiver_id becomes EXPIRED.
+// Runs periodic expiration: any PENDING order older than 30 minutes becomes EXPIRED.
 pub async fn run_expiration_worker(state: Arc<AppState>) {
     let db = &state.db_pool;
     loop {
@@ -20,9 +20,9 @@ async fn expire_pending(db: &sqlx::Pool<sqlx::Postgres>) -> Result<(), CustomErr
     let threshold = Utc::now() - Duration::minutes(30);
     let mut conn = db.acquire().await?;
 
-    // Find candidate orders (no receiver, still PENDING, older than threshold)
+    // Find candidate orders (still PENDING, older than threshold)
     let rows = sqlx::query(
-        "SELECT order_id FROM orders WHERE status='PENDING' AND receiver_id IS NULL AND created_at < $1"
+        "SELECT order_id FROM orders WHERE status='PENDING' AND created_at < $1"
     )
     .bind(threshold)
     .fetch_all(&mut *conn)

@@ -78,9 +78,9 @@ pub async fn create_order(
 
     // 插入订单并直接解码枚举
     let rec: OrderRecord = sqlx::query_as::<_, OrderRecord>(
-        "INSERT INTO orders (user_id, receiver_id, group_id, goal_time, points_cost, points_reward, is_guest) \
+        "INSERT INTO orders (user_id, guest_id, group_id, goal_time, points_cost, points_reward, is_guest) \
          VALUES ($1,$2,$3,$4,$5,$6,$7) \
-         RETURNING order_id, user_id, receiver_id, group_id, status, goal_time, points_cost, points_reward, cancel_reason, reject_reason, last_status_change_at, created_at, updated_at, is_guest"
+         RETURNING order_id, user_id, guest_id, group_id, status, goal_time, points_cost, points_reward, cancel_reason, reject_reason, last_status_change_at, created_at, updated_at, is_guest"
     )
     .bind(user_token.user_id as i64)
     .bind::<Option<i64>>(None)

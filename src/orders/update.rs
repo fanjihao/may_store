@@ -1,15 +1,21 @@
-use chrono::Utc;
-use ntex::web::{types::{Json, State}, HttpResponse, Responder};
-use sqlx::Row;
-use std::sync::Arc;
 use crate::{
     errors::CustomError,
     models::{
-        orders::{OrderStatusUpdateInput, OrderStatusEnum, OrderRecord, OrderItemRecord, OrderItemOut, OrderStatusHistoryOut, OrderOutNew},
+        orders::{
+            OrderItemOut, OrderItemRecord, OrderOutNew, OrderRecord, OrderStatusEnum,
+            OrderStatusHistoryOut, OrderStatusUpdateInput,
+        },
         users::UserToken,
     },
-    AppState
+    AppState,
 };
+use chrono::Utc;
+use ntex::web::{
+    types::{Json, State},
+    HttpResponse, Responder,
+};
+use sqlx::Row;
+use std::sync::Arc;
 
 #[utoipa::path(
     put,
@@ -28,16 +34,28 @@ pub async fn update_order_status(
 
     // 当前订单
     let current: Option<OrderRecord> = sqlx::query_as::<_, OrderRecord>(
-        "SELECT order_id, user_id, receiver_id, group_id, status, goal_time, points_cost, points_reward, cancel_reason, reject_reason, last_status_change_at, created_at, updated_at FROM orders WHERE order_id=$1 FOR UPDATE"
+        "SELECT order_id, user_id, is_guest, guest_id, group_id, status, goal_time, points_cost, points_reward, cancel_reason, reject_reason, last_status_change_at, created_at, updated_at FROM orders WHERE order_id=$1 FOR UPDATE"
     )
     .bind(data.order_id)
     .fetch_optional(&mut *tx)
     .await?;
-    let mut order = match current { Some(o) => o, None => { tx.rollback().await.ok(); return Err(CustomError::BadRequest("订单不存在".into())); } };
+    let mut order = match current {
+        Some(o) => o,
+        None => {
+            tx.rollback().await.ok();
+            return Err(CustomError::BadRequest("订单不存在".into()));
+        }
+    };
     let from_status = order.status;
 
-    if order.status == data.to_status { tx.rollback().await.ok(); return Err(CustomError::BadRequest("状态未变化".into())); }
-    if !order.status.can_transition(data.to_status) { tx.rollback().await.ok(); return Err(CustomError::BadRequest("非法状态流转".into())); }
+    if order.status == data.to_status {
+        tx.rollback().await.ok();
+        return Err(CustomError::BadRequest("状态未变化".into()));
+    }
+    if !order.status.can_transition(data.to_status) {
+        tx.rollback().await.ok();
+        return Err(CustomError::BadRequest("非法状态流转".into()));
+    }
 
     // 更新 order 主表
     match data.to_status {
@@ -78,23 +96,44 @@ pub async fn update_order_status(
 
     // 积分奖励处理（完成时）
     if data.to_status == OrderStatusEnum::FINISHED {
-        if let Some(points) = data.points_reward.or(Some(order.points_reward)).filter(|p| *p > 0) {
-            // 获取当前积分并更新
+        if let Some(points) = data
+            .points_reward
+            .or(Some(order.points_reward))
+            .filter(|p| *p > 0)
+        {
+            // 根据 group_id 查询 members，找到 role_in_group='RECEIVING' 的用户作为接单者
+            let group_id = match order.group_id {
+                Some(id) => id,
+                None => return Err(CustomError::BadRequest("订单缺少group_id".into())),
+            };
+            let receiver_user_id = match sqlx::query(
+                "SELECT user_id FROM association_group_members WHERE group_id=$1 AND role_in_group='RECEIVING'::group_member_role_enum LIMIT 1"
+            )
+            .bind(group_id)
+            .fetch_optional(&mut *tx)
+            .await
+            {
+                Ok(Some(r)) => r.get::<i64, _>("user_id"),
+                _ => return Err(CustomError::BadRequest("未找到接单用户".into())),
+            };
+
+            // 获取接单用户当前积分并更新
             if let Ok(user_row) = sqlx::query("SELECT love_point FROM users WHERE user_id=$1")
-                .bind(order.user_id)
+                .bind(receiver_user_id)
                 .fetch_one(&mut *tx)
-                .await {
+                .await
+            {
                 let current_lp: i32 = user_row.get("love_point");
                 let balance_after = current_lp + points;
                 sqlx::query("INSERT INTO point_transactions (user_id, amount, type, ref_type, ref_id, balance_after) VALUES ($1,$2,'FINISH_REWARD',1,$3,$4)")
-                    .bind(order.user_id)
+                    .bind(receiver_user_id)
                     .bind(points)
                     .bind(order.order_id)
                     .bind(balance_after)
                     .execute(&mut *tx)
                     .await?;
                 sqlx::query("UPDATE users SET love_point=$2 WHERE user_id=$1")
-                    .bind(order.user_id)
+                    .bind(receiver_user_id)
                     .bind(balance_after)
                     .execute(&mut *tx)
                     .await?;
@@ -127,7 +166,12 @@ pub async fn update_order_status(
             .fetch_optional(&mut *tx)
             .await?;
         let (name_opt, photo_opt) = food
-            .map(|r| (r.get::<String, _>("food_name"), r.get::<Option<String>, _>("food_photo")))
+            .map(|r| {
+                (
+                    r.get::<String, _>("food_name"),
+                    r.get::<Option<String>, _>("food_photo"),
+                )
+            })
             .map(|(n, p)| (Some(n), p))
             .unwrap_or((None, None));
         items_out.push(OrderItemOut {
@@ -144,20 +188,18 @@ pub async fn update_order_status(
     let history_rows: Vec<OrderStatusHistoryOut> = sqlx::query(
         "SELECT h.from_status, h.to_status, u.nick_name, h.remark, h.changed_at \
          FROM order_status_history h LEFT JOIN users u ON h.changed_by = u.user_id \
-         WHERE h.order_id=$1 ORDER BY h.changed_at"
+         WHERE h.order_id=$1 ORDER BY h.changed_at",
     )
     .bind(order.order_id)
     .fetch_all(&mut *tx)
     .await?
     .into_iter()
-    .map(|row| {
-        OrderStatusHistoryOut {
-            from_status: row.get("from_status"),
-            to_status: row.get("to_status"),
-            changed_by: row.try_get("nick_name").ok().flatten(),
-            remark: row.get::<Option<String>, _>("remark"),
-            changed_at: row.get::<chrono::DateTime<Utc>, _>("changed_at")
-        }
+    .map(|row| OrderStatusHistoryOut {
+        from_status: row.get("from_status"),
+        to_status: row.get("to_status"),
+        changed_by: row.try_get("nick_name").ok().flatten(),
+        remark: row.get::<Option<String>, _>("remark"),
+        changed_at: row.get::<chrono::DateTime<Utc>, _>("changed_at"),
     })
     .collect();
 
@@ -168,7 +210,8 @@ pub async fn update_order_status(
         let pool_clone = state.db_pool.clone();
         let oid = order.order_id;
         tokio::spawn(async move {
-            if let Err(e) = crate::services::notifications::push_order_status(oid, pool_clone).await {
+            if let Err(e) = crate::services::notifications::push_order_status(oid, pool_clone).await
+            {
                 log::warn!("order status update push error: {}", e);
             }
         });

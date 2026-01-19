@@ -15,7 +15,7 @@ use crate::{
 pub async fn push_order_status(order_id: i64, db_pool: PgPool) -> Result<(), CustomError> {
     // 查询订单 + 相关用户 push_id
     let order_row =
-        sqlx::query("SELECT order_id, user_id, receiver_id, status FROM orders WHERE order_id=$1")
+        sqlx::query("SELECT order_id, user_id, guest_id, status FROM orders WHERE order_id=$1")
             .bind(order_id)
             .fetch_optional(&db_pool)
             .await?;
@@ -23,20 +23,10 @@ pub async fn push_order_status(order_id: i64, db_pool: PgPool) -> Result<(), Cus
         Some(r) => r,
         None => return Ok(()),
     };
-    let status_str: String = row.get("status");
-    let status = match status_str.as_str() {
-        "PENDING" => OrderStatusEnum::PENDING,
-        "ACCEPTED" => OrderStatusEnum::ACCEPTED,
-        "FINISHED" => OrderStatusEnum::FINISHED,
-        "CANCELLED" => OrderStatusEnum::CANCELLED,
-        "EXPIRED" => OrderStatusEnum::EXPIRED,
-        "REJECTED" => OrderStatusEnum::REJECTED,
-        "SYSTEM_CLOSED" => OrderStatusEnum::SystemClosed,
-        _ => OrderStatusEnum::PENDING,
-    };
+    let status: OrderStatusEnum = row.try_get("status").ok().unwrap_or(OrderStatusEnum::PENDING);
 
     let user_id: i64 = row.get("user_id");
-    let receiver_id: Option<i64> = row.try_get("receiver_id").ok();
+    let guest_id: Option<i64> = row.try_get("guest_id").ok();
 
     // 聚合菜品名称（最多取5个）
     let food_rows = sqlx::query(
@@ -55,13 +45,13 @@ pub async fn push_order_status(order_id: i64, db_pool: PgPool) -> Result<(), Cus
         names.join(" / ")
     };
 
-    // 获取 push_id（下单人 + 接单人）
+    // 获取 push_id（下单人 + 客人）
     let mut push_ids: Vec<String> = Vec::new();
     if let Some(pid) = fetch_push_id(user_id, &db_pool).await? {
         push_ids.push(pid);
     }
-    if let Some(rid) = receiver_id {
-        if let Some(pid) = fetch_push_id(rid, &db_pool).await? {
+    if let Some(gid) = guest_id {
+        if let Some(pid) = fetch_push_id(gid, &db_pool).await? {
             push_ids.push(pid);
         }
     }

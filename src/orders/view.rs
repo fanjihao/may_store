@@ -30,15 +30,15 @@ pub async fn get_orders(
     let db = &state.db_pool;
     // 使用 QueryBuilder 动态构建过滤条件
     let mut qb = sqlx::QueryBuilder::<sqlx::Postgres>::new(
-        "SELECT o.order_id, o.user_id, o.receiver_id, o.group_id, o.status, o.goal_time, o.points_cost, o.points_reward, o.cancel_reason, o.reject_reason, o.last_status_change_at, o.created_at, o.updated_at, \
+        "SELECT o.order_id, o.user_id, o.guest_id, o.group_id, o.status, o.goal_time, o.points_cost, o.points_reward, o.cancel_reason, o.reject_reason, o.last_status_change_at, o.created_at, o.updated_at, \
         (o.group_id IS NOT NULL AND m.user_id IS NULL) AS is_guest, \
         g.group_name, \
-        ur.nick_name AS db_receiver_nick_name, ur.avatar AS db_receiver_avatar, \
+        ug.nick_name AS db_guest_nick_name, ug.avatar AS db_guest_avatar, \
         uc.nick_name AS creator_nick_name, uc.avatar AS creator_avatar \
         FROM orders o \
         LEFT JOIN association_group_members m ON o.group_id = m.group_id AND o.user_id = m.user_id \
         LEFT JOIN association_groups g ON o.group_id = g.group_id \
-        LEFT JOIN users ur ON o.receiver_id = ur.user_id \
+        LEFT JOIN users ug ON o.guest_id = ug.user_id \
         LEFT JOIN users uc ON o.user_id = uc.user_id"
     );
     qb.push(" WHERE ");
@@ -56,14 +56,14 @@ pub async fn get_orders(
         if !is_member {
             qb.push(" AND (o.user_id = ");
             qb.push_bind(token.user_id as i64);
-            qb.push(" OR o.receiver_id = ");
+            qb.push(" OR o.guest_id = ");
             qb.push_bind(token.user_id as i64);
             qb.push(") ");
         }
     } else {
         qb.push(" (o.user_id = ");
         qb.push_bind(token.user_id as i64);
-        qb.push(" OR o.receiver_id = ");
+        qb.push(" OR o.guest_id = ");
         qb.push_bind(token.user_id as i64);
         qb.push(") ");
     }
@@ -84,7 +84,7 @@ pub async fn get_orders(
         let order = OrderRecord {
             order_id: row.get("order_id"),
             user_id: row.get("user_id"),
-            receiver_id: row.get("receiver_id"),
+            guest_id: row.get("guest_id"),
             group_id: row.get("group_id"),
             status: row.get::<OrderStatusEnum, _>("status"),
             goal_time: row.try_get("goal_time").ok(),
@@ -103,8 +103,8 @@ pub async fn get_orders(
             group_id: gid,
             group_name: group_name.clone(),
         });
-        let db_receiver_nick_name: Option<String> = row.try_get("db_receiver_nick_name").ok();
-        let db_receiver_avatar: Option<String> = row.try_get("db_receiver_avatar").ok();
+        let db_guest_nick_name: Option<String> = row.try_get("db_guest_nick_name").ok();
+        let db_guest_avatar: Option<String> = row.try_get("db_guest_avatar").ok();
         let creator_nick_name: Option<String> = row.try_get("creator_nick_name").ok();
         let creator_avatar: Option<String> = row.try_get("creator_avatar").ok();
 
@@ -137,10 +137,10 @@ pub async fn get_orders(
         let mut out = OrderOutNew::from((order, items, history));
         out.group_name = group_name;
         out.group_info = group_info;
-        out.receiver_nick_name = db_receiver_nick_name;
-        out.receiver_avatar = db_receiver_avatar;
-        if out.receiver_id.is_none() && out.is_guest {
-            out.receiver_id = Some(out.user_id);
+        out.receiver_nick_name = db_guest_nick_name;
+        out.receiver_avatar = db_guest_avatar;
+        if out.guest_id.is_none() && out.is_guest {
+            out.guest_id = Some(out.user_id);
             out.receiver_nick_name = creator_nick_name;
             out.receiver_avatar = creator_avatar;
         }
@@ -164,7 +164,7 @@ pub async fn get_order_detail(
     let db = &state.db_pool;
     let row = sqlx
         ::query(
-            "SELECT o.order_id, o.user_id, o.receiver_id, o.group_id, o.status, o.goal_time, o.points_cost, o.points_reward, o.cancel_reason, o.reject_reason, o.last_status_change_at, o.created_at, o.updated_at, \
+            "SELECT o.order_id, o.user_id, o.guest_id, o.group_id, o.status, o.goal_time, o.points_cost, o.points_reward, o.cancel_reason, o.reject_reason, o.last_status_change_at, o.created_at, o.updated_at, \
             (o.group_id IS NOT NULL AND m.user_id IS NULL) AS is_guest, \
             g.group_name, \
             ur.nick_name AS db_receiver_nick_name, ur.avatar AS db_receiver_avatar, \
@@ -172,7 +172,7 @@ pub async fn get_order_detail(
             FROM orders o \
             LEFT JOIN association_group_members m ON o.group_id = m.group_id AND o.user_id = m.user_id \
             LEFT JOIN association_groups g ON o.group_id = g.group_id \
-            LEFT JOIN users ur ON o.receiver_id = ur.user_id \
+            LEFT JOIN users ur ON o.guest_id = ur.user_id \
             LEFT JOIN users uc ON o.user_id = uc.user_id \
             WHERE o.order_id=$1"
         )
@@ -185,7 +185,7 @@ pub async fn get_order_detail(
                 OrderRecord {
                     order_id: r.get("order_id"),
                     user_id: r.get("user_id"),
-                    receiver_id: r.get("receiver_id"),
+                    guest_id: r.get("guest_id"),
                     group_id: r.get("group_id"),
                     status: r.get::<OrderStatusEnum, _>("status"),
                     goal_time: r.try_get("goal_time").ok(),
@@ -235,8 +235,8 @@ pub async fn get_order_detail(
     });
     out.receiver_nick_name = db_receiver_nick_name;
     out.receiver_avatar = db_receiver_avatar;
-    if out.receiver_id.is_none() && out.is_guest {
-        out.receiver_id = Some(out.user_id);
+    if out.guest_id.is_none() && out.is_guest {
+        out.guest_id = Some(out.user_id);
         out.receiver_nick_name = creator_nick_name;
         out.receiver_avatar = creator_avatar;
     }
