@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 
 /// 组活动查询参数
 #[derive(Debug, Deserialize, utoipa::IntoParams)]
+#[serde(rename_all = "camelCase")]
 pub struct GroupActivityQuery {
     /// 返回条数，默认50，最大200
     pub limit: Option<i64>,
@@ -12,6 +13,7 @@ pub struct GroupActivityQuery {
 
 /// 组活动事件输出
 #[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
+#[serde(rename_all = "camelCase")]
 pub struct GroupActivityEventOut {
     pub event_type: String,
     pub actor_user_id: Option<i64>,
@@ -29,6 +31,7 @@ pub struct GroupActivityEventOut {
 // ============== Top Ordered Foods Ranking ==============
 
 #[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
+#[serde(rename_all = "camelCase")]
 pub struct TopFoodOrderOut {
     pub food_id: i64,
     pub food_name: String,
@@ -37,6 +40,7 @@ pub struct TopFoodOrderOut {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
+#[serde(rename_all = "camelCase")]
 pub struct TopFoodRankingResponse {
     pub list: Vec<TopFoodOrderOut>,
     pub message: Option<String>,
@@ -45,6 +49,7 @@ pub struct TopFoodRankingResponse {
 // ============== Today's Orders Tree ==============
 
 #[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
+#[serde(rename_all = "camelCase")]
 pub struct TodayOrderEntryOut {
     pub order_id: i64,
     pub category: String,
@@ -53,6 +58,7 @@ pub struct TodayOrderEntryOut {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
+#[serde(rename_all = "camelCase")]
 pub struct TodayOrdersResponse {
     pub list: Vec<TodayOrderEntryOut>,
     pub message: Option<String>,
@@ -61,6 +67,7 @@ pub struct TodayOrdersResponse {
 // ============== Order Stats ==============
 
 #[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
+#[serde(rename_all = "camelCase")]
 pub struct OrderStatsOut {
     pub total_orders: i64,
     pub finished_orders: i64,
@@ -70,6 +77,7 @@ pub struct OrderStatsOut {
 // ============== Points Journey ==============
 
 #[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
+#[serde(rename_all = "camelCase")]
 pub struct JourneyOrderOut {
     pub order_id: i64,
     pub foods_text: String,
@@ -77,6 +85,7 @@ pub struct JourneyOrderOut {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
+#[serde(rename_all = "camelCase")]
 pub struct PointsJourneyOut {
     pub today_orders: Vec<JourneyOrderOut>,
     pub today_points: i64,
@@ -126,6 +135,7 @@ pub struct DateFoodsResponse {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, utoipa::IntoParams)]
+#[serde(rename_all = "camelCase")]
 pub struct DateQuery {
     /// 日期 (YYYY-MM-DD格式)
     pub date: Option<NaiveDate>,
