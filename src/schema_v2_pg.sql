@@ -48,7 +48,7 @@ CREATE TABLE users (
     email VARCHAR(128),
     role user_role_enum NOT NULL DEFAULT 'ORDERING',
     love_point INT NOT NULL DEFAULT 0,
-    avatar VARCHAR(256) NOT NULL DEFAULT 'http://store.impeter.fun/default-avatar.png',
+    avatar VARCHAR(256) NOT NULL DEFAULT 'https://store.impeter.fun/default-avatar.png',
     phone VARCHAR(32),
     open_id VARCHAR(128),
     status SMALLINT NOT NULL DEFAULT 1,

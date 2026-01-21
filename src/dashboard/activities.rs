@@ -176,7 +176,7 @@ pub async fn get_group_activities(
                 pt.balance_after AS point_balance_after
             FROM point_transactions pt
             JOIN association_group_members agm ON agm.user_id=pt.user_id AND agm.group_id=$1
-            WHERE pt.created_at < $2
+            WHERE pt.created_at < $2 AND pt.type != 'SIGN_IN_REWARD'
 
             UNION ALL
             -- 签到记录（组内成员）
