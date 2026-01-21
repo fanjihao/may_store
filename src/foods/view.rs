@@ -202,6 +202,7 @@ pub async fn get_tags(
                 tag_id: r.tag_id,
                 tag_name: r.tag_name,
                 icon: r.icon,
+                sort: r.sort,
             })
             .collect::<Vec<_>>(),
     ))

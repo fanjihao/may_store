@@ -87,6 +87,7 @@ pub struct FoodTagOut {
     pub tag_id: i64,
     pub tag_name: String,
     pub icon: Option<String>,
+    pub sort: Option<i32>,
 }
 
 // ================= Ingredients =================
@@ -165,6 +166,7 @@ impl From<(FoodRecord, Option<TagRecord>, Vec<MarkTypeEnum>)> for FoodOut {
                 tag_id: t.tag_id,
                 tag_name: t.tag_name,
                 icon: t.icon,
+                sort: t.sort,
             }),
             is_marked_like: like,
             is_marked_not_recommend: not_rec,
@@ -231,6 +233,7 @@ impl FoodOut {
                 tag_id: t.tag_id,
                 tag_name: t.tag_name,
                 icon: t.icon,
+                sort: t.sort,
             }),
             is_marked_like: like,
             is_marked_not_recommend: not_rec,

@@ -143,5 +143,6 @@ pub async fn create_tag(
         tag_id: rec.tag_id,
         tag_name: rec.tag_name,
         icon: rec.icon,
+        sort: rec.sort,
     }))
 }
