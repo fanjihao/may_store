@@ -1,10 +1,7 @@
 use crate::{
-    errors::CustomError,
-    models::foods::{
-        FoodOut, FoodRecord, FoodUpdateInput, MarkTypeEnum, SubmitRoleEnum, TagRecord,
-    },
-    models::users::UserToken,
-    AppState,
+    AppState, errors::CustomError, models::{foods::{
+        FoodOut, FoodRecord, FoodTagOut, FoodUpdateInput, MarkTypeEnum, SubmitRoleEnum, TagRecord, TagUpdateInput, BatchTagSortInput
+    }, users::UserToken}
 };
 use ntex::web::{
     types::{Json, State},
@@ -204,5 +201,132 @@ pub async fn unmark_food(
         .bind(mark_type)
         .execute(db)
         .await?;
+    Ok(HttpResponse::Ok().body("ok"))
+}
+
+#[utoipa::path(
+	put,
+	path = "/food_tags/{id}",
+	tag = "菜品",
+	request_body = TagUpdateInput,
+	params(("id" = i64, Path, description = "标签ID")),
+	responses((status = 200, body = FoodTagOut)),
+	security(("cookie_auth" = []))
+)]
+pub async fn update_tag(
+    _token: UserToken,
+    state: State<Arc<AppState>>,
+    id: ntex::web::types::Path<(i64,)>,
+    data: Json<TagUpdateInput>,
+) -> Result<impl Responder, CustomError> {
+    let db = &state.db_pool;
+    let mut tx = db.begin().await?;
+
+    let tag_id = id.0;
+
+    // Check if tag exists
+    let rec_opt = sqlx::query_as::<_, TagRecord>("SELECT * FROM tags WHERE tag_id=$1 FOR UPDATE")
+        .bind(tag_id)
+        .fetch_optional(&mut *tx)
+        .await?;
+
+    let mut rec = match rec_opt {
+        Some(r) => r,
+        None => return Err(CustomError::BadRequest("标签不存在".into())),
+    };
+
+    if let Some(name) = &data.tag_name {
+        rec.tag_name = name.clone();
+    }
+    if let Some(icon) = &data.icon {
+        rec.icon = Some(icon.clone());
+    }
+    if let Some(sort) = data.sort {
+        rec.sort = Some(sort);
+    }
+
+    sqlx::query("UPDATE tags SET tag_name=$2, icon=$3, sort=$4 WHERE tag_id=$1")
+        .bind(rec.tag_id)
+        .bind(&rec.tag_name)
+        .bind(&rec.icon)
+        .bind(rec.sort)
+        .execute(&mut *tx)
+        .await?;
+
+    tx.commit().await?;
+
+    Ok(HttpResponse::Ok().json(&FoodTagOut {
+        tag_id: rec.tag_id,
+        tag_name: rec.tag_name,
+        icon: rec.icon,
+        sort: rec.sort,
+    }))
+}
+
+#[utoipa::path(
+	post,
+	path = "/food_tags/sort",
+	tag = "菜品",
+	request_body = BatchTagSortInput,
+	responses((status = 200, body = String)),
+	security(("cookie_auth" = []))
+)]
+pub async fn update_tags_sort(
+    _token: UserToken,
+    state: State<Arc<AppState>>,
+    data: Json<BatchTagSortInput>,
+) -> Result<impl Responder, CustomError> {
+    let db = &state.db_pool;
+    let items = &data.items;
+
+    if items.is_empty() {
+        return Ok(HttpResponse::Ok().body("ok"));
+    }
+
+    let mut tx = db.begin().await?;
+
+    // Build the query dynamically
+    // UPDATE tags SET sort = CASE tag_id
+    //   WHEN 1 THEN 10
+    //   WHEN 2 THEN 20
+    //   ELSE sort END
+    // WHERE tag_id IN (1, 2)
+
+    let mut query_string = String::from("UPDATE tags SET sort = CASE tag_id ");
+    let mut ids = Vec::new();
+
+    // Using numbered parameters $1, $2, etc. is tricky with variable length.
+    // However, since we are iterating, we can construct the query string with placeholders.
+    // The bind order must match.
+
+    // Current implementation with sqlx QueryBuilder is cleaner for dynamic queries,
+    // but a simple string construction with parameterized query is also fine for this specific case.
+
+    // Let's use QueryBuilder for safety and convenience
+    use sqlx::QueryBuilder;
+
+    let mut qb: QueryBuilder<sqlx::Postgres> = QueryBuilder::new("UPDATE tags SET sort = CASE tag_id ");
+
+    for item in items {
+        qb.push("WHEN ");
+        qb.push_bind(item.tag_id);
+        qb.push(" THEN ");
+        qb.push_bind(item.sort);
+        qb.push(" ");
+        ids.push(item.tag_id);
+    }
+
+    qb.push("ELSE sort END WHERE tag_id IN (");
+
+    let mut separated = qb.separated(", ");
+    for id in ids {
+        separated.push_bind(id);
+    }
+    separated.push_unseparated(")");
+
+    qb.build().execute(&mut *tx).await?;
+
+    tx.commit().await?;
+
     Ok(HttpResponse::Ok().body("ok"))
 }

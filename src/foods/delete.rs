@@ -40,9 +40,22 @@ pub async fn delete_tag(
     id: Path<(i64,)>,
 ) -> Result<impl Responder, CustomError> {
     let db = &state.db_pool;
-    // food_tags_map removed
+    let tag_id = id.0;
+
+    // Check if any foods are using this tag
+    let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM foods WHERE tag_id=$1 AND is_del=0")
+        .bind(tag_id)
+        .fetch_one(db)
+        .await?;
+
+    if count > 0 {
+        return Err(CustomError::BadRequest(
+            format!("该标签下还有 {} 个菜品，无法删除", count).into(),
+        ));
+    }
+
     sqlx::query("DELETE FROM tags WHERE tag_id=$1")
-        .bind(id.0)
+        .bind(tag_id)
         .execute(db)
         .await?;
     Ok(HttpResponse::Ok().body("deleted"))

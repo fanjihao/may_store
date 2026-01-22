@@ -294,6 +294,19 @@ pub struct TagUpdateInput {
     pub sort: Option<i32>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct TagSortItem {
+    pub tag_id: i64,
+    pub sort: i32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct BatchTagSortInput {
+    pub items: Vec<TagSortItem>,
+}
+
 // ================ Ingredients DTOs ==================
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]

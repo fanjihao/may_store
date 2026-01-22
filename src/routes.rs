@@ -99,6 +99,8 @@ pub fn route(_state: Arc<AppState>, cfg: &mut web::ServiceConfig) {
         web::scope("/food_tags")
             .route("", web::post().to(foods::new::create_tag))
             .route("", web::get().to(foods::view::get_tags))
+            .route("/sort", web::post().to(foods::update::update_tags_sort))
+            .route("/{id}", web::put().to(foods::update::update_tag))
             .route("/{id}", web::delete().to(foods::delete::delete_tag)),
     );
 
