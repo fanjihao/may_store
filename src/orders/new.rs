@@ -155,12 +155,16 @@ pub async fn create_order(
 
     tx.commit().await?;
 
-    // 异步推送
+    // 异步推送 - 使用订单创建模板
     {
         let pool_clone = state.db_pool.clone();
         let oid = rec.order_id;
         tokio::spawn(async move {
-            if let Err(e) = crate::services::notifications::push_order_status(oid, pool_clone).await {
+            if let Err(e) = crate::services::notifications::push_order_with_type(
+                oid,
+                crate::services::notifications::OrderPushType::Created,
+                pool_clone
+            ).await {
                 log::warn!("order create push error: {}", e);
             }
         });

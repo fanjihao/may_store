@@ -53,11 +53,15 @@ async fn expire_pending(db: &sqlx::Pool<sqlx::Postgres>) -> Result<(), CustomErr
             .await?;
     }
     tx.commit().await?;
-    // 异步推送过期状态
+    // 异步推送过期状态 - 使用订单状态更新模板
     for oid in ids {
         let pool_clone = db.clone();
         tokio::spawn(async move {
-            if let Err(e) = crate::services::notifications::push_order_status(oid, pool_clone).await {
+            if let Err(e) = crate::services::notifications::push_order_with_type(
+                oid,
+                crate::services::notifications::OrderPushType::StatusUpdated,
+                pool_clone
+            ).await {
                 log::warn!("order expire push error: {}", e);
             }
         });

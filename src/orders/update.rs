@@ -205,13 +205,16 @@ pub async fn update_order_status(
 
     tx.commit().await?;
 
-    // 异步推送状态更新
+    // 异步推送状态更新 - 使用订单状态更新模板
     {
         let pool_clone = state.db_pool.clone();
         let oid = order.order_id;
         tokio::spawn(async move {
-            if let Err(e) = crate::services::notifications::push_order_status(oid, pool_clone).await
-            {
+            if let Err(e) = crate::services::notifications::push_order_with_type(
+                oid,
+                crate::services::notifications::OrderPushType::StatusUpdated,
+                pool_clone
+            ).await {
                 log::warn!("order status update push error: {}", e);
             }
         });

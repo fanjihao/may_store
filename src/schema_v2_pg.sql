@@ -629,6 +629,58 @@ COMMENT ON COLUMN food_stats.last_complete_time IS '最近完成时间';
 COMMENT ON COLUMN food_stats.updated_at IS '统计更新时间';
 CREATE INDEX idx_fs_order_count ON food_stats(total_order_count);
 CREATE INDEX idx_fs_complete_count ON food_stats(completed_order_count);
+-- ================= WECHAT MINI-PROGRAM SUBSCRIPTION TEMPLATES =================
+CREATE TABLE wx_subscription_templates (
+    template_id BIGSERIAL PRIMARY KEY,
+    template_code VARCHAR(128) NOT NULL UNIQUE,
+    template_name VARCHAR(128) NOT NULL,
+    wx_template_id VARCHAR(256) NOT NULL UNIQUE,
+    -- 微信官方返回的模板ID
+    description VARCHAR(255),
+    -- 模板说明/用途描述
+    is_active SMALLINT NOT NULL DEFAULT 1,
+    -- 1激活 0停用
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+COMMENT ON TABLE wx_subscription_templates IS '微信小程序订阅消息模板';
+COMMENT ON COLUMN wx_subscription_templates.template_id IS '本地模板主键ID';
+COMMENT ON COLUMN wx_subscription_templates.template_code IS '模板编码(业务内部唯一标识,例如ORDER_REMIND)';
+COMMENT ON COLUMN wx_subscription_templates.template_name IS '模板名称(用于管理界面显示)';
+COMMENT ON COLUMN wx_subscription_templates.wx_template_id IS '微信官方返回的模板ID(用于API调用)';
+COMMENT ON COLUMN wx_subscription_templates.description IS '模板说明/用途描述';
+COMMENT ON COLUMN wx_subscription_templates.is_active IS '是否激活：1激活 0停用';
+COMMENT ON COLUMN wx_subscription_templates.created_at IS '创建时间';
+COMMENT ON COLUMN wx_subscription_templates.updated_at IS '更新时间';
+CREATE INDEX idx_wst_code ON wx_subscription_templates(template_code);
+CREATE INDEX idx_wst_active ON wx_subscription_templates(is_active);
+
+-- ================= 模板数据 =================
+-- -- 插入订单创建通知模板
+-- INSERT INTO wx_subscription_templates (template_code, template_name, wx_template_id, description, is_active, created_at, updated_at)
+-- VALUES (
+--     'ORDER_CREATED',
+--     '订单创建通知',
+--     'UmBKohC4s3sni-E5fmpDp_xL_S6uhQ1yTaTl6LOtftI',
+--     '当用户成功创建订单时发送通知',
+--     1,
+--     NOW(),
+--     NOW()
+-- );
+
+-- -- 插入订单状态更新通知模板
+-- INSERT INTO wx_subscription_templates (template_code, template_name, wx_template_id, description, is_active, created_at, updated_at)
+-- VALUES (
+--     'ORDER_STATUS_UPDATED',
+--     '订单状态更新通知',
+--     '3rkE-wK9z6Rxc_ffMx_fS4woy7iIDsxMcBUPsMWuFKI',
+--     '当订单状态发生变化时发送通知（已接受、已完成、已取消等）',
+--     1,
+--     NOW(),
+--     NOW()
+-- );
+-- ============================================
+
 -- ========= OPTIONAL TRIGGERS (COMMENTED OUT) =========
 -- CREATE OR REPLACE FUNCTION touch_updated_at()
 -- RETURNS trigger AS $$
