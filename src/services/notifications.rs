@@ -3,7 +3,7 @@ use reqwest::Client;
 use sqlx::postgres::PgPool;
 use sqlx::Row;
 
-use crate::wx::auth::{fetch_set_access_token, get_access_token};
+use crate::wx::auth::{fetch_set_mp_token, get_mp_token};
 use crate::{errors::CustomError, models::orders::OrderStatusEnum};
 
 // 订单推送类型枚举
@@ -140,8 +140,8 @@ pub async fn push_order_with_type(
     };
 
     // 获取 access_token
-    fetch_set_access_token().await?;
-    let token_opt = get_access_token().await;
+    fetch_set_mp_token().await?;
+    let token_opt = get_mp_token().await;
     let Some(access_token) = token_opt else {
         return Ok(());
     };
@@ -190,16 +190,30 @@ pub async fn push_order_with_type(
             }
         };
 
-        if let Err(e) = client
+        let res = client
             .post(format!(
                 "https://api.weixin.qq.com/cgi-bin/message/subscribe/send?access_token={}",
                 access_token
             ))
             .json(&json_data)
             .send()
-            .await
-        {
-            log::warn!("push order {:?} send error: {}", push_type, e);
+            .await;
+
+        match res {
+            Ok(response) => {
+                let status = response.status();
+                match response.text().await {
+                    Ok(text) => {
+                        println!("WeChat push response for {}: status={}, body={}", pid, status, text);
+                    }
+                    Err(e) => {
+                        println!("Failed to read WeChat response body for {}: {}", pid, e);
+                    }
+                }
+            }
+            Err(e) => {
+                println!("push order {:?} send error: {}", push_type, e);
+            }
         }
     }
 
