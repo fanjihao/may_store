@@ -43,6 +43,7 @@ pub async fn login(
 
     if let Some(code) = &user.weixin_code {
         account = weixin_login(&code).await?;
+        println!("weixin login: {:?}", account);
     };
 
     let record = sqlx::query_as::<_, UserRecord>(

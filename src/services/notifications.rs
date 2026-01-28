@@ -39,7 +39,7 @@ pub async fn push_order_with_type(
 ) -> Result<(), CustomError> {
     // 查询订单 + 相关用户 push_id
     let order_row =
-        sqlx::query("SELECT order_id, user_id, guest_id, status, created_at, goal_time FROM orders WHERE order_id=$1")
+        sqlx::query("SELECT order_id, user_id, guest_id, group_id, status, created_at, goal_time FROM orders WHERE order_id=$1")
             .bind(order_id)
             .fetch_optional(&db_pool)
             .await?;
@@ -55,7 +55,7 @@ pub async fn push_order_with_type(
     let goal_time: Option<chrono::DateTime<Utc>> = row.try_get("goal_time").ok();
 
     let user_id: i64 = row.get("user_id");
-    let guest_id: Option<i64> = row.try_get("guest_id").ok();
+    let group_id: Option<i64> = row.try_get("group_id").ok();
 
     // 聚合菜品名称（最多取5个）
     let food_rows = sqlx::query(
@@ -74,16 +74,50 @@ pub async fn push_order_with_type(
         names.join(" / ")
     };
 
-    // 获取 push_id（下单人 + 客人）
+    // 确定推送目标用户
     let mut push_ids: Vec<String> = Vec::new();
-    if let Some(pid) = fetch_push_id(user_id, &db_pool).await? {
-        push_ids.push(pid);
-    }
-    if let Some(gid) = guest_id {
-        if let Some(pid) = fetch_push_id(gid, &db_pool).await? {
-            push_ids.push(pid);
+
+    match push_type {
+        OrderPushType::Created => {
+            // 创建订单 -> 发送给团队内的 receiving 用户
+            if let Some(gid) = group_id {
+                let ids = fetch_group_receiving_openids(gid, &db_pool).await?;
+                push_ids.extend(ids);
+            }
+        }
+        OrderPushType::StatusUpdated => {
+            match status {
+                OrderStatusEnum::ACCEPTED | OrderStatusEnum::REJECTED => {
+                    // 接单/拒绝 -> 发送给 ordering 用户 (下单人)
+                    if let Some(pid) = fetch_user_openid(user_id, &db_pool).await? {
+                        push_ids.push(pid);
+                    }
+                }
+                OrderStatusEnum::CANCELLED
+                | OrderStatusEnum::FINISHED
+                | OrderStatusEnum::EXPIRED
+                | OrderStatusEnum::SystemClosed => {
+                    // 取消/完成/过期/关闭 -> 发送给 receiving 用户
+                    if let Some(gid) = group_id {
+                        let ids = fetch_group_receiving_openids(gid, &db_pool).await?;
+                        push_ids.extend(ids);
+                    }
+                }
+                OrderStatusEnum::PENDING => {
+                    // 理论上不会走到这里，但如果发生，视为创建 -> receiving
+                    if let Some(gid) = group_id {
+                        let ids = fetch_group_receiving_openids(gid, &db_pool).await?;
+                        push_ids.extend(ids);
+                    }
+                }
+            }
         }
     }
+
+    // 去重，避免重复发送
+    push_ids.sort();
+    push_ids.dedup();
+
     if push_ids.is_empty() {
         return Ok(());
     }
@@ -129,13 +163,12 @@ pub async fn push_order_with_type(
                 serde_json::json!({
                     "touser": &pid,
                     "template_id": template_id,
-                    "url": "http://weixin.qq.com/download",
-                    "topcolor": "#FF0000",
+                    "page": "/pages/order/order",
                     "data": {
-                        "number2": {"value": order_id.to_string(), "color": "#173177"},
-                        "thing11": {"value": foods_summary.clone(), "color": "#173177"},
-                        "time5": {"value": order_time, "color": "#173177"},
-                        "time26": {"value": goal_time_str, "color": "#173177"}
+                        "number2": {"value": order_id.to_string()},
+                        "thing11": {"value": foods_summary.clone()},
+                        "time5": {"value": order_time},
+                        "time26": {"value": goal_time_str}
                     }
                 })
             }
@@ -146,13 +179,12 @@ pub async fn push_order_with_type(
                 serde_json::json!({
                     "touser": &pid,
                     "template_id": template_id,
-                    "url": "http://weixin.qq.com/download",
-                    "topcolor": "#FF0000",
+                    "page": "/pages/order/order",
                     "data": {
-                        "date3": {"value": order_time, "color": "#173177"},
-                        "thing1": {"value": foods_summary.clone(), "color": "#173177"},
-                        "phrase2": {"value": status_cn, "color": "#173177"},
-                        "time20": {"value": now_str.clone(), "color": "#173177"}
+                        "date3": {"value": order_time},
+                        "thing1": {"value": foods_summary.clone()},
+                        "phrase2": {"value": status_cn},
+                        "time20": {"value": now_str.clone()}
                     }
                 })
             }
@@ -160,7 +192,7 @@ pub async fn push_order_with_type(
 
         if let Err(e) = client
             .post(format!(
-                "https://api.weixin.qq.com/cgi-bin/message/template/send?access_token={}",
+                "https://api.weixin.qq.com/cgi-bin/message/subscribe/send?access_token={}",
                 access_token
             ))
             .json(&json_data)
@@ -174,7 +206,7 @@ pub async fn push_order_with_type(
     Ok(())
 }
 
-async fn fetch_push_id(user_id: i64, db_pool: &PgPool) -> Result<Option<String>, CustomError> {
+async fn fetch_user_openid(user_id: i64, db_pool: &PgPool) -> Result<Option<String>, CustomError> {
     let row = sqlx::query("SELECT open_id FROM users WHERE user_id=$1")
         .bind(user_id)
         .fetch_optional(db_pool)
@@ -182,6 +214,35 @@ async fn fetch_push_id(user_id: i64, db_pool: &PgPool) -> Result<Option<String>,
     Ok(row
         .and_then(|r| r.try_get::<Option<String>, _>("open_id").ok())
         .flatten())
+}
+
+async fn fetch_group_receiving_openids(
+    group_id: i64,
+    db_pool: &PgPool,
+) -> Result<Vec<String>, CustomError> {
+    // 查询组内 role='RECEIVING' 的用户 open_id
+    // 注意：这里使用 users 表的 role 字段，也可以考虑 association_group_members 的 role_in_group
+    // 根据需求描述 "receiving 用户"，假设是指用户的全局角色或组内角色。
+    // 这里使用 users 表的 role 字段更符合 "Ordering" / "Receiving" 的 persona 划分。
+    let rows = sqlx::query(
+        "SELECT u.open_id
+         FROM association_group_members agm
+         JOIN users u ON agm.user_id = u.user_id
+         WHERE agm.group_id = $1 AND u.role = 'RECEIVING' AND u.open_id IS NOT NULL"
+    )
+    .bind(group_id)
+    .fetch_all(db_pool)
+    .await?;
+
+    let mut ids = Vec::new();
+    for r in rows {
+        if let Ok(Some(openid)) = r.try_get::<Option<String>, _>("open_id") {
+            if !openid.is_empty() {
+                ids.push(openid);
+            }
+        }
+    }
+    Ok(ids)
 }
 
 fn status_to_cn(s: OrderStatusEnum) -> &'static str {
