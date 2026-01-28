@@ -17,7 +17,7 @@ use crate::{
 #[utoipa::path(
     get,
     path = "/wx/sign-verify",
-    tag = "微信服务器验证",
+    tag = "微信小程序",
     summary = "服务器验证",
     params(Offical),
     responses(
