@@ -9,13 +9,25 @@ use serde_xml_rs::from_str;
 
 use crate::{
     errors::CustomError,
-    models::wx_official::{Offical, Xml},
-    wx_official::auth::{fetch_set_access_token, get_access_token},
+    models::wx::{Offical, Xml},
+    wx::auth::{fetch_set_access_token, get_access_token},
     AppState,
 };
 
+#[utoipa::path(
+    get,
+    path = "/wx/sign-verify",
+    tag = "微信服务器验证",
+    summary = "服务器验证",
+    params(Offical),
+    responses(
+        (status = 200, body = String),
+        (status = 400, body = CustomError)
+    )
+)]
+
 // 服务器验证
-pub async fn wx_offical_username(data: Query<Offical>) -> Result<String, CustomError> {
+pub async fn wx_sign_verify(data: Query<Offical>) -> Result<String, CustomError> {
     let mut hasher = Sha1::new();
     // 获取微信服务器发送过来的数据
     let timestamp = data.timestamp.as_ref().unwrap();
@@ -24,7 +36,7 @@ pub async fn wx_offical_username(data: Query<Offical>) -> Result<String, CustomE
     let echostr = data.echostr.as_ref().unwrap();
 
     // 自定义的token
-    let token = "maystore";
+    let token = "may_store";
 
     // 进行字典序排序
     let mut items = vec![token, nonce, timestamp];

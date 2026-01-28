@@ -1,7 +1,7 @@
 use crate::{
     dashboard, foods, game_im, game_ws,
     openapi::{openapi_json, serve_swagger},
-    orders, upload, users, wishes, AppState,
+    orders, upload, users, wishes, wx, AppState,
 };
 use ntex::web;
 use std::sync::Arc;
@@ -110,8 +110,14 @@ pub fn route(_state: Arc<AppState>, cfg: &mut web::ServiceConfig) {
             .route("", web::get().to(foods::ingredients::list_ingredients))
             .route("", web::post().to(foods::ingredients::create_ingredient))
             .route("/{id}", web::get().to(foods::ingredients::get_ingredient))
-            .route("/{id}", web::put().to(foods::ingredients::update_ingredient))
-            .route("/{id}", web::delete().to(foods::ingredients::delete_ingredient)),
+            .route(
+                "/{id}",
+                web::put().to(foods::ingredients::update_ingredient),
+            )
+            .route(
+                "/{id}",
+                web::delete().to(foods::ingredients::delete_ingredient),
+            ),
     );
 
     // 订单相关路由
@@ -174,6 +180,18 @@ pub fn route(_state: Arc<AppState>, cfg: &mut web::ServiceConfig) {
         web::scope("/sign")
             .route("", web::post().to(users::sign::sign_in))
             .route("/info", web::get().to(users::sign::get_sign_info)),
+    );
+    // 微信服务器验证
+    cfg.service(
+        web::scope("/wx")
+            .route(
+                "/sign-verify",
+                web::get().to(wx::verify::wx_sign_verify),
+            )
+            .route(
+                "/templates",
+                web::get().to(wx::template::get_templates),
+            ),
     );
 
     // 看板 / 组活动

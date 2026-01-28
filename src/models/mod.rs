@@ -9,4 +9,4 @@ pub mod dashboard;
 pub mod game_im;
 pub mod game_ws;
 
-pub mod wx_official;
+pub mod wx;

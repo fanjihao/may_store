@@ -3,7 +3,7 @@ use reqwest::Client;
 use sqlx::postgres::PgPool;
 use sqlx::Row;
 
-use crate::wx_official::auth::{fetch_set_access_token, get_access_token};
+use crate::wx::auth::{fetch_set_access_token, get_access_token};
 use crate::{errors::CustomError, models::orders::OrderStatusEnum};
 
 // 订单推送类型枚举

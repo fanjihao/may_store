@@ -8,7 +8,7 @@ mod utils;
 mod game_im;
 mod game_ws;
 
-mod wx_official;
+mod wx;
 mod users;
 mod foods;
 mod orders;

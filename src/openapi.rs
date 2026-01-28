@@ -83,6 +83,10 @@ use crate::{foods, game_im, models, models::dashboard, orders, users};
         game_im::rooms::list_rooms,
         game_im::werewolf::start_game,
         game_im::werewolf::vote,
+
+        // 微信公众号
+        crate::wx::verify::wx_sign_verify,
+        crate::wx::template::get_templates,
     ),
     components(
         // 用户
@@ -172,6 +176,8 @@ use crate::{foods, game_im, models, models::dashboard, orders, users};
             models::game_im::ImStartGameOut,
             models::game_im::ImVoteIn,
             models::game_im::ImVoteOut,
+            // 微信
+            models::wx::WxSubscriptionTemplateOut,
         ),
     ),
     modifiers(&SecurityAddon),

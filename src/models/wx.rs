@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use utoipa::ToSchema;
+use utoipa::{IntoParams, ToSchema};
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct MsgTemplate {
@@ -31,7 +31,7 @@ pub struct TemplateMessage {
     pub foods: String,
     pub order_status: String,
 }
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema, IntoParams)]
 #[serde(rename_all = "camelCase")]
 pub struct Offical {
     pub signature: Option<String>,
@@ -112,4 +112,14 @@ pub struct Xml {
 
     #[serde(rename = "EventKey")]
     pub event_key: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct WxSubscriptionTemplateOut {
+    pub template_id: i64,
+    pub wx_template_id: String,
+    pub template_code: String,
+    pub template_name: String,
+    pub description: Option<String>,
 }
