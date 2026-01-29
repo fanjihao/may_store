@@ -3,7 +3,7 @@ use reqwest::Client;
 use sqlx::postgres::PgPool;
 use sqlx::Row;
 
-use crate::wx::auth::{fetch_set_mp_token, get_mp_token};
+use crate::wx::auth::{fetch_set_access_token, get_access_token, fetch_set_mp_token, get_mp_token};
 use crate::{errors::CustomError, models::orders::OrderStatusEnum};
 
 // 订单推送类型枚举
@@ -16,13 +16,27 @@ pub enum OrderPushType {
 }
 
 impl OrderPushType {
-    /// 获取对应的模板编码
-    fn template_code(&self) -> &'static str {
+    /// 获取对应的模板编码（小程序）
+    fn mp_template_code(&self) -> &'static str {
         match self {
             OrderPushType::Created => "ORDER_CREATED",
             OrderPushType::StatusUpdated => "ORDER_STATUS_UPDATED",
         }
     }
+
+    /// 获取对应的模板编码（公众号）
+    fn official_template_code(&self) -> &'static str {
+        match self {
+            OrderPushType::Created => "OFFICAL_CREATED",
+            OrderPushType::StatusUpdated => "OFFICAL_UPDATED",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+struct PushTarget {
+    openid: String,
+    is_official: bool,
 }
 
 // 推送订单状态变更（根据 order_id 查询订单、菜品、用户 push_id 并发送模板消息）
@@ -75,22 +89,22 @@ pub async fn push_order_with_type(
     };
 
     // 确定推送目标用户
-    let mut push_ids: Vec<String> = Vec::new();
+    let mut targets: Vec<PushTarget> = Vec::new();
 
     match push_type {
         OrderPushType::Created => {
             // 创建订单 -> 发送给团队内的 receiving 用户
             if let Some(gid) = group_id {
-                let ids = fetch_group_receiving_openids(gid, &db_pool).await?;
-                push_ids.extend(ids);
+                let tgs = fetch_group_receiving_openids(gid, &db_pool).await?;
+                targets.extend(tgs);
             }
         }
         OrderPushType::StatusUpdated => {
             match status {
                 OrderStatusEnum::ACCEPTED | OrderStatusEnum::REJECTED => {
                     // 接单/拒绝 -> 发送给 ordering 用户 (下单人)
-                    if let Some(pid) = fetch_user_openid(user_id, &db_pool).await? {
-                        push_ids.push(pid);
+                    if let Some(tg) = fetch_user_openid(user_id, &db_pool).await? {
+                        targets.push(tg);
                     }
                 }
                 OrderStatusEnum::CANCELLED
@@ -99,120 +113,159 @@ pub async fn push_order_with_type(
                 | OrderStatusEnum::SystemClosed => {
                     // 取消/完成/过期/关闭 -> 发送给 receiving 用户
                     if let Some(gid) = group_id {
-                        let ids = fetch_group_receiving_openids(gid, &db_pool).await?;
-                        push_ids.extend(ids);
+                        let tgs = fetch_group_receiving_openids(gid, &db_pool).await?;
+                        targets.extend(tgs);
                     }
                 }
                 OrderStatusEnum::PENDING => {
                     // 理论上不会走到这里，但如果发生，视为创建 -> receiving
                     if let Some(gid) = group_id {
-                        let ids = fetch_group_receiving_openids(gid, &db_pool).await?;
-                        push_ids.extend(ids);
+                        let tgs = fetch_group_receiving_openids(gid, &db_pool).await?;
+                        targets.extend(tgs);
                     }
                 }
             }
         }
     }
 
-    // 去重，避免重复发送
-    push_ids.sort();
-    push_ids.dedup();
+    // 去重
+    targets.sort();
+    targets.dedup();
 
-    if push_ids.is_empty() {
+    if targets.is_empty() {
         return Ok(());
     }
-
-    // 从数据库查询模板ID
-    let template_code = push_type.template_code();
-    let template_row = sqlx::query(
-        "SELECT wx_template_id FROM wx_subscription_templates WHERE template_code=$1 AND is_active=1"
-    )
-    .bind(template_code)
-    .fetch_optional(&db_pool)
-    .await?;
-
-    let template_id = match template_row {
-        Some(r) => r.get::<String, _>("wx_template_id"),
-        None => {
-            log::warn!("template not found for code: {}", template_code);
-            return Ok(());
-        }
-    };
-
-    // 获取 access_token
-    fetch_set_mp_token().await?;
-    let token_opt = get_mp_token().await;
-    let Some(access_token) = token_opt else {
-        return Ok(());
-    };
 
     let client = Client::new();
     let status_cn = status_to_cn(status);
     let now_str = Utc::now().format("%Y-%m-%d %H:%M:%S").to_string();
 
-    for pid in push_ids {
-        // 根据推送类型构建不同的消息数据
-        let json_data = match push_type {
-            OrderPushType::Created => {
-                // 订单创建模板：订单编号、订单信息、订单时间、预定时间
-                let order_time = created_at.format("%Y-%m-%d %H:%M").to_string();
-                let goal_time_str = goal_time
-                    .map(|t| t.format("%Y-%m-%d %H:%M").to_string())
-                    .unwrap_or_else(|| "待定".to_string());
+    // 分离小程序目标和公众号目标
+    let mp_targets: Vec<&PushTarget> = targets.iter().filter(|t| !t.is_official).collect();
+    let official_targets: Vec<&PushTarget> = targets.iter().filter(|t| t.is_official).collect();
 
-                serde_json::json!({
-                    "touser": &pid,
-                    "template_id": template_id,
-                    "page": "/pages/order/order",
-                    "data": {
-                        "number2": {"value": order_id.to_string()},
-                        "thing11": {"value": foods_summary.clone()},
-                        "time5": {"value": order_time},
-                        "time26": {"value": goal_time_str}
-                    }
-                })
-            }
-            OrderPushType::StatusUpdated => {
-                // 订单状态更新模板：下单时间、订单内容、订单状态、更新时间
-                let order_time = created_at.format("%Y-%m-%d %H:%M").to_string();
+    // --- 处理小程序推送 ---
+    if !mp_targets.is_empty() {
+        let template_code = push_type.mp_template_code();
+        let template_row = sqlx::query(
+            "SELECT wx_template_id FROM wx_subscription_templates WHERE template_code=$1 AND is_active=1"
+        )
+        .bind(template_code)
+        .fetch_optional(&db_pool)
+        .await?;
 
-                serde_json::json!({
-                    "touser": &pid,
-                    "template_id": template_id,
-                    "page": "/pages/order/order",
-                    "data": {
-                        "date3": {"value": order_time},
-                        "thing1": {"value": foods_summary.clone()},
-                        "phrase2": {"value": status_cn},
-                        "time20": {"value": now_str.clone()}
-                    }
-                })
-            }
-        };
-
-        let res = client
-            .post(format!(
-                "https://api.weixin.qq.com/cgi-bin/message/subscribe/send?access_token={}",
-                access_token
-            ))
-            .json(&json_data)
-            .send()
-            .await;
-
-        match res {
-            Ok(response) => {
-                let status = response.status();
-                match response.text().await {
-                    Ok(text) => {
-                        println!("WeChat push response for {}: status={}, body={}", pid, status, text);
-                    }
-                    Err(e) => {
-                        println!("Failed to read WeChat response body for {}: {}", pid, e);
-                    }
+        if let Some(r) = template_row {
+            let template_id: String = r.get("wx_template_id");
+            fetch_set_mp_token().await?;
+            if let Some(access_token) = get_mp_token().await {
+                for tg in mp_targets {
+                    let json_data = match push_type {
+                        OrderPushType::Created => {
+                             let order_time = created_at.format("%Y-%m-%d %H:%M").to_string();
+                             let goal_time_str = goal_time
+                                .map(|t| t.format("%Y-%m-%d %H:%M").to_string())
+                                .unwrap_or_else(|| "待定".to_string());
+                             serde_json::json!({
+                                "touser": &tg.openid,
+                                "template_id": template_id,
+                                "page": "/pages/order/order",
+                                "data": {
+                                    "number2": {"value": order_id.to_string()},
+                                    "thing11": {"value": foods_summary.clone()},
+                                    "time5": {"value": order_time},
+                                    "time26": {"value": goal_time_str}
+                                }
+                            })
+                        },
+                        OrderPushType::StatusUpdated => {
+                            let order_time = created_at.format("%Y-%m-%d %H:%M").to_string();
+                             serde_json::json!({
+                                "touser": &tg.openid,
+                                "template_id": template_id,
+                                "page": "/pages/order/order",
+                                "data": {
+                                    "date3": {"value": order_time},
+                                    "thing1": {"value": foods_summary.clone()},
+                                    "phrase2": {"value": status_cn},
+                                    "time20": {"value": now_str.clone()}
+                                }
+                            })
+                        }
+                    };
+                    let res = client
+                        .post(format!(
+                            "https://api.weixin.qq.com/cgi-bin/message/subscribe/send?access_token={}",
+                            access_token
+                        ))
+                        .json(&json_data)
+                        .send()
+                        .await;
+                     if let Err(e) = res {
+                         println!("push mp error: {}", e);
+                     }
                 }
             }
-            Err(e) => {
-                println!("push order {:?} send error: {}", push_type, e);
+        }
+    }
+
+    // --- 处理公众号推送 ---
+    if !official_targets.is_empty() {
+        let template_code = push_type.official_template_code();
+        let template_row = sqlx::query(
+            "SELECT wx_template_id FROM wx_subscription_templates WHERE template_code=$1 AND is_active=1"
+        )
+        .bind(template_code)
+        .fetch_optional(&db_pool)
+        .await?;
+
+        if let Some(r) = template_row {
+            let template_id: String = r.get("wx_template_id");
+            fetch_set_access_token().await?;
+            if let Some(access_token) = get_access_token().await {
+                for tg in official_targets {
+                    let json_data = match push_type {
+                        OrderPushType::Created => {
+                             let order_time = created_at.format("%Y-%m-%d %H:%M").to_string();
+                             let goal_time_str = goal_time
+                                .map(|t| t.format("%Y-%m-%d %H:%M").to_string())
+                                .unwrap_or_else(|| "待定".to_string());
+                             serde_json::json!({
+                                "touser": &tg.openid,
+                                "template_id": template_id,
+                                "data": {
+                                    "number2": {"value": order_id.to_string()},
+                                    "thing11": {"value": foods_summary.clone()},
+                                    "time5": {"value": order_time},
+                                    "time26": {"value": goal_time_str}
+                                }
+                            })
+                        },
+                        OrderPushType::StatusUpdated => {
+                            let order_time = created_at.format("%Y-%m-%d %H:%M").to_string();
+                             serde_json::json!({
+                                "touser": &tg.openid,
+                                "template_id": template_id,
+                                "data": {
+                                    "date3": {"value": order_time},
+                                    "thing1": {"value": foods_summary.clone()},
+                                    "phrase2": {"value": status_cn},
+                                    "time20": {"value": now_str.clone()}
+                                }
+                            })
+                        }
+                    };
+                     let res = client
+                        .post(format!(
+                            "https://api.weixin.qq.com/cgi-bin/message/template/send?access_token={}",
+                            access_token
+                        ))
+                        .json(&json_data)
+                        .send()
+                        .await;
+                     if let Err(e) = res {
+                         println!("push official error: {}", e);
+                     }
+                }
             }
         }
     }
@@ -220,43 +273,75 @@ pub async fn push_order_with_type(
     Ok(())
 }
 
-async fn fetch_user_openid(user_id: i64, db_pool: &PgPool) -> Result<Option<String>, CustomError> {
-    let row = sqlx::query("SELECT open_id FROM users WHERE user_id=$1")
+async fn fetch_user_openid(user_id: i64, db_pool: &PgPool) -> Result<Option<PushTarget>, CustomError> {
+    let row = sqlx::query("SELECT open_id, push_id FROM users WHERE user_id=$1")
         .bind(user_id)
         .fetch_optional(db_pool)
         .await?;
-    Ok(row
-        .and_then(|r| r.try_get::<Option<String>, _>("open_id").ok())
-        .flatten())
+
+    if let Some(r) = row {
+        // 优先使用 push_id
+        if let Ok(Some(pid)) = r.try_get::<Option<String>, _>("push_id") {
+            if !pid.is_empty() {
+                return Ok(Some(PushTarget {
+                    openid: pid,
+                    is_official: true,
+                }));
+            }
+        }
+        // 否则使用 open_id
+        if let Ok(Some(oid)) = r.try_get::<Option<String>, _>("open_id") {
+             if !oid.is_empty() {
+                return Ok(Some(PushTarget {
+                    openid: oid,
+                    is_official: false,
+                }));
+            }
+        }
+    }
+    Ok(None)
 }
 
 async fn fetch_group_receiving_openids(
     group_id: i64,
     db_pool: &PgPool,
-) -> Result<Vec<String>, CustomError> {
-    // 查询组内 role='RECEIVING' 的用户 open_id
-    // 注意：这里使用 users 表的 role 字段，也可以考虑 association_group_members 的 role_in_group
-    // 根据需求描述 "receiving 用户"，假设是指用户的全局角色或组内角色。
-    // 这里使用 users 表的 role 字段更符合 "Ordering" / "Receiving" 的 persona 划分。
+) -> Result<Vec<PushTarget>, CustomError> {
+    // 查询组内 role='RECEIVING' 的用户
     let rows = sqlx::query(
-        "SELECT u.open_id
+        "SELECT u.open_id, u.push_id
          FROM association_group_members agm
          JOIN users u ON agm.user_id = u.user_id
-         WHERE agm.group_id = $1 AND u.role = 'RECEIVING' AND u.open_id IS NOT NULL"
+         WHERE agm.group_id = $1 AND u.role = 'RECEIVING'"
     )
     .bind(group_id)
     .fetch_all(db_pool)
     .await?;
 
-    let mut ids = Vec::new();
+    let mut targets = Vec::new();
     for r in rows {
-        if let Ok(Some(openid)) = r.try_get::<Option<String>, _>("open_id") {
-            if !openid.is_empty() {
-                ids.push(openid);
+        // 优先 push_id
+        let push_id: Option<String> = r.try_get("push_id").ok().flatten();
+        if let Some(pid) = push_id {
+            if !pid.is_empty() {
+                targets.push(PushTarget {
+                    openid: pid,
+                    is_official: true,
+                });
+                continue;
+            }
+        }
+
+        let open_id: Option<String> = r.try_get("open_id").ok().flatten();
+        if let Some(oid) = open_id {
+            if !oid.is_empty() {
+                targets.push(PushTarget {
+                    openid: oid,
+                    is_official: false,
+                });
             }
         }
     }
-    Ok(ids)
+    Ok(targets)
 }
 
 fn status_to_cn(s: OrderStatusEnum) -> &'static str {

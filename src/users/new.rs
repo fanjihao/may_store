@@ -3,6 +3,7 @@ use std::sync::Arc;
 use ntex::web::{ types::{ Json, State }, Responder, HttpResponse };
 
 use crate::users::hash_password;
+use crate::utils::validate_username;
 use crate::{
     errors::CustomError,
     models::users::{ GenderEnum, LoginMethodEnum, RegisterInput, UserRoleEnum },
@@ -28,6 +29,8 @@ pub async fn register(
     if data.username.is_empty() || data.password.is_empty() {
         return Err(CustomError::BadRequest("缺少账号或密码".into()));
     }
+
+    validate_username(&data.username).map_err(|e| CustomError::BadRequest(e.to_string()))?;
 
     // 检查是否已存在
     let exists_row = sqlx

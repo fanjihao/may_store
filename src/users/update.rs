@@ -6,6 +6,7 @@ use ntex::web::{
 };
 
 use crate::users::{hash_password, verify_password};
+use crate::utils::{validate_nickname, validate_username};
 use crate::{
     errors::CustomError,
     models::users::{GenderEnum, UserPublic, UserRecord, UserToken},
@@ -61,6 +62,7 @@ pub async fn change_info(
     };
 
     if let Some(new_username) = &data.new_username {
+        validate_username(new_username).map_err(|e| CustomError::BadRequest(e.to_string()))?;
         // 检查新用户名是否已存在
         let exists_row = sqlx::query("SELECT COUNT(*) FROM users WHERE username = $1")
             .bind(new_username)
@@ -78,6 +80,9 @@ pub async fn change_info(
             .await?;
         current_username = new_username.clone();
     } else if data.avatar.is_some() || data.gender.is_some() || data.birthday.is_some() || data.nick_name.is_some() {
+        if let Some(nick) = &data.nick_name {
+            validate_nickname(nick).map_err(|e| CustomError::BadRequest(e.to_string()))?;
+        }
         sqlx::query("UPDATE users SET avatar = COALESCE($2, avatar), gender = COALESCE($3, gender), birthday = COALESCE($4, birthday), nick_name = COALESCE($5, nick_name) WHERE username = $1")
             .bind(&current_username)
             .bind(&data.avatar)

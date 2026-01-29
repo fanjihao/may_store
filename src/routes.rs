@@ -189,6 +189,10 @@ pub fn route(_state: Arc<AppState>, cfg: &mut web::ServiceConfig) {
                 web::get().to(wx::verify::wx_sign_verify),
             )
             .route(
+                "/sign-verify",
+                web::post().to(wx::verify::wx_offical_received),
+            )
+            .route(
                 "/templates",
                 web::get().to(wx::template::get_templates),
             ),

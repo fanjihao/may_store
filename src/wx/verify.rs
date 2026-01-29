@@ -17,7 +17,7 @@ use crate::{
 #[utoipa::path(
     get,
     path = "/wx/sign-verify",
-    tag = "微信小程序",
+    tag = "微信",
     summary = "服务器验证",
     params(Offical),
     responses(
@@ -55,6 +55,17 @@ pub async fn wx_sign_verify(data: Query<Offical>) -> Result<String, CustomError>
 }
 
 // 接收消息
+#[utoipa::path(
+    post,
+    path = "/wx/sign-verify",
+    tag = "微信",
+    summary = "接收消息",
+    request_body = String,
+    responses(
+        (status = 200, body = String),
+        (status = 400, body = CustomError)
+    )
+)]
 pub async fn wx_offical_received(
     data: String,
     state: State<Arc<AppState>>,
@@ -62,12 +73,11 @@ pub async fn wx_offical_received(
     let db_pool = &state.clone().db_pool;
 
     fetch_set_access_token().await?;
-    let xml: Xml = from_str(&data).unwrap();
+    let xml: Xml = from_str(&data).map_err(|e| {
+        CustomError::BadRequest(format!("XML解析失败: {}", e))
+    })?;
     let mut already_reply = false;
     let from_user_name = xml.from_user_name.unwrap_or_default();
-    // let msg_type = xml.msg_type.unwrap_or_default();
-    // let event = xml.event.unwrap_or_default();
-    // let event_key = xml.event_key.unwrap_or_default();
     let content = xml.content.unwrap_or_default();
 
     if content.starts_with("绑定") && !already_reply {
@@ -126,11 +136,6 @@ pub async fn wx_offical_received(
             Err(_) => (),
         };
     }
-    // // 点击菜单事件
-    // if msg_type == "event".to_string() && event == "CLICK".to_string() && !already_reply {
-    //     if event_key == "BIND_PUSH_ID" {
-    //     }
-    // }
     Ok("".to_string())
 }
 
