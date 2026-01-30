@@ -225,6 +225,7 @@ CREATE TABLE ingredients (
     calories INT DEFAULT 0,
     description TEXT,
     icon VARCHAR(256),
+    sort INT DEFAULT 0,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     UNIQUE (name, group_id)
@@ -237,6 +238,7 @@ COMMENT ON COLUMN ingredients.unit IS '计量单位（如：克、斤、个）';
 COMMENT ON COLUMN ingredients.calories IS '每100g的卡路里';
 COMMENT ON COLUMN ingredients.description IS '食材描述/说明';
 COMMENT ON COLUMN ingredients.icon IS '食材图标URL';
+COMMENT ON COLUMN ingredients.sort IS '排序值-越大越靠前';
 COMMENT ON COLUMN ingredients.created_at IS '创建时间';
 COMMENT ON COLUMN ingredients.updated_at IS '更新时间';
 CREATE INDEX idx_ingredient_group ON ingredients(group_id);
