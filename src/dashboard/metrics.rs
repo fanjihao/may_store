@@ -336,6 +336,7 @@ pub async fn get_date_foods(
         WHERE o.user_id = $1
           AND o.goal_time >= $2
           AND o.goal_time < $2 + INTERVAL '1 day'
+          AND o.status NOT IN ('CANCELLED', 'EXPIRED')
         GROUP BY f.food_id, f.food_name, f.food_photo, f.ingredients, f.steps, t.tag_name, o.goal_time, o.status
         ORDER BY o.goal_time, f.food_id
         "#,

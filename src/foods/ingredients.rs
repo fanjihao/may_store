@@ -49,10 +49,10 @@ pub async fn list_ingredients(
     let offset = query.offset;
 
     let sql = r#"
-        SELECT ingredient_id, name, group_id, unit, calories, description, icon, created_at, updated_at
+        SELECT ingredient_id, name, group_id, unit, calories, description, icon, sort, created_at, updated_at
         FROM ingredients
         WHERE group_id = $1
-        ORDER BY name ASC
+        ORDER BY sort DESC, name ASC
         LIMIT $3 OFFSET $4
     "#;
 
@@ -72,6 +72,7 @@ pub async fn list_ingredients(
         calories: r.calories,
         description: r.description,
         icon: r.icon,
+        sort: r.sort,
     }).collect();
 
     Ok(HttpResponse::Ok().json(&list))
@@ -94,7 +95,7 @@ pub async fn get_ingredient(
     let id = *id;
 
     let row = sqlx::query_as::<_, IngredientRecord>(
-        "SELECT ingredient_id, name, group_id, unit, calories, description, icon, created_at, updated_at FROM ingredients WHERE ingredient_id=$1"
+        "SELECT ingredient_id, name, group_id, unit, calories, description, icon, sort, created_at, updated_at FROM ingredients WHERE ingredient_id=$1"
     )
     .bind(id)
     .fetch_optional(db)
@@ -110,6 +111,7 @@ pub async fn get_ingredient(
                 calories: r.calories,
                 description: r.description,
                 icon: r.icon,
+                sort: r.sort,
             };
             Ok(HttpResponse::Ok().json(&out))
         }
@@ -136,9 +138,9 @@ pub async fn create_ingredient(
     let group_id = data.group_id.or(user_token.user.as_ref().and_then(|u| u.group_id));
 
     let rec = sqlx::query_as::<_, IngredientRecord>(
-        r#"INSERT INTO ingredients (name, group_id, unit, calories, description, icon)
-           VALUES ($1, $2, $3, $4, $5, $6)
-           RETURNING ingredient_id, name, group_id, unit, calories, description, icon, created_at, updated_at"#
+        r#"INSERT INTO ingredients (name, group_id, unit, calories, description, icon, sort)
+           VALUES ($1, $2, $3, $4, $5, $6, $7)
+           RETURNING ingredient_id, name, group_id, unit, calories, description, icon, sort, created_at, updated_at"#
     )
     .bind(&data.name)
     .bind(group_id)
@@ -146,6 +148,7 @@ pub async fn create_ingredient(
     .bind(data.calories)
     .bind(data.description.as_ref())
     .bind(data.icon.as_ref())
+    .bind(data.sort.unwrap_or(0))
     .fetch_one(db)
     .await?;
 
@@ -157,6 +160,7 @@ pub async fn create_ingredient(
         calories: rec.calories,
         description: rec.description,
         icon: rec.icon,
+        sort: rec.sort,
     };
 
     Ok(HttpResponse::Created().json(&out))
@@ -197,9 +201,10 @@ pub async fn update_ingredient(
                calories = COALESCE($4, calories),
                description = COALESCE($5, description),
                icon = COALESCE($6, icon),
+               sort = COALESCE($7, sort),
                updated_at = NOW()
            WHERE ingredient_id = $1
-           RETURNING ingredient_id, name, group_id, unit, calories, description, icon, created_at, updated_at"#
+           RETURNING ingredient_id, name, group_id, unit, calories, description, icon, sort, created_at, updated_at"#
     )
     .bind(id)
     .bind(data.name.as_ref())
@@ -207,6 +212,7 @@ pub async fn update_ingredient(
     .bind(data.calories)
     .bind(data.description.as_ref())
     .bind(data.icon.as_ref())
+    .bind(data.sort)
     .fetch_one(db)
     .await?;
 
@@ -218,6 +224,7 @@ pub async fn update_ingredient(
         calories: rec.calories,
         description: rec.description,
         icon: rec.icon,
+        sort: rec.sort,
     };
 
     Ok(HttpResponse::Ok().json(&out))
@@ -249,4 +256,59 @@ pub async fn delete_ingredient(
     }
 
     Ok(HttpResponse::NoContent())
+}
+
+use crate::models::foods::BatchIngredientSortInput;
+
+#[utoipa::path(
+    post,
+    path = "/ingredients/sort",
+    tag = "食材",
+    request_body = BatchIngredientSortInput,
+    responses((status = 200, body = String)),
+    security(("cookie_auth" = []))
+)]
+pub async fn update_ingredients_sort(
+    _user_token: crate::models::users::UserToken,
+    state: State<Arc<AppState>>,
+    data: Json<BatchIngredientSortInput>,
+) -> Result<impl Responder, CustomError> {
+    let db = &state.db_pool;
+    let items = &data.items;
+
+    if items.is_empty() {
+        return Ok(HttpResponse::Ok().body("ok"));
+    }
+
+    let mut tx = db.begin().await?;
+
+    // 使用 QueryBuilder 动态构建批量更新语句
+    // UPDATE ingredients SET sort = CASE ingredient_id WHEN 1 THEN 10 WHEN 2 THEN 20 ELSE sort END WHERE ingredient_id IN (1, 2)
+    use sqlx::QueryBuilder;
+
+    let mut qb: QueryBuilder<sqlx::Postgres> = QueryBuilder::new("UPDATE ingredients SET sort = CASE ingredient_id ");
+    let mut ids = Vec::new();
+
+    for item in items {
+        qb.push("WHEN ");
+        qb.push_bind(item.ingredient_id);
+        qb.push(" THEN ");
+        qb.push_bind(item.sort);
+        qb.push(" ");
+        ids.push(item.ingredient_id);
+    }
+
+    qb.push("ELSE sort END WHERE ingredient_id IN (");
+
+    let mut separated = qb.separated(", ");
+    for id in ids {
+        separated.push_bind(id);
+    }
+    separated.push_unseparated(")");
+
+    qb.build().execute(&mut *tx).await?;
+
+    tx.commit().await?;
+
+    Ok(HttpResponse::Ok().body("ok"))
 }

@@ -40,7 +40,7 @@ pub async fn update_food(
     };
 
     // 权限：
-    // - RECEIVING 自主创建（RECEIVING_CREATE）：仅允许本人或管理员修改
+    // - RECEIVING 自主创建（RECEIVING_CREATE）：允许团队成员或管理员修改
     // - ORDERING 申请（ORDERING_APPLY）：允许 RECEIVING 审核，但禁止自审（同一账号切角色也不行）
     let role: Option<String> = sqlx::query_scalar("SELECT role::text FROM users WHERE user_id=$1")
         .bind(token.user_id as i64)
@@ -53,8 +53,20 @@ pub async fn update_food(
     let is_receiving = role == "RECEIVING";
     let uid = token.user_id as i64;
 
+    // 检查是否为团队成员
+    let is_team_member = if let Some(gid) = rec.group_id {
+        let member: Option<i32> = sqlx::query_scalar("SELECT 1 FROM association_group_members WHERE user_id=$1 AND group_id=$2")
+            .bind(uid)
+            .bind(gid)
+            .fetch_optional(&mut *tx)
+            .await?;
+        member.is_some()
+    } else {
+        false
+    };
+
     let can_update = match rec.submit_role {
-        SubmitRoleEnum::ReceivingCreate => is_admin || rec.created_by == uid,
+        SubmitRoleEnum::ReceivingCreate => is_admin || is_team_member,
         SubmitRoleEnum::OrderingApply => {
             is_admin || rec.created_by == uid || (is_receiving && rec.created_by != uid)
         }

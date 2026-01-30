@@ -103,6 +103,7 @@ pub struct IngredientRecord {
     pub calories: Option<i32>,
     pub description: Option<String>,
     pub icon: Option<String>,
+    pub sort: Option<i32>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -118,6 +119,7 @@ pub struct IngredientOut {
     pub calories: Option<i32>,
     pub description: Option<String>,
     pub icon: Option<String>,
+    pub sort: Option<i32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
@@ -319,6 +321,7 @@ pub struct IngredientCreateInput {
     pub calories: Option<i32>,
     pub description: Option<String>,
     pub icon: Option<String>,
+    pub sort: Option<i32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
@@ -331,6 +334,21 @@ pub struct IngredientUpdateInput {
     pub calories: Option<i32>,
     pub description: Option<String>,
     pub icon: Option<String>,
+    pub sort: Option<i32>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct IngredientSortItem {
+    #[serde(rename = "ingredientId")]
+    pub ingredient_id: i64,
+    pub sort: i32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct BatchIngredientSortInput {
+    pub items: Vec<IngredientSortItem>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]

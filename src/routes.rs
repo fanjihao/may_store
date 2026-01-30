@@ -109,6 +109,7 @@ pub fn route(_state: Arc<AppState>, cfg: &mut web::ServiceConfig) {
         web::scope("/ingredients")
             .route("", web::get().to(foods::ingredients::list_ingredients))
             .route("", web::post().to(foods::ingredients::create_ingredient))
+            .route("/sort", web::post().to(foods::ingredients::update_ingredients_sort))
             .route("/{id}", web::get().to(foods::ingredients::get_ingredient))
             .route(
                 "/{id}",
