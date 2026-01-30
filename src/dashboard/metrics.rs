@@ -1,11 +1,23 @@
-use crate::{errors::CustomError, models::dashboard::{DateFoodOut, DateFoodsResponse, DateQuery, JourneyOrderOut, OrderStatsOut, PointsJourneyOut, TodayOrderEntryOut, TodayOrdersResponse, TopFoodOrderOut, TopFoodRankingResponse, WeekDateInfo, WeekOrderDatesOut}, models::users::UserToken, AppState};
+use crate::{
+    errors::CustomError,
+    models::dashboard::{
+        DateFoodOut, DateFoodsResponse, DateQuery, JourneyOrderOut, OrderStatsOut,
+        PointsJourneyOut, TodayOrderEntryOut, TodayOrdersResponse, TopFoodOrderOut,
+        TopFoodRankingResponse, WeekDateInfo, WeekOrderDatesOut,
+    },
+    models::users::UserToken,
+    AppState,
+};
 use chrono::{Datelike, Local, NaiveDate};
 use ntex::web::{
     types::{Query, State},
     HttpResponse, Responder,
 };
 use sqlx::Row;
-use std::sync::Arc;
+use std::{
+    collections::{HashMap, HashSet},
+    sync::Arc,
+};
 
 // TopFoodOrderOut, TopFoodRankingResponse, etc. are now in models::dashboard
 
@@ -26,10 +38,11 @@ pub async fn get_top_food_orders(
         .fetch_all(db).await?;
     if rows.is_empty() {
         // 没有订单：随机抽取菜品
-        let random_rows =
-            sqlx::query("SELECT food_id, food_name, food_photo FROM foods ORDER BY random() LIMIT 5")
-                .fetch_all(db)
-                .await?;
+        let random_rows = sqlx::query(
+            "SELECT food_id, food_name, food_photo FROM foods ORDER BY random() LIMIT 5",
+        )
+        .fetch_all(db)
+        .await?;
         if random_rows.is_empty() {
             return Ok(HttpResponse::Ok().json(&TopFoodRankingResponse {
                 list: vec![],
@@ -85,7 +98,9 @@ pub async fn get_my_today_orders(
     let mut entries: Vec<TodayOrderEntryOut> = rows
         .into_iter()
         .map(|r| {
-            let category: String = r.get::<Option<String>, _>("tag_name").unwrap_or("其他".to_string());
+            let category: String = r
+                .get::<Option<String>, _>("tag_name")
+                .unwrap_or("其他".to_string());
             // ARRAY_AGG returns Value; attempt to treat as Vec<String>
             let names_val: serde_json::Value = r.get("names");
             let foods_text = names_val
@@ -233,7 +248,9 @@ pub async fn get_week_order_dates(
 
     // 查询本周有订单的日期
     use chrono::{TimeZone, Utc};
-    let monday_at_time = Utc.with_ymd_and_hms(monday.year(), monday.month(), monday.day(), 0, 0, 0).unwrap();
+    let monday_at_time = Utc
+        .with_ymd_and_hms(monday.year(), monday.month(), monday.day(), 0, 0, 0)
+        .unwrap();
     let order_dates = sqlx::query!(
         r#"
         SELECT DATE(goal_time)::date as order_date, COUNT(*)::int as cnt
@@ -249,10 +266,8 @@ pub async fn get_week_order_dates(
     .fetch_all(db)
     .await?;
 
-    let order_date_set: std::collections::HashSet<NaiveDate> = order_dates
-        .iter()
-        .filter_map(|r| r.order_date)
-        .collect();
+    let order_date_set: std::collections::HashSet<NaiveDate> =
+        order_dates.iter().filter_map(|r| r.order_date).collect();
 
     let mut week_dates: Vec<WeekDateInfo> = Vec::new();
     for i in 0..7 {
@@ -302,7 +317,7 @@ pub async fn get_date_foods(
     // 如果没有提供日期，默认今天
     let target_date = query.date.unwrap_or_else(|| Local::now().date_naive());
 
-    // 查询当天订单中的菜品（去重）
+    // 查询当天订单中的菜品（去重，含时间）
     let rows = sqlx::query(
         r#"
         SELECT
@@ -311,15 +326,18 @@ pub async fn get_date_foods(
             f.food_photo,
             f.ingredients,
             f.steps,
-            t.tag_name
+            t.tag_name,
+            o.goal_time,
+            o.status
         FROM orders o
         JOIN order_items oi ON o.order_id = oi.order_id
         JOIN foods f ON oi.food_id = f.food_id
         LEFT JOIN tags t ON f.tag_id = t.tag_id
         WHERE o.user_id = $1
-          AND DATE(o.goal_time) = $2
-        GROUP BY f.food_id, f.food_name, f.food_photo, f.ingredients, f.steps, t.tag_name
-        ORDER BY f.food_id
+          AND o.goal_time >= $2
+          AND o.goal_time < $2 + INTERVAL '1 day'
+        GROUP BY f.food_id, f.food_name, f.food_photo, f.ingredients, f.steps, t.tag_name, o.goal_time, o.status
+        ORDER BY o.goal_time, f.food_id
         "#,
     )
     .bind(user.user_id as i64)
@@ -327,15 +345,105 @@ pub async fn get_date_foods(
     .fetch_all(db)
     .await?;
 
-    let foods_list: Vec<DateFoodOut> = rows
-        .into_iter()
-        .map(|r| DateFoodOut {
+    // 中间结构，避免二次解析 JSON
+    struct IntermediateRow {
+        food_id: i64,
+        food_name: String,
+        food_photo: Option<String>,
+        steps: Option<String>,
+        tag_name: Option<String>,
+        goal_time: Option<chrono::DateTime<chrono::Utc>>,
+        status: crate::models::orders::OrderStatusEnum,
+        ingredient_ids: Vec<i64>,
+    }
+
+    let mut intermediates = Vec::with_capacity(rows.len());
+    let mut all_ingredient_ids: HashSet<i64> = HashSet::new();
+
+    for r in rows {
+        // 解析 ingredients
+        let mut ids = Vec::new();
+        if let Ok(ing_str) = r.try_get::<String, _>("ingredients") {
+            // 尝试解析为 JSON 数组 (Vec<i64> 或 Vec<String>)
+            if let Ok(parsed) = serde_json::from_str::<Vec<i64>>(&ing_str) {
+                ids = parsed;
+            } else if let Ok(parsed_strs) = serde_json::from_str::<Vec<String>>(&ing_str) {
+                for s in parsed_strs {
+                    if let Ok(id) = s.parse::<i64>() {
+                        ids.push(id);
+                    }
+                }
+            } else {
+                 // 尝试直接解析为单个 ID (例如 "2")，或逗号分隔的字符串
+                 // 先尝试解析为逗号分隔的字符串
+                 if ing_str.contains(',') {
+                     for part in ing_str.split(',') {
+                         if let Ok(id) = part.trim().parse::<i64>() {
+                             ids.push(id);
+                         }
+                     }
+                 } else if let Ok(single_id) = ing_str.parse::<i64>() {
+                     // 尝试作为单个整数
+                     ids.push(single_id);
+                 }
+            }
+        }
+        all_ingredient_ids.extend(ids.iter().cloned());
+
+        // 直接读取枚举类型
+        let status: crate::models::orders::OrderStatusEnum = r.get("status");
+
+        intermediates.push(IntermediateRow {
             food_id: r.get("food_id"),
             food_name: r.get("food_name"),
             food_photo: r.try_get("food_photo").ok(),
-            ingredients: r.try_get("ingredients").ok(),
             steps: r.try_get("steps").ok(),
             tag_name: r.try_get("tag_name").ok(),
+            goal_time: r.try_get("goal_time").ok(),
+            status,
+            ingredient_ids: ids,
+        });
+    }
+
+    // 批量查询食材完整记录
+    let ingredient_map: HashMap<i64, crate::models::foods::IngredientRecord> =
+        if !all_ingredient_ids.is_empty() {
+            let ids_vec: Vec<i64> = all_ingredient_ids.into_iter().collect();
+            let ing_rows = sqlx::query_as::<_, crate::models::foods::IngredientRecord>(
+            "SELECT ingredient_id, name, group_id, unit, calories, description, icon, created_at, updated_at FROM ingredients WHERE ingredient_id = ANY($1)"
+        )
+        .bind(&ids_vec)
+        .fetch_all(db)
+        .await?;
+
+            ing_rows
+                .into_iter()
+                .map(|r| (r.ingredient_id, r))
+                .collect()
+        } else {
+            HashMap::new()
+        };
+
+    let foods_list: Vec<DateFoodOut> = intermediates
+        .into_iter()
+        .map(|row| {
+            let mut ingredients_vec = Vec::new();
+            for id in row.ingredient_ids {
+                if let Some(record) = ingredient_map.get(&id) {
+                    ingredients_vec.push(record.clone());
+                }
+            }
+
+            DateFoodOut {
+                food_id: row.food_id,
+                food_name: row.food_name,
+                food_photo: row.food_photo,
+                ingredients: ingredients_vec,
+                steps: row.steps,
+                tag_name: row.tag_name,
+                reservation_time: row.goal_time,
+                status: row.status,
+            }
         })
         .collect();
 

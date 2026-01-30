@@ -1,6 +1,8 @@
 use chrono::{DateTime, NaiveDate, Utc};
 use serde::{Deserialize, Serialize};
 
+use crate::models::{foods::IngredientRecord, orders::OrderStatusEnum};
+
 /// 组活动查询参数
 #[derive(Debug, Deserialize, utoipa::IntoParams)]
 #[serde(rename_all = "camelCase")]
@@ -121,9 +123,11 @@ pub struct DateFoodOut {
     pub food_id: i64,
     pub food_name: String,
     pub food_photo: Option<String>,
-    pub ingredients: Option<String>,
+    pub ingredients: Vec<IngredientRecord>,
     pub steps: Option<String>,
     pub tag_name: Option<String>,
+    pub reservation_time: Option<DateTime<Utc>>,
+    pub status: OrderStatusEnum,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
