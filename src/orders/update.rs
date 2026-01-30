@@ -34,7 +34,7 @@ pub async fn update_order_status(
 
     // 当前订单
     let current: Option<OrderRecord> = sqlx::query_as::<_, OrderRecord>(
-        "SELECT order_id, user_id, is_guest, guest_id, group_id, status, goal_time, points_cost, points_reward, cancel_reason, reject_reason, last_status_change_at, created_at, updated_at FROM orders WHERE order_id=$1 FOR UPDATE"
+        "SELECT order_id, user_id, is_guest, guest_id, group_id, status, goal_time, remark, points_reward, cancel_reason, reject_reason, last_status_change_at, created_at, updated_at FROM orders WHERE order_id=$1 FOR UPDATE"
     )
     .bind(data.order_id)
     .fetch_optional(&mut *tx)

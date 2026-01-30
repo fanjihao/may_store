@@ -49,6 +49,7 @@ use crate::{foods, game_im, models, models::dashboard, orders, users};
         foods::ingredients::create_ingredient,
         foods::ingredients::update_ingredient,
         foods::ingredients::delete_ingredient,
+        foods::ingredients::update_ingredients_sort,
         // 订单相关（新结构）
         orders::new::create_order,
         orders::update::update_order_status,

@@ -52,7 +52,7 @@ pub async fn list_ingredients(
         SELECT ingredient_id, name, group_id, unit, calories, description, icon, sort, created_at, updated_at
         FROM ingredients
         WHERE group_id = $1
-        ORDER BY sort DESC, name ASC
+        ORDER BY sort ASC, name ASC
         LIMIT $3 OFFSET $4
     "#;
 

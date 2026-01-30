@@ -30,7 +30,7 @@ pub async fn get_orders(
     let db = &state.db_pool;
     // 使用 QueryBuilder 动态构建过滤条件
     let mut qb = sqlx::QueryBuilder::<sqlx::Postgres>::new(
-        "SELECT o.order_id, o.user_id, o.guest_id, o.group_id, o.status, o.goal_time, o.points_cost, o.points_reward, o.cancel_reason, o.reject_reason, o.last_status_change_at, o.created_at, o.updated_at, \
+        "SELECT o.order_id, o.user_id, o.guest_id, o.group_id, o.status, o.goal_time, o.remark, o.points_reward, o.cancel_reason, o.reject_reason, o.last_status_change_at, o.created_at, o.updated_at, \
         (o.group_id IS NOT NULL AND m.user_id IS NULL) AS is_guest, \
         g.group_name, \
         ug.nick_name AS db_guest_nick_name, ug.avatar AS db_guest_avatar, \
@@ -88,7 +88,7 @@ pub async fn get_orders(
             group_id: row.get("group_id"),
             status: row.get::<OrderStatusEnum, _>("status"),
             goal_time: row.try_get("goal_time").ok(),
-            points_cost: row.get("points_cost"),
+            remark: row.get("remark"),
             points_reward: row.get("points_reward"),
             cancel_reason: row.try_get("cancel_reason").ok(),
             reject_reason: row.try_get("reject_reason").ok(),
@@ -164,7 +164,7 @@ pub async fn get_order_detail(
     let db = &state.db_pool;
     let row = sqlx
         ::query(
-            "SELECT o.order_id, o.user_id, o.guest_id, o.group_id, o.status, o.goal_time, o.points_cost, o.points_reward, o.cancel_reason, o.reject_reason, o.last_status_change_at, o.created_at, o.updated_at, \
+            "SELECT o.order_id, o.user_id, o.guest_id, o.group_id, o.status, o.goal_time, o.remark, o.points_reward, o.cancel_reason, o.reject_reason, o.last_status_change_at, o.created_at, o.updated_at, \
             (o.group_id IS NOT NULL AND m.user_id IS NULL) AS is_guest, \
             g.group_name, \
             ur.nick_name AS db_receiver_nick_name, ur.avatar AS db_receiver_avatar, \
@@ -189,7 +189,7 @@ pub async fn get_order_detail(
                     group_id: r.get("group_id"),
                     status: r.get::<OrderStatusEnum, _>("status"),
                     goal_time: r.try_get("goal_time").ok(),
-                    points_cost: r.get("points_cost"),
+                    remark: r.get("remark"),
                     points_reward: r.get("points_reward"),
                     cancel_reason: r.try_get("cancel_reason").ok(),
                     reject_reason: r.try_get("reject_reason").ok(),

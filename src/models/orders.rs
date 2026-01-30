@@ -26,7 +26,7 @@ pub struct OrderRecord {
     pub group_id: Option<i64>,
     pub status: OrderStatusEnum,
     pub goal_time: Option<DateTime<Utc>>,
-    pub points_cost: i32,
+    pub remark: Option<String>,
     pub points_reward: i32,
     pub cancel_reason: Option<String>,
     pub reject_reason: Option<String>,
@@ -65,7 +65,7 @@ pub struct OrderCreateInput {
     pub invite_code: Option<String>,
     pub goal_time: Option<DateTime<Utc>>,
     pub items: Vec<OrderItemCreateInput>,
-    pub points_cost: Option<i32>,
+    pub remark: Option<String>,
     pub points_reward: Option<i32>, // 预设奖励（可由系统校验/忽略）
     pub is_guest: Option<bool>, // 是否访客订单（无组时为true）
 }
@@ -120,7 +120,7 @@ pub struct OrderOutNew {
     pub group_id: Option<i64>,
     pub status: OrderStatusEnum,
     pub goal_time: Option<DateTime<Utc>>,
-    pub points_cost: i32,
+    pub remark: Option<String>,
     pub points_reward: i32,
     pub cancel_reason: Option<String>,
     pub reject_reason: Option<String>,
@@ -153,7 +153,7 @@ impl From<(OrderRecord, Vec<OrderItemOut>, Vec<OrderStatusHistoryOut>)> for Orde
             group_id: r.group_id,
             status: r.status,
             goal_time: r.goal_time,
-            points_cost: r.points_cost,
+            remark: r.remark,
             points_reward: r.points_reward,
             cancel_reason: r.cancel_reason,
             reject_reason: r.reject_reason,

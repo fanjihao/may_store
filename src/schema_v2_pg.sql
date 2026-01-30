@@ -288,7 +288,7 @@ CREATE TABLE orders (
     SET NULL,
         status order_status_enum NOT NULL DEFAULT 'PENDING',
         goal_time TIMESTAMPTZ,
-        points_cost INT NOT NULL DEFAULT 0,
+        remark VARCHAR(255),
         points_reward INT NOT NULL DEFAULT 0,
         cancel_reason VARCHAR(255),
         reject_reason VARCHAR(255),
@@ -303,7 +303,7 @@ COMMENT ON COLUMN orders.guest_id IS '下单客人ID';
 COMMENT ON COLUMN orders.group_id IS '所属关联组ID';
 COMMENT ON COLUMN orders.status IS '订单状态';
 COMMENT ON COLUMN orders.goal_time IS '期望完成/消费时间';
-COMMENT ON COLUMN orders.points_cost IS '积分成本（预留）';
+COMMENT ON COLUMN orders.remark IS '下单备注';
 COMMENT ON COLUMN orders.points_reward IS '奖励积分（完成时可能发放）';
 COMMENT ON COLUMN orders.cancel_reason IS '取消原因';
 COMMENT ON COLUMN orders.reject_reason IS '拒绝原因';
