@@ -195,14 +195,36 @@ pub async fn get_tags(
     .bind(group_id)
     .fetch_all(db)
     .await?;
+
+    let tag_ids: Vec<i64> = rows.iter().map(|r| r.tag_id).collect();
+    let mut counts_map: std::collections::HashMap<i64, i64> = std::collections::HashMap::new();
+    if !tag_ids.is_empty() {
+        let count_rows = sqlx::query(
+            "SELECT tag_id, COUNT(*) as cnt FROM foods WHERE tag_id = ANY($1) AND is_del=0 GROUP BY tag_id"
+        )
+        .bind(&tag_ids)
+        .fetch_all(db)
+        .await?;
+
+        for r in count_rows {
+            let tid: i64 = r.get("tag_id");
+            let cnt: i64 = r.get("cnt");
+            counts_map.insert(tid, cnt);
+        }
+    }
+
     Ok(HttpResponse::Ok().json(
         &rows
             .into_iter()
-            .map(|r| FoodTagOut {
-                tag_id: r.tag_id,
-                tag_name: r.tag_name,
-                icon: r.icon,
-                sort: r.sort,
+            .map(|r| {
+                let cnt = counts_map.get(&r.tag_id).copied().unwrap_or(0);
+                FoodTagOut {
+                    tag_id: r.tag_id,
+                    tag_name: r.tag_name,
+                    icon: r.icon,
+                    sort: r.sort,
+                    food_count: Some(cnt),
+                }
             })
             .collect::<Vec<_>>(),
     ))

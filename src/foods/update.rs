@@ -272,6 +272,7 @@ pub async fn update_tag(
         tag_name: rec.tag_name,
         icon: rec.icon,
         sort: rec.sort,
+        food_count: None,
     }))
 }
 
@@ -304,7 +305,6 @@ pub async fn update_tags_sort(
     //   ELSE sort END
     // WHERE tag_id IN (1, 2)
 
-    let mut query_string = String::from("UPDATE tags SET sort = CASE tag_id ");
     let mut ids = Vec::new();
 
     // Using numbered parameters $1, $2, etc. is tricky with variable length.

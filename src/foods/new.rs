@@ -144,5 +144,6 @@ pub async fn create_tag(
         tag_name: rec.tag_name,
         icon: rec.icon,
         sort: rec.sort,
+        food_count: None,
     }))
 }

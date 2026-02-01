@@ -257,6 +257,7 @@ impl From<sqlx::Error> for CustomError {
                 Some(cow) if cow == "23502" => Self::bad_request(format!("必填字段不能为空: {message}")),
                 _ => {
                     log::debug!("Unhandled database error: {code:?} - {message}");
+                    println!("Unhandled database error: {code:?} - {message}");
                     Self::internal("数据库操作失败")
                 }
             }
@@ -275,6 +276,7 @@ impl From<sqlx::Error> for CustomError {
                 sqlx::Error::Protocol(_) => Self::internal("数据库协议错误"),
                 _ => {
                     log::debug!("Unhandled sqlx error: {e:?}");
+                    println!("Unhandled sqlx error: {e:?}");
                     Self::internal("数据库操作失败")
                 }
             }

@@ -294,7 +294,8 @@ CREATE TABLE orders (
         reject_reason VARCHAR(255),
         last_status_change_at TIMESTAMPTZ,
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    is_guest BOOLEAN NOT NULL DEFAULT FALSE
 );
 COMMENT ON TABLE orders IS '订单主表';
 COMMENT ON COLUMN orders.order_id IS '订单主键ID';
@@ -310,6 +311,7 @@ COMMENT ON COLUMN orders.reject_reason IS '拒绝原因';
 COMMENT ON COLUMN orders.last_status_change_at IS '最后状态变更时间';
 COMMENT ON COLUMN orders.created_at IS '创建时间';
 COMMENT ON COLUMN orders.updated_at IS '更新时间';
+COMMENT ON COLUMN orders.is_guest IS '是否是客人下单';
 CREATE INDEX idx_order_user ON orders(user_id);
 CREATE INDEX idx_order_guest ON orders(guest_id);
 CREATE INDEX idx_order_group_status ON orders(group_id, status);
