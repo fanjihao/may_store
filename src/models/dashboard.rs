@@ -143,4 +143,5 @@ pub struct DateFoodsResponse {
 pub struct DateQuery {
     /// 日期 (YYYY-MM-DD格式)
     pub date: Option<NaiveDate>,
+    pub group_id: Option<i64>,
 }

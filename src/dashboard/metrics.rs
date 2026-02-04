@@ -230,17 +230,19 @@ pub async fn get_points_journey(
     get,
     path = "/dashboard/week-order-dates",
     tag = "看板",
+    params(DateQuery),
     responses((status = 200, body = WeekOrderDatesOut)),
     security(("cookie_auth" = []))
 )]
 pub async fn get_week_order_dates(
     state: State<Arc<AppState>>,
     user: UserToken,
+    query: Query<DateQuery>,
 ) -> Result<impl Responder, CustomError> {
     let db = &state.db_pool;
 
-    // 获取本周的周一
-    let today = Local::now().date_naive();
+    // 获取本周的周一（基于查询日期或今天）
+    let today = query.date.unwrap_or_else(|| Local::now().date_naive());
     let day_of_week = today.weekday().num_days_from_monday(); // 0=周一, 6=周日
     let monday = today
         .checked_sub_days(chrono::Days::new(day_of_week as u64))
@@ -248,20 +250,25 @@ pub async fn get_week_order_dates(
 
     // 查询本周有订单的日期
     use chrono::{TimeZone, Utc};
-    let monday_at_time = Utc
+    let monday_at_time = Local
         .with_ymd_and_hms(monday.year(), monday.month(), monday.day(), 0, 0, 0)
-        .unwrap();
+        .unwrap()
+        .with_timezone(&Utc);
     let order_dates = sqlx::query!(
         r#"
-        SELECT DATE(goal_time)::date as order_date, COUNT(*)::int as cnt
+        SELECT
+            DATE(goal_time AT TIME ZONE 'Asia/Shanghai') AS order_date,
+            COUNT(*)::int AS cnt
         FROM orders
-        WHERE user_id = $1
-          AND goal_time >= $2
-          AND goal_time < $2 + INTERVAL '7 days'
-        GROUP BY DATE(goal_time)
+        WHERE (user_id = $1 OR ($3::bigint IS NOT NULL AND group_id = $3))
+            AND goal_time >= $2
+            AND goal_time <  $2 + INTERVAL '7 days'
+            AND status NOT IN ('CANCELLED', 'EXPIRED')
+            GROUP BY DATE(goal_time AT TIME ZONE 'Asia/Shanghai');
         "#,
         user.user_id as i64,
-        monday_at_time
+        monday_at_time,
+        query.group_id
     )
     .fetch_all(db)
     .await?;
@@ -318,8 +325,7 @@ pub async fn get_date_foods(
     let target_date = query.date.unwrap_or_else(|| Local::now().date_naive());
 
     // 查询当天订单中的菜品（去重，含时间）
-    let rows = sqlx::query(
-        r#"
+    let sql = r#"
         SELECT
             f.food_id,
             f.food_name,
@@ -333,18 +339,20 @@ pub async fn get_date_foods(
         JOIN order_items oi ON o.order_id = oi.order_id
         JOIN foods f ON oi.food_id = f.food_id
         LEFT JOIN tags t ON f.tag_id = t.tag_id
-        WHERE o.user_id = $1
+        WHERE (o.user_id = $1 OR ($3::bigint IS NOT NULL AND o.group_id = $3))
           AND o.goal_time >= $2
           AND o.goal_time < $2 + INTERVAL '1 day'
           AND o.status NOT IN ('CANCELLED', 'EXPIRED')
         GROUP BY f.food_id, f.food_name, f.food_photo, f.ingredients, f.steps, t.tag_name, o.goal_time, o.status
         ORDER BY o.goal_time, f.food_id
-        "#,
-    )
-    .bind(user.user_id as i64)
-    .bind(target_date)
-    .fetch_all(db)
-    .await?;
+        "#;
+
+    let rows = sqlx::query(sql)
+        .bind(user.user_id as i64)
+        .bind(target_date)
+        .bind(query.group_id)
+        .fetch_all(db)
+        .await?;
 
     // 中间结构，避免二次解析 JSON
     struct IntermediateRow {
@@ -375,18 +383,18 @@ pub async fn get_date_foods(
                     }
                 }
             } else {
-                 // 尝试直接解析为单个 ID (例如 "2")，或逗号分隔的字符串
-                 // 先尝试解析为逗号分隔的字符串
-                 if ing_str.contains(',') {
-                     for part in ing_str.split(',') {
-                         if let Ok(id) = part.trim().parse::<i64>() {
-                             ids.push(id);
-                         }
-                     }
-                 } else if let Ok(single_id) = ing_str.parse::<i64>() {
-                     // 尝试作为单个整数
-                     ids.push(single_id);
-                 }
+                // 尝试直接解析为单个 ID (例如 "2")，或逗号分隔的字符串
+                // 先尝试解析为逗号分隔的字符串
+                if ing_str.contains(',') {
+                    for part in ing_str.split(',') {
+                        if let Ok(id) = part.trim().parse::<i64>() {
+                            ids.push(id);
+                        }
+                    }
+                } else if let Ok(single_id) = ing_str.parse::<i64>() {
+                    // 尝试作为单个整数
+                    ids.push(single_id);
+                }
             }
         }
         all_ingredient_ids.extend(ids.iter().cloned());
@@ -411,16 +419,13 @@ pub async fn get_date_foods(
         if !all_ingredient_ids.is_empty() {
             let ids_vec: Vec<i64> = all_ingredient_ids.into_iter().collect();
             let ing_rows = sqlx::query_as::<_, crate::models::foods::IngredientRecord>(
-            "SELECT ingredient_id, name, group_id, unit, calories, description, icon, created_at, updated_at FROM ingredients WHERE ingredient_id = ANY($1)"
+            "SELECT ingredient_id, name, group_id, unit, calories, description, icon, sort, created_at, updated_at FROM ingredients WHERE ingredient_id = ANY($1)"
         )
         .bind(&ids_vec)
         .fetch_all(db)
         .await?;
 
-            ing_rows
-                .into_iter()
-                .map(|r| (r.ingredient_id, r))
-                .collect()
+            ing_rows.into_iter().map(|r| (r.ingredient_id, r)).collect()
         } else {
             HashMap::new()
         };
