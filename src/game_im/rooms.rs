@@ -12,7 +12,7 @@ use crate::AppState;
 #[utoipa::path(
     get,
     path = "/game/rooms",
-    tag = "小游戏",
+    tag = "游戏",
     summary = "小游戏大厅：获取房间列表（IM 群组列表）",
     responses((status = 200, body = ImRoomListOut), (status = 400, body = CustomError), (status = 401, body = CustomError)),
     security(("cookie_auth" = []))

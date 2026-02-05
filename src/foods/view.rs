@@ -1,10 +1,12 @@
 use crate::{
     errors::CustomError,
-    models::foods::{
-        BlindBoxDrawInput, BlindBoxDrawResultOut, BlindBoxFoodSnapshot, FoodFilterQuery, FoodOut,
-        FoodTagOut, FoodWithStatsRecord, MarkTypeEnum, TagRecord,
+    models::{
+        foods::{
+            BlindBoxDrawInput, BlindBoxDrawResultOut, BlindBoxFoodSnapshot, FoodFilterQuery,
+            FoodOut, FoodTagOut, FoodWithStatsRecord, MarkTypeEnum, TagRecord,
+        },
+        users::UserToken,
     },
-    models::users::UserToken,
     AppState,
 };
 use ntex::web::{
@@ -18,13 +20,7 @@ use std::sync::Arc;
 	get,
 	path = "/foods",
 	tag = "菜品",
-	params(
-		("keyword"=Option<String>, Query),
-		("food_status"=Option<String>, Query),
-		("apply_status"=Option<String>, Query),
-		("tag_id"=Option<i64>, Query, description="标签ID"),
-		("group_id"=Option<i64>, Query)
-	),
+	params(FoodFilterQuery),
 	responses((status = 200, body = Vec<FoodOut>)),
     security(("cookie_auth"=[]))
 )]
@@ -63,7 +59,14 @@ pub async fn get_foods(
     if q.only_active.unwrap_or(false) {
         qb.push(" AND f.food_status='NORMAL' AND f.apply_status='APPROVED'");
     }
-    qb.push(" ORDER BY f.created_at DESC LIMIT 100");
+
+    let limit = q.limit.clamp(1, 200);
+    let offset = q.offset;
+
+    qb.push(" ORDER BY f.created_at DESC LIMIT ")
+        .push_bind(limit)
+        .push(" OFFSET ")
+        .push_bind(offset);
     let rows: Vec<FoodWithStatsRecord> = qb.build_query_as().fetch_all(db).await?;
 
     // ===== 批量标签查询 =====
@@ -172,10 +175,8 @@ pub async fn get_food_detail(
 #[utoipa::path(
 	get,
 	path = "/food_tags",
-	tag = "菜品",
-    params(
-        ("group_id" = i64, Query, description = "团队ID")
-    ),
+	tag = "标签",
+    params(FoodFilterQuery),
 	responses((status = 200, body = Vec<FoodTagOut>)),
     security(("cookie_auth" = []))
 )]
@@ -234,19 +235,26 @@ pub async fn get_tags(
 	get,
 	path = "/foods/marks",
 	tag = "菜品",
+	params(FoodFilterQuery),
 	responses((status = 200, body = Vec<FoodOut>)),
 	security(("cookie_auth" = []))
 )]
 pub async fn get_marked_foods(
     token: UserToken,
     state: State<Arc<AppState>>,
+    q: Query<FoodFilterQuery>,
 ) -> Result<impl Responder, CustomError> {
     let db = &state.db_pool;
+    let limit = q.limit.clamp(1, 200);
+    let offset = q.offset;
+
     let rows: Vec<FoodWithStatsRecord> = sqlx::query_as(
         "SELECT f.food_id, f.food_name, f.food_photo, f.ingredients, f.steps, f.food_status, f.submit_role, f.apply_status, f.apply_remark, f.created_by, f.owner_user_id, f.group_id, f.approved_at, f.approved_by, f.is_del, f.created_at, f.updated_at, f.tag_id, fs.total_order_count, fs.completed_order_count, fs.last_order_time, fs.last_complete_time \
-         FROM foods f LEFT JOIN food_stats fs ON fs.food_id=f.food_id JOIN user_food_mark m ON f.food_id=m.food_id WHERE m.user_id=$1 AND m.mark_type='LIKE'"
+         FROM foods f LEFT JOIN food_stats fs ON fs.food_id=f.food_id JOIN user_food_mark m ON f.food_id=m.food_id WHERE m.user_id=$1 AND m.mark_type='LIKE' LIMIT $2 OFFSET $3"
     )
 	.bind(token.user_id as i64)
+	.bind(limit)
+	.bind(offset)
 	.fetch_all(db)
 	.await?;
     let mut out_list = Vec::new();

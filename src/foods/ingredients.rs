@@ -13,8 +13,8 @@ use std::sync::Arc;
 
 #[derive(Debug, serde::Deserialize, utoipa::IntoParams, utoipa::ToSchema)]
 #[serde(rename_all = "camelCase")]
+#[into_params(parameter_in = Query)]
 pub struct IngredientQuery {
-    #[serde(rename = "groupId")]
     pub group_id: Option<i64>,
     pub keyword: Option<String>,
     #[serde(default)]
@@ -27,12 +27,7 @@ pub struct IngredientQuery {
     get,
     path = "/ingredients",
     tag = "食材",
-    params(
-        ("groupId" = Option<i64>, Query, description = "组ID筛选"),
-        ("keyword" = Option<String>, Query, description = "搜索食材名称"),
-        ("limit" = i64, Query, description = "返回条数，默认50"),
-        ("offset" = i64, Query, description = "偏移量，默认0"),
-    ),
+    params(IngredientQuery),
     responses((status = 200, body = [IngredientOut])),
     security(("cookie_auth" = []))
 )]

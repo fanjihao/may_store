@@ -75,9 +75,15 @@ pub async fn get_orders(
     } else if query.expired_only.unwrap_or(false) {
         qb.push(" AND o.status IN ('EXPIRED', 'CANCELLED', 'REJECTED', 'SYSTEM_CLOSED') ");
     }
+
+    let limit = if query.limit == 0 { 50 } else { query.limit.clamp(1, 200) };
+    let offset = query.offset;
+
     qb.push(" ORDER BY o.created_at DESC ");
     qb.push(" LIMIT ");
-    qb.push_bind(query.limit.unwrap_or(50));
+    qb.push_bind(limit);
+    qb.push(" OFFSET ");
+    qb.push_bind(offset);
     let orders_rows = qb.build().fetch_all(db).await?;
     let mut out_list: Vec<OrderOutNew> = Vec::new();
     for row in orders_rows {

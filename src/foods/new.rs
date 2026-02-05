@@ -116,7 +116,7 @@ use crate::models::foods::TagCreateInput;
 #[utoipa::path(
 	post,
 	path = "/food_tags",
-	tag = "菜品",
+	tag = "标签",
 	request_body = TagCreateInput,
 	responses((status = 201, body = FoodTagOut)),
 	security(("cookie_auth" = []))

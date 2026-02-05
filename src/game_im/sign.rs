@@ -58,7 +58,7 @@ pub fn generate_user_sig(
 #[utoipa::path(
 	get,
 	path = "/im/usersig",
-	tag = "IM",
+	tag = "游戏",
 	summary = "获取当前登录用户的腾讯云 IM UserSig",
 	responses(
 		(status = 200, body = ImUserSigOut),

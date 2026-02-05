@@ -44,10 +44,12 @@ pub async fn get_wishes(
         qb.push_bind(cb);
     }
     qb.push(" ORDER BY w.created_at DESC ");
-    if let Some(limit) = query.limit {
-        qb.push(" LIMIT ");
-        qb.push_bind(limit);
-    }
+    let limit = if query.limit == 0 { 50 } else { query.limit.clamp(1, 200) };
+    let offset = query.offset;
+    qb.push(" LIMIT ");
+    qb.push_bind(limit);
+    qb.push(" OFFSET ");
+    qb.push_bind(offset);
     let query_final = qb.build();
     let rows = query_final.fetch_all(&state.db_pool).await?;
     let list: Vec<WishOut> = rows

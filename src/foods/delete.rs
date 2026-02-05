@@ -29,7 +29,7 @@ pub async fn delete_food(
 #[utoipa::path(
 	delete,
 	path = "/food_tags/{id}",
-	tag = "菜品",
+	tag = "标签",
 	params(("id"=i64, Path, description="标签ID")),
 	responses((status = 200, body = String)),
 	security(("cookie_auth" = []))

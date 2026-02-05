@@ -86,7 +86,7 @@ pub async fn update_wish(
     delete,
     path = "/wishes/{id}",
     tag = "心愿",
-    params(("id" = i64, description = "心愿ID")),
+    params(("id" = i64, Path, description = "心愿ID")),
     responses((status = 200, body = WishOut))
 )]
 pub async fn disable_wish(

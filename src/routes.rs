@@ -7,6 +7,29 @@ use ntex::web;
 use std::sync::Arc;
 
 pub fn route(_state: Arc<AppState>, cfg: &mut web::ServiceConfig) {
+    // API Documentation & Misc
+    cfg.service(web::scope("/api-doc/openapi.json").route("", web::get().to(openapi_json)))
+        .service(web::scope("/swagger-ui").route("/{tail:.*}", web::get().to(serve_swagger)))
+        .service(
+            web::scope("/upload-token").route("", web::get().to(upload::upload::get_qiniu_token)),
+        );
+
+    game_routes(cfg);
+    user_routes(cfg);
+    team_routes(cfg);
+    dish_routes(cfg);
+    tag_routes(cfg);
+    ingredient_routes(cfg);
+    order_routes(cfg);
+    rating_routes(cfg);
+    wish_routes(cfg);
+    checkin_routes(cfg);
+    wechat_routes(cfg);
+    dashboard_routes(cfg);
+}
+
+/// 游戏 (Game)
+fn game_routes(cfg: &mut web::ServiceConfig) {
     // Socket mode (self-hosted WebSocket)
     cfg.service(web::resource("/ws/game").route(web::get().to(game_ws::ws_game)));
     cfg.service(web::resource("/game/room-code").route(web::get().to(game_ws::get_room_code)));
@@ -23,69 +46,65 @@ pub fn route(_state: Arc<AppState>, cfg: &mut web::ServiceConfig) {
     cfg.service(
         web::resource("/game/rooms/{group_id}/vote").route(web::post().to(game_im::werewolf::vote)),
     );
+}
 
-    cfg.service(web::scope("/api-doc/openapi.json").route("", web::get().to(openapi_json)))
-        .service(web::scope("/swagger-ui").route("/{tail:.*}", web::get().to(serve_swagger)))
-        // 个人中心
-        .service(
-            // 注册
-            web::scope("/register").route("", web::post().to(users::new::register)),
-        )
-        .service(
-            // 登录
-            web::scope("/login").route("", web::post().to(users::view::login)),
-        )
-        .service(
-            // 用户
-            web::scope("/users")
-                .route("", web::get().to(users::view::get_current_info))
-                .route("", web::post().to(users::update::change_info))
-                .route("/is-register", web::get().to(users::view::is_register))
-                .route("/role-switch", web::post().to(users::role::switch_role))
-                .route("/checkin", web::post().to(users::checkin::daily_checkin))
-                .route(
-                    "/getInfoByUsername",
-                    web::get().to(users::view::get_user_info),
-                ),
-        )
-        .service(
-            // 关联
-            web::scope("/invitation")
-                .route("", web::get().to(users::invitation::get_invitation))
-                .route("", web::post().to(users::invitation::new_invitation))
-                .route(
-                    "/{id}",
-                    web::put().to(users::invitation::confirm_invitation),
-                )
-                .route(
-                    "/{id}",
-                    web::delete().to(users::invitation::cancel_invitation),
-                )
-                .route("/unbind", web::post().to(users::invitation::unbind_request))
-                .route(
-                    "/bind",
-                    web::post().to(users::invitation::bind_user_directly),
-                )
-                .route(
-                    "/group/{id}",
-                    web::get().to(users::invitation::get_group_info),
-                )
-                .route(
-                    "/groups/{group_id}",
-                    web::put().to(users::group_update::update_group),
-                ),
-        );
+/// 用户 (User)
+fn user_routes(cfg: &mut web::ServiceConfig) {
+    cfg.service(
+        // 注册
+        web::scope("/register").route("", web::post().to(users::new::register)),
+    )
+    .service(
+        // 登录
+        web::scope("/login").route("", web::post().to(users::view::login)),
+    )
+    .service(
+        // 用户
+        web::scope("/users")
+            .route("", web::get().to(users::view::get_current_info))
+            .route("", web::post().to(users::update::change_info))
+            .route("/is-register", web::get().to(users::view::is_register))
+            .route("/role-switch", web::post().to(users::role::switch_role))
+            .route(
+                "/getInfoByUsername",
+                web::get().to(users::view::get_user_info),
+            ),
+    );
+}
 
-    // 菜品相关新路由
+/// 团队 (Team)
+fn team_routes(cfg: &mut web::ServiceConfig) {
+    cfg.service(
+        // 关联
+        web::scope("/invitation")
+            .route("", web::get().to(users::invitation::get_invitation))
+            .route("", web::post().to(users::invitation::new_invitation))
+            .route("/{id}", web::put().to(users::invitation::confirm_invitation))
+            .route(
+                "/{id}",
+                web::delete().to(users::invitation::cancel_invitation),
+            )
+            .route("/unbind", web::post().to(users::invitation::unbind_request))
+            .route(
+                "/bind",
+                web::post().to(users::invitation::bind_user_directly),
+            )
+            .route("/group/{id}", web::get().to(users::invitation::get_group_info))
+            .route(
+                "/groups/{group_id}",
+                web::put().to(users::group_update::update_group),
+            ),
+    );
+}
+
+/// 菜品 (Dish)
+fn dish_routes(cfg: &mut web::ServiceConfig) {
     cfg.service(
         web::scope("/foods")
             .route("", web::post().to(foods::new::create_food))
             .route("", web::get().to(foods::view::get_foods))
             .route("/marks", web::get().to(foods::view::get_marked_foods))
-            .route(
-                "/blind_box/draw",
-                web::post().to(foods::view::draw_blind_box),
-            )
+            .route("/blind_box/draw", web::post().to(foods::view::draw_blind_box))
             .route("/mark", web::post().to(foods::update::mark_food))
             .route(
                 "/mark/{food_id}/{mark_type}",
@@ -95,6 +114,10 @@ pub fn route(_state: Arc<AppState>, cfg: &mut web::ServiceConfig) {
             .route("/{id}", web::put().to(foods::update::update_food))
             .route("/{id}", web::delete().to(foods::delete::delete_food)),
     );
+}
+
+/// 标签 (Tag)
+fn tag_routes(cfg: &mut web::ServiceConfig) {
     cfg.service(
         web::scope("/food_tags")
             .route("", web::post().to(foods::new::create_tag))
@@ -103,66 +126,82 @@ pub fn route(_state: Arc<AppState>, cfg: &mut web::ServiceConfig) {
             .route("/{id}", web::put().to(foods::update::update_tag))
             .route("/{id}", web::delete().to(foods::delete::delete_tag)),
     );
+}
 
-    // 食材相关路由
+/// 食材 (Ingredient)
+fn ingredient_routes(cfg: &mut web::ServiceConfig) {
     cfg.service(
         web::scope("/ingredients")
             .route("", web::get().to(foods::ingredients::list_ingredients))
             .route("", web::post().to(foods::ingredients::create_ingredient))
-            .route("/sort", web::post().to(foods::ingredients::update_ingredients_sort))
-            .route("/{id}", web::get().to(foods::ingredients::get_ingredient))
             .route(
-                "/{id}",
-                web::put().to(foods::ingredients::update_ingredient),
+                "/sort",
+                web::post().to(foods::ingredients::update_ingredients_sort),
             )
+            .route("/{id}", web::get().to(foods::ingredients::get_ingredient))
+            .route("/{id}", web::put().to(foods::ingredients::update_ingredient))
             .route(
                 "/{id}",
                 web::delete().to(foods::ingredients::delete_ingredient),
             ),
     );
+}
 
-    // 订单相关路由
+/// 订单 (Order)
+fn order_routes(cfg: &mut web::ServiceConfig) {
     cfg.service(
         web::scope("/orders")
             .route("", web::post().to(orders::new::create_order))
             .route("", web::get().to(orders::view::get_orders))
-            .route(
-                "/status",
-                web::put().to(orders::update::update_order_status),
-            )
+            .route("/status", web::put().to(orders::update::update_order_status))
             .route("/{id}", web::get().to(orders::view::get_order_detail))
             .route("/{id}", web::delete().to(orders::delete::delete_order)),
-    );
-    // 订单评分
-    cfg.service(
-        web::scope("/orders-rating")
-            .route(
-                "/{order_id}",
-                web::post().to(orders::rating::create_order_rating),
-            )
-            .route(
-                "/{order_id}",
-                web::get().to(orders::rating::get_order_rating),
-            ),
-    );
-    cfg.service(
+    )
+    .service(
         web::scope("/orders-incomplete")
             .route("/{id}", web::get().to(orders::view::get_incomplete_order)),
     );
+}
 
-    // 心愿相关路由
+/// 评分 (Rating)
+fn rating_routes(cfg: &mut web::ServiceConfig) {
+    cfg.service(
+        web::scope("/orders-rating")
+            .route("/{order_id}", web::post().to(orders::rating::create_order_rating))
+            .route("/{order_id}", web::get().to(orders::rating::get_order_rating)),
+    );
+}
+
+/// 心愿 (Wish)
+fn wish_routes(cfg: &mut web::ServiceConfig) {
     cfg.service(
         web::scope("/wishes")
             .route("", web::post().to(wishes::new::create_wish))
             .route("", web::get().to(wishes::view::get_wishes))
+            .route("", web::put().to(wishes::update::update_wish))
             .route("/{id}", web::get().to(wishes::view::get_wish_detail))
             .route("/{id}", web::delete().to(wishes::update::disable_wish)),
-    );
-    cfg.service(
+    )
+    .service(
         web::scope("/wish_claims")
             .route("", web::post().to(wishes::claim::claim_wish))
             .route("", web::get().to(wishes::claim::get_claim))
-            .route("/status", web::put().to(wishes::claim::update_wish_claim))
+            .route("/status", web::put().to(wishes::claim::update_wish_claim)),
+    );
+}
+
+/// 签到 (Check-in)
+fn checkin_routes(cfg: &mut web::ServiceConfig) {
+    cfg.service(
+        web::scope("/users").route("/checkin", web::post().to(users::checkin::daily_checkin)),
+    )
+    .service(
+        web::scope("/sign")
+            .route("", web::post().to(users::sign::sign_in))
+            .route("/info", web::get().to(users::sign::get_sign_info)),
+    )
+    .service(
+        web::scope("/wish_claims")
             .route(
                 "/{claim_id}/checkins",
                 web::post().to(wishes::checkin::create_wish_claim_checkin),
@@ -172,40 +211,25 @@ pub fn route(_state: Arc<AppState>, cfg: &mut web::ServiceConfig) {
                 web::get().to(wishes::checkin::list_wish_claim_checkins),
             ),
     );
-    cfg.service(
-        web::scope("/upload-token").route("", web::get().to(upload::upload::get_qiniu_token)),
-    );
+}
 
-    // 签到相关路由
-    cfg.service(
-        web::scope("/sign")
-            .route("", web::post().to(users::sign::sign_in))
-            .route("/info", web::get().to(users::sign::get_sign_info)),
-    );
-    // 微信服务器验证
+/// 微信 (WeChat)
+fn wechat_routes(cfg: &mut web::ServiceConfig) {
     cfg.service(
         web::scope("/wx")
-            .route(
-                "/sign-verify",
-                web::get().to(wx::verify::wx_sign_verify),
-            )
-            .route(
-                "/sign-verify",
-                web::post().to(wx::verify::wx_offical_received),
-            )
-            .route(
-                "/templates",
-                web::get().to(wx::template::get_templates),
-            ),
+            .route("/sign-verify", web::get().to(wx::verify::wx_sign_verify))
+            .route("/sign-verify", web::post().to(wx::verify::wx_offical_received))
+            .route("/templates", web::get().to(wx::template::get_templates)),
     );
+}
 
-    // 看板 / 组活动
+/// 看板 (Dashboard)
+fn dashboard_routes(cfg: &mut web::ServiceConfig) {
     cfg.service(web::scope("/groups").route(
         "/{group_id}/activities",
         web::get().to(dashboard::activities::get_group_activities),
-    ));
-    // 看板 / 综合指标
-    cfg.service(
+    ))
+    .service(
         web::scope("/dashboard")
             .route(
                 "/top-foods",
@@ -227,9 +251,6 @@ pub fn route(_state: Arc<AppState>, cfg: &mut web::ServiceConfig) {
                 "/week-order-dates",
                 web::get().to(dashboard::metrics::get_week_order_dates),
             )
-            .route(
-                "/date-foods",
-                web::get().to(dashboard::metrics::get_date_foods),
-            ),
+            .route("/date-foods", web::get().to(dashboard::metrics::get_date_foods)),
     );
 }

@@ -219,7 +219,7 @@ pub async fn unmark_food(
 #[utoipa::path(
 	put,
 	path = "/food_tags/{id}",
-	tag = "菜品",
+	tag = "标签",
 	request_body = TagUpdateInput,
 	params(("id" = i64, Path, description = "标签ID")),
 	responses((status = 200, body = FoodTagOut)),
@@ -279,7 +279,7 @@ pub async fn update_tag(
 #[utoipa::path(
 	post,
 	path = "/food_tags/sort",
-	tag = "菜品",
+	tag = "标签",
 	request_body = BatchTagSortInput,
 	responses((status = 200, body = String)),
 	security(("cookie_auth" = []))

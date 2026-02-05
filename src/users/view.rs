@@ -20,6 +20,7 @@ use ntex::web::{
 // removed unused imports
 
 use serde::Deserialize;
+use utoipa::IntoParams;
 
 // 已废弃的按参数查询用户方式，改为仅获取当前登录用户；旧结构移除。
 
@@ -132,7 +133,7 @@ pub async fn get_current_info(
     .await?;
     Ok(Json(rec.into()))
 }
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, IntoParams)]
 pub struct IsRegisterQuery {
     pub username: String,
 }
@@ -144,7 +145,7 @@ pub struct IsRegisterQuery {
     operation_id = "get_user_info",
     tag = "用户",
     summary = "根据用户名获取用户信息",
-    params(("username" = String, Query, description = "用户名")),
+    params(IsRegisterQuery),
     responses((status = 200, body = UserPublic), (status = 401, body = CustomError))
 )]
 pub async fn get_user_info(
@@ -172,7 +173,7 @@ pub async fn get_user_info(
     operation_id = "is_register",
     tag = "用户",
     summary = "判断用户名是否已注册",
-    params(("username" = String, Query, description = "用户名")),
+    params(IsRegisterQuery),
     responses((status = 200, body = IsRegisterResponse), (status = 400, body = CustomError))
 )]
 pub async fn is_register(

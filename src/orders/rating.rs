@@ -10,7 +10,7 @@ use std::sync::Arc;
 #[utoipa::path(
     post,
     path = "/orders-rating/{order_id}",
-    tag = "订单",
+    tag = "评分",
     params(("order_id" = i64, Path, description = "订单ID")),
     request_body = OrderRatingCreateInput,
     responses((status = 201, body = OrderRatingOut))
@@ -122,7 +122,7 @@ pub async fn create_order_rating(
 #[utoipa::path(
     get,
     path = "/orders-rating/{order_id}",
-    tag = "订单",
+    tag = "评分",
     params(("order_id" = i64, Path, description = "订单ID")),
     responses((status = 200, body = OrderRatingOut))
 )]

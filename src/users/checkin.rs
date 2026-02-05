@@ -14,7 +14,7 @@ const REF_TYPE_DAILY_CHECKIN: i16 = 3;
 #[utoipa::path(
     post,
     path = "/users/checkin",
-    tag = "用户",
+    tag = "签到",
     summary = "每日签到获取爱心积分",
     responses(
         (status = 201, body = DailyCheckinOut),

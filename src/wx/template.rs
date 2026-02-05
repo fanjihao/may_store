@@ -11,7 +11,7 @@ use crate::{
 #[utoipa::path(
     get,
     path = "/wx/templates",
-    tag = "微信小程序",
+    tag = "微信",
     summary = "获取订阅消息模板列表",
     responses(
         (status = 200, body = [WxSubscriptionTemplateOut], description = "获取成功")

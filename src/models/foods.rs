@@ -1,6 +1,6 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use utoipa::ToSchema;
+use utoipa::{IntoParams, ToSchema};
 
 // ================= New Schema Enums (PostgreSQL) =================
 // 为兼容新 schema_v1_pg.sql 中的枚举类型，添加对应 Rust 映射。
@@ -354,8 +354,9 @@ pub struct BatchIngredientSortInput {
     pub items: Vec<IngredientSortItem>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema, IntoParams)]
 #[serde(rename_all = "camelCase")]
+#[into_params(parameter_in = Query)]
 pub struct FoodFilterQuery {
     pub keyword: Option<String>,
     pub food_status: Option<FoodStatusEnum>,
@@ -366,6 +367,10 @@ pub struct FoodFilterQuery {
     pub group_id: Option<i64>,
     pub only_active: Option<bool>,
     pub created_by: Option<i64>,
+    #[serde(default)]
+    pub limit: i64,
+    #[serde(default)]
+    pub offset: i64,
 }
 
 // ================ 收藏/标记 DTOs ==================

@@ -38,7 +38,7 @@ struct CancelRow {
 #[utoipa::path(
     get,
     path = "/invitation",
-    tag = "用户",
+    tag = "团队",
     summary = "获取当前用户的邀请列表（incoming/outgoing）",
     responses(
         (status = 200, body = InvitationListOut),
@@ -104,7 +104,7 @@ pub async fn get_invitation(
 #[utoipa::path(
     post,
     path = "/invitation",
-    tag = "用户",
+    tag = "团队",
     summary = "发起绑定邀请",
     request_body = NewInvitationInput,
     responses(
@@ -172,7 +172,7 @@ pub async fn new_invitation(
 #[utoipa::path(
     put,
     path = "/invitation/{id}",
-    tag = "用户",
+    tag = "团队",
     summary = "确认或拒绝邀请 (accept=true 同意)",
     params(("id" = i64, Path, description = "邀请ID")),
     request_body = ConfirmInvitationInput,
@@ -395,7 +395,7 @@ pub async fn confirm_invitation(
 #[utoipa::path(
     delete,
     path = "/invitation/{id}",
-    tag = "用户",
+    tag = "团队",
     summary = "取消自己发起的待处理邀请",
     params(("id" = i64, Path, description = "邀请ID")),
     responses(
@@ -437,7 +437,7 @@ pub async fn cancel_invitation(
 #[utoipa::path(
     post,
     path = "/invitation/unbind",
-    tag = "用户",
+    tag = "团队",
     summary = "申请解绑（需对方同意）",
     request_body = UnbindRequestInput,
     responses(
@@ -495,7 +495,7 @@ pub async fn unbind_request(
 #[utoipa::path(
     get,
     path = "/invitation/group/{id}",
-    tag = "用户",
+    tag = "团队",
     summary = "获取群组详情及成员列表",
     params(("id" = i64, Path, description = "群组ID")),
     responses(
@@ -571,7 +571,7 @@ pub async fn get_group_info(
 #[utoipa::path(
     post,
     path = "/invitation/bind",
-    tag = "用户",
+    tag = "团队",
     summary = "直接绑定用户（无需邀请确认）",
     request_body = BindUserDirectlyInput,
     responses(

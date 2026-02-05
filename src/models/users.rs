@@ -61,6 +61,19 @@ pub struct RegisterInput {
     pub gender: Option<GenderEnum>,
     pub birthday: Option<chrono::NaiveDate>,
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ProfileUpdateInput {
+    pub username: String,
+    pub nick_name: Option<String>,
+    pub avatar: Option<String>,
+    pub gender: Option<GenderEnum>,
+    pub birthday: Option<chrono::NaiveDate>,
+    pub new_password: Option<String>,
+    pub old_password: Option<String>,
+    pub new_username: Option<String>,
+}
 // ========== 输出 DTO ==========
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]

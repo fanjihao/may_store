@@ -71,7 +71,20 @@ pub struct WishUpdateInput {
 pub struct WishQuery {
     pub status: Option<WishStatusEnum>,
     pub created_by: Option<i64>,
-    pub limit: Option<i64>,
+    #[serde(default)]
+    pub limit: i64,
+    #[serde(default)]
+    pub offset: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema, utoipa::IntoParams)]
+#[serde(rename_all = "camelCase")]
+#[into_params(parameter_in = Query)]
+pub struct WishClaimCheckinQuery {
+    #[serde(default)]
+    pub limit: i64,
+    #[serde(default)]
+    pub offset: i64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]

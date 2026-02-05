@@ -5,28 +5,18 @@ use ntex::web::{
     Responder,
 };
 
-use crate::users::{hash_password, verify_password};
 use crate::utils::{validate_nickname, validate_username};
 use crate::{
     errors::CustomError,
-    models::users::{GenderEnum, UserPublic, UserRecord, UserToken},
+    models::users::{UserPublic, UserRecord, UserToken},
     AppState,
 };
+use crate::{
+    models::users::ProfileUpdateInput,
+    users::{hash_password, verify_password},
+};
 use chrono::Utc;
-use serde::Deserialize;
 use sqlx::Row;
-
-#[derive(Debug, Deserialize, utoipa::ToSchema)]
-pub struct ProfileUpdateInput {
-    pub username: String,
-    pub nick_name: Option<String>,
-    pub avatar: Option<String>,
-    pub gender: Option<GenderEnum>,
-    pub birthday: Option<chrono::NaiveDate>,
-    pub new_password: Option<String>,
-    pub old_password: Option<String>,
-    pub new_username: Option<String>,
-}
 
 #[utoipa::path(
     post,
@@ -79,7 +69,11 @@ pub async fn change_info(
             .execute(db_pool)
             .await?;
         current_username = new_username.clone();
-    } else if data.avatar.is_some() || data.gender.is_some() || data.birthday.is_some() || data.nick_name.is_some() {
+    } else if data.avatar.is_some()
+        || data.gender.is_some()
+        || data.birthday.is_some()
+        || data.nick_name.is_some()
+    {
         if let Some(nick) = &data.nick_name {
             validate_nickname(nick).map_err(|e| CustomError::BadRequest(e.to_string()))?;
         }
@@ -105,8 +99,7 @@ pub async fn change_info(
                 return Err(CustomError::BadRequest("无旧密码记录".into()));
             }
         }
-        let (hash, algo) =
-            hash_password(new_pwd).map_err(|e| CustomError::internal(e))?;
+        let (hash, algo) = hash_password(new_pwd).map_err(|e| CustomError::internal(e))?;
         sqlx::query("UPDATE users SET password_hash = $2, password_algo = $3, password_updated_at = $4, is_temp_password = FALSE WHERE username = $1")
             .bind(&current_username)
             .bind(&hash)

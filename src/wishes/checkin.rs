@@ -5,6 +5,7 @@ use crate::{
         wishes::{
             WishClaimCheckinCreateInput,
             WishClaimCheckinOut,
+            WishClaimCheckinQuery,
             WishClaimCheckinRecord,
             WishClaimStatusEnum,
         },
@@ -12,14 +13,14 @@ use crate::{
     AppState,
 };
 use chrono::Utc;
-use ntex::web::{ types::{ Json, Path, State }, HttpResponse, Responder };
+use ntex::web::{ types::{ Json, Path, State, Query }, HttpResponse, Responder };
 use sqlx::Row;
 use std::sync::Arc;
 
 #[utoipa::path(
     post,
     path = "/wish_claims/{claim_id}/checkins",
-    tag = "心愿",
+    tag = "签到",
     params(("claim_id" = i64, Path, description = "兑换记录ID")),
     request_body = WishClaimCheckinCreateInput,
     responses((status = 201, body = WishClaimCheckinOut))
@@ -94,14 +95,15 @@ pub async fn create_wish_claim_checkin(
 #[utoipa::path(
     get,
     path = "/wish_claims/{claim_id}/checkins",
-    tag = "心愿",
-    params(("claim_id" = i64, Path, description = "兑换记录ID")),
+    tag = "签到",
+    params(("claim_id" = i64, Path, description = "兑换记录ID"), WishClaimCheckinQuery),
     responses((status = 200, body = [WishClaimCheckinOut]))
 )]
 pub async fn list_wish_claim_checkins(
     _: UserToken,
     state: State<Arc<AppState>>,
-    claim_id: Path<i64>
+    claim_id: Path<i64>,
+    query: Query<WishClaimCheckinQuery>
 ) -> Result<impl Responder, CustomError> {
     let db = &state.db_pool;
     // 权限：只能查看自己的兑换的打卡
@@ -112,11 +114,17 @@ pub async fn list_wish_claim_checkins(
     let Some(_) = own else {
         return Err(CustomError::BadRequest("兑换记录不存在".into()));
     };
+
+    let limit = if query.limit == 0 { 50 } else { query.limit.clamp(1, 200) };
+    let offset = query.offset;
+
     let rows = sqlx
         ::query(
-            "SELECT id, claim_id, user_id, photo_url, location_text, mood_text, feeling_text, checkin_time, created_at FROM wish_claim_checkins WHERE claim_id=$1 ORDER BY checkin_time DESC"
+            "SELECT id, claim_id, user_id, photo_url, location_text, mood_text, feeling_text, checkin_time, created_at FROM wish_claim_checkins WHERE claim_id=$1 ORDER BY checkin_time DESC LIMIT $2 OFFSET $3"
         )
         .bind(*claim_id)
+        .bind(limit)
+        .bind(offset)
         .fetch_all(db).await?;
     let list: Vec<WishClaimCheckinOut> = rows
         .into_iter()

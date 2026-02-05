@@ -66,7 +66,7 @@ fn runtime(state: &Arc<AppState>) -> Arc<WerewolfRuntime> {
 #[utoipa::path(
     post,
     path = "/game/rooms/{group_id}/start",
-    tag = "小游戏",
+    tag = "游戏",
     summary = "房主开始游戏：分配身份并通过 C2C 私聊下发",
     params(("group_id" = String, Path, description = "IM 群组 ID")),
     responses((status = 200, body = ImStartGameOut), (status = 400, body = CustomError), (status = 401, body = CustomError)),
@@ -164,7 +164,7 @@ pub async fn start_game(
 #[utoipa::path(
     post,
     path = "/game/rooms/{group_id}/vote",
-    tag = "小游戏",
+    tag = "游戏",
     summary = "投票：HTTP 上报投票，后端记录并通过群消息广播进度/结果",
     params(("group_id" = String, Path, description = "IM 群组 ID")),
     request_body = ImVoteIn,

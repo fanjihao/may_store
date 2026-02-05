@@ -12,6 +12,7 @@ use ntex::web::{
 use serde::Deserialize;
 
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
+#[serde(rename_all = "camelCase")]
 pub struct GroupUpdateInput {
     pub group_name: String,
 }
@@ -19,7 +20,7 @@ pub struct GroupUpdateInput {
 #[utoipa::path(
     put,
     path = "/groups/{group_id}",
-    tag = "用户",
+    tag = "团队",
     summary = "修改关联组名称",
     request_body = GroupUpdateInput,
     params(
