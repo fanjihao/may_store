@@ -1,31 +1,44 @@
 use crate::{
     errors::CustomError,
-    models::{ users::UserToken, wishes::{ WishOut, WishQuery, WishClaimStatusEnum } },
+    models::{
+        users::UserToken,
+        wishes::{WishOut, WishQuery, WishClaimStatusEnum},
+        pagination::{decode_cursor, encode_cursor, CursorPage},
+    },
     AppState,
 };
-use ntex::web::{ types::{ Path, Query, State }, HttpResponse, Responder };
-use sqlx::{ QueryBuilder, Row };
+use ntex::web::{types::{Path, Query, State}, HttpResponse, Responder};
+use serde::{Deserialize, Serialize};
+use sqlx::{QueryBuilder, Row};
 use std::sync::Arc;
+
+#[derive(Debug, Deserialize, Serialize)]
+pub struct WishCursor {
+    pub created_at: chrono::DateTime<chrono::Utc>,
+    pub wish_id: i64,
+}
 
 #[utoipa::path(
     get,
     path = "/wishes",
     tag = "心愿",
     params(WishQuery),
-    responses((status = 200, body = [WishOut]))
+    responses((status = 200, body = CursorPage<WishOut>))
 )]
 pub async fn get_wishes(
     _: UserToken,
     state: State<Arc<AppState>>,
     query: Query<WishQuery>
 ) -> Result<impl Responder, CustomError> {
+    let limit = query.limit.unwrap_or(50).clamp(1, 200);
+
     let mut qb: QueryBuilder<sqlx::Postgres> = QueryBuilder::new(
         "SELECT w.wish_id, w.wish_name, w.wish_cost, w.status, w.created_by, w.created_at, w.updated_at, wc.status as claim_status \
          FROM wishes w LEFT JOIN wish_claims wc ON w.wish_id = wc.wish_id"
     );
-    
+
     let mut first = true;
-    if query.status.is_some() || query.created_by.is_some() {
+    if query.status.is_some() || query.created_by.is_some() || query.cursor.is_some() {
         qb.push(" WHERE ");
     }
     if let Some(st) = query.status {
@@ -40,19 +53,48 @@ pub async fn get_wishes(
         if !first {
             qb.push(" AND ");
         }
+        first = false;
         qb.push(" w.created_by = ");
         qb.push_bind(cb);
     }
-    qb.push(" ORDER BY w.created_at DESC ");
-    let limit = if query.limit == 0 { 50 } else { query.limit.clamp(1, 200) };
-    let offset = query.offset;
+
+    if let Some(cursor_str) = &query.cursor {
+        if let Some(cursor) = decode_cursor::<WishCursor>(cursor_str) {
+            if !first {
+                qb.push(" AND ");
+            }
+            qb.push(" (w.created_at, w.wish_id) < (");
+            qb.push_bind(cursor.created_at);
+            qb.push(", ");
+            qb.push_bind(cursor.wish_id);
+            qb.push(") ");
+        }
+    }
+
+    qb.push(" ORDER BY w.created_at DESC, w.wish_id DESC ");
     qb.push(" LIMIT ");
-    qb.push_bind(limit);
-    qb.push(" OFFSET ");
-    qb.push_bind(offset);
-    let query_final = qb.build();
-    let rows = query_final.fetch_all(&state.db_pool).await?;
-    let list: Vec<WishOut> = rows
+    qb.push_bind(limit + 1);
+
+    let rows = qb.build().fetch_all(&state.db_pool).await?;
+
+    let has_more = rows.len() > limit as usize;
+    let mut rows = rows;
+    if has_more {
+        rows.pop();
+    }
+
+    let next_cursor = if has_more {
+        rows.last().map(|r| {
+            encode_cursor(&WishCursor {
+                created_at: r.get("created_at"),
+                wish_id: r.get("wish_id"),
+            })
+        })
+    } else {
+        None
+    };
+
+    let items: Vec<WishOut> = rows
         .into_iter()
         .map(|r| {
             let claim_status: Option<WishClaimStatusEnum> = r.try_get("claim_status").ok().flatten();
@@ -68,7 +110,12 @@ pub async fn get_wishes(
             }
         })
         .collect();
-    Ok(HttpResponse::Ok().json(&list))
+
+    Ok(HttpResponse::Ok().json(&CursorPage {
+        items,
+        next_cursor,
+        has_more,
+    }))
 }
 
 #[utoipa::path(

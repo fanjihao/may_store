@@ -367,10 +367,8 @@ pub struct FoodFilterQuery {
     pub group_id: Option<i64>,
     pub only_active: Option<bool>,
     pub created_by: Option<i64>,
-    #[serde(default)]
-    pub limit: i64,
-    #[serde(default)]
-    pub offset: i64,
+    pub limit: Option<i64>,
+    pub cursor: Option<String>,
 }
 
 // ================ 收藏/标记 DTOs ==================

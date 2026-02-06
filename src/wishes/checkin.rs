@@ -9,13 +9,21 @@ use crate::{
             WishClaimCheckinRecord,
             WishClaimStatusEnum,
         },
+        pagination::{decode_cursor, encode_cursor, CursorPage},
     },
     AppState,
 };
 use chrono::Utc;
 use ntex::web::{ types::{ Json, Path, State, Query }, HttpResponse, Responder };
-use sqlx::Row;
+use serde::{Deserialize, Serialize};
+use sqlx::{QueryBuilder, Row};
 use std::sync::Arc;
+
+#[derive(Debug, Deserialize, Serialize)]
+pub struct CheckinCursor {
+    pub checkin_time: chrono::DateTime<chrono::Utc>,
+    pub id: i64,
+}
 
 #[utoipa::path(
     post,
@@ -47,7 +55,7 @@ pub async fn create_wish_claim_checkin(
         tx.rollback().await.ok();
         return Err(CustomError::BadRequest("只能为自己的兑换打卡".into()));
     }
-    
+
     let status: WishClaimStatusEnum = cr.get("status");
     if status == WishClaimStatusEnum::CANCELLED {
         tx.rollback().await.ok();
@@ -97,7 +105,7 @@ pub async fn create_wish_claim_checkin(
     path = "/wish_claims/{claim_id}/checkins",
     tag = "签到",
     params(("claim_id" = i64, Path, description = "兑换记录ID"), WishClaimCheckinQuery),
-    responses((status = 200, body = [WishClaimCheckinOut]))
+    responses((status = 200, body = CursorPage<WishClaimCheckinOut>))
 )]
 pub async fn list_wish_claim_checkins(
     _: UserToken,
@@ -115,18 +123,45 @@ pub async fn list_wish_claim_checkins(
         return Err(CustomError::BadRequest("兑换记录不存在".into()));
     };
 
-    let limit = if query.limit == 0 { 50 } else { query.limit.clamp(1, 200) };
-    let offset = query.offset;
+    let limit = query.limit.unwrap_or(50).clamp(1, 200);
 
-    let rows = sqlx
-        ::query(
-            "SELECT id, claim_id, user_id, photo_url, location_text, mood_text, feeling_text, checkin_time, created_at FROM wish_claim_checkins WHERE claim_id=$1 ORDER BY checkin_time DESC LIMIT $2 OFFSET $3"
-        )
-        .bind(*claim_id)
-        .bind(limit)
-        .bind(offset)
-        .fetch_all(db).await?;
-    let list: Vec<WishClaimCheckinOut> = rows
+    let mut qb = QueryBuilder::<sqlx::Postgres>::new(
+        "SELECT id, claim_id, user_id, photo_url, location_text, mood_text, feeling_text, checkin_time, created_at FROM wish_claim_checkins WHERE claim_id="
+    );
+    qb.push_bind(*claim_id);
+
+    if let Some(cursor_str) = &query.cursor {
+        if let Some(cursor) = decode_cursor::<CheckinCursor>(cursor_str) {
+            qb.push(" AND (checkin_time, id) < (");
+            qb.push_bind(cursor.checkin_time);
+            qb.push(", ");
+            qb.push_bind(cursor.id);
+            qb.push(") ");
+        }
+    }
+
+    qb.push(" ORDER BY checkin_time DESC, id DESC LIMIT ");
+    qb.push_bind(limit + 1);
+
+    let mut rows = qb.build().fetch_all(db).await?;
+
+    let has_more = rows.len() > limit as usize;
+    if has_more {
+        rows.pop();
+    }
+
+    let next_cursor = if has_more {
+        rows.last().map(|r| {
+            encode_cursor(&CheckinCursor {
+                checkin_time: r.get("checkin_time"),
+                id: r.get("id"),
+            })
+        })
+    } else {
+        None
+    };
+
+    let items: Vec<WishClaimCheckinOut> = rows
         .into_iter()
         .map(|row| WishClaimCheckinOut {
             id: row.get("id"),
@@ -140,5 +175,10 @@ pub async fn list_wish_claim_checkins(
             created_at: row.get("created_at"),
         })
         .collect();
-    Ok(HttpResponse::Ok().json(&list))
+
+    Ok(HttpResponse::Ok().json(&CursorPage {
+        items,
+        next_cursor,
+        has_more,
+    }))
 }

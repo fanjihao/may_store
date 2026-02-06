@@ -9,8 +9,8 @@ use crate::models::{foods::IngredientRecord, orders::OrderStatusEnum};
 pub struct GroupActivityQuery {
     /// 返回条数，默认50，最大200
     pub limit: Option<i64>,
-    /// 仅返回该时间点之前的事件（用于下拉分页）
-    pub before: Option<DateTime<Utc>>,
+    /// 游标
+    pub cursor: Option<String>,
 }
 
 /// 组活动事件输出

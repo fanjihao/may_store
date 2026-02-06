@@ -86,10 +86,8 @@ pub struct OrderQuery {
     pub user_id: Option<i64>,  // 下单人过滤
     pub group_id: Option<i64>, // 组过滤
     pub status: Option<OrderStatusEnum>,
-    #[serde(default)]
-    pub limit: i64,
-    #[serde(default)]
-    pub offset: i64,
+    pub limit: Option<i64>,
+    pub cursor: Option<String>,
     /// 仅返回已经失效(状态=EXPIRED， CANCELLED， REJECTED， SYSTEM_CLOSED)的订单；与 status 同时出现时优先 status
     pub expired_only: Option<bool>,
 }

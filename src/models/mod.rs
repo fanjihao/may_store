@@ -1,3 +1,4 @@
+pub mod pagination;
 pub mod users;
 pub mod invitation;
 pub mod foods;

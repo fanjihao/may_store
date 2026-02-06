@@ -5,6 +5,7 @@ use crate::{
             BlindBoxDrawInput, BlindBoxDrawResultOut, BlindBoxFoodSnapshot, FoodFilterQuery,
             FoodOut, FoodTagOut, FoodWithStatsRecord, MarkTypeEnum, TagRecord,
         },
+        pagination::{decode_cursor, encode_cursor, CursorPage},
         users::UserToken,
     },
     AppState,
@@ -13,15 +14,22 @@ use ntex::web::{
     types::{Path, Query, State},
     HttpResponse, Responder,
 };
+use serde::{Deserialize, Serialize};
 use sqlx::{QueryBuilder, Row};
 use std::sync::Arc;
+
+#[derive(Debug, Deserialize, Serialize)]
+pub struct FoodCursor {
+    pub created_at: chrono::DateTime<chrono::Utc>,
+    pub food_id: i64,
+}
 
 #[utoipa::path(
 	get,
 	path = "/foods",
 	tag = "菜品",
 	params(FoodFilterQuery),
-	responses((status = 200, body = Vec<FoodOut>)),
+	responses((status = 200, body = CursorPage<FoodOut>)),
     security(("cookie_auth"=[]))
 )]
 pub async fn get_foods(
@@ -30,6 +38,7 @@ pub async fn get_foods(
     q: Query<FoodFilterQuery>,
 ) -> Result<impl Responder, CustomError> {
     let db = &state.db_pool;
+    let limit = q.limit.unwrap_or(50).clamp(1, 200);
 
     let mut qb: QueryBuilder<sqlx::Postgres> = QueryBuilder::new(
         "SELECT f.food_id, f.food_name, f.food_photo, f.ingredients, f.steps, f.food_status, f.submit_role, f.apply_status, f.apply_remark, f.created_by, f.owner_user_id, f.group_id, f.approved_at, f.approved_by, f.is_del, f.created_at, f.updated_at, f.tag_id, fs.total_order_count, fs.completed_order_count, fs.last_order_time, fs.last_complete_time FROM foods f LEFT JOIN food_stats fs ON fs.food_id=f.food_id WHERE f.is_del=0"
@@ -60,14 +69,36 @@ pub async fn get_foods(
         qb.push(" AND f.food_status='NORMAL' AND f.apply_status='APPROVED'");
     }
 
-    let limit = q.limit.clamp(1, 200);
-    let offset = q.offset;
+    if let Some(cursor_str) = &q.cursor {
+        if let Some(cursor) = decode_cursor::<FoodCursor>(cursor_str) {
+            qb.push(" AND (f.created_at, f.food_id) < (");
+            qb.push_bind(cursor.created_at);
+            qb.push(", ");
+            qb.push_bind(cursor.food_id);
+            qb.push(")");
+        }
+    }
 
-    qb.push(" ORDER BY f.created_at DESC LIMIT ")
-        .push_bind(limit)
-        .push(" OFFSET ")
-        .push_bind(offset);
-    let rows: Vec<FoodWithStatsRecord> = qb.build_query_as().fetch_all(db).await?;
+    qb.push(" ORDER BY f.created_at DESC, f.food_id DESC LIMIT ")
+        .push_bind(limit + 1);
+
+    let mut rows: Vec<FoodWithStatsRecord> = qb.build_query_as().fetch_all(db).await?;
+
+    let has_more = rows.len() > limit as usize;
+    if has_more {
+        rows.pop();
+    }
+
+    let next_cursor = if has_more {
+        rows.last().map(|r| {
+            encode_cursor(&FoodCursor {
+                created_at: r.created_at,
+                food_id: r.food_id,
+            })
+        })
+    } else {
+        None
+    };
 
     // ===== 批量标签查询 =====
     let tag_ids: Vec<i64> = rows.iter().filter_map(|r| r.tag_id).collect();
@@ -109,13 +140,18 @@ pub async fn get_foods(
     }
 
     // ===== 组装输出 =====
-    let mut out_list: Vec<FoodOut> = Vec::with_capacity(rows.len());
+    let mut items: Vec<FoodOut> = Vec::with_capacity(rows.len());
     for rec in rows {
         let tag = rec.tag_id.and_then(|tid| tags_map.get(&tid).cloned());
         let mark_vec = marks_map.remove(&rec.food_id).unwrap_or_default();
-        out_list.push(FoodOut::from_with_stats(rec, tag, mark_vec));
+        items.push(FoodOut::from_with_stats(rec, tag, mark_vec));
     }
-    Ok(HttpResponse::Ok().json(&out_list))
+
+    Ok(HttpResponse::Ok().json(&CursorPage {
+        items,
+        next_cursor,
+        has_more,
+    }))
 }
 
 #[utoipa::path(
@@ -236,7 +272,7 @@ pub async fn get_tags(
 	path = "/foods/marks",
 	tag = "菜品",
 	params(FoodFilterQuery),
-	responses((status = 200, body = Vec<FoodOut>)),
+	responses((status = 200, body = CursorPage<FoodOut>)),
 	security(("cookie_auth" = []))
 )]
 pub async fn get_marked_foods(
@@ -245,19 +281,47 @@ pub async fn get_marked_foods(
     q: Query<FoodFilterQuery>,
 ) -> Result<impl Responder, CustomError> {
     let db = &state.db_pool;
-    let limit = q.limit.clamp(1, 200);
-    let offset = q.offset;
+    let limit = q.limit.unwrap_or(50).clamp(1, 200);
 
-    let rows: Vec<FoodWithStatsRecord> = sqlx::query_as(
+    let mut qb = QueryBuilder::<sqlx::Postgres>::new(
         "SELECT f.food_id, f.food_name, f.food_photo, f.ingredients, f.steps, f.food_status, f.submit_role, f.apply_status, f.apply_remark, f.created_by, f.owner_user_id, f.group_id, f.approved_at, f.approved_by, f.is_del, f.created_at, f.updated_at, f.tag_id, fs.total_order_count, fs.completed_order_count, fs.last_order_time, fs.last_complete_time \
-         FROM foods f LEFT JOIN food_stats fs ON fs.food_id=f.food_id JOIN user_food_mark m ON f.food_id=m.food_id WHERE m.user_id=$1 AND m.mark_type='LIKE' LIMIT $2 OFFSET $3"
-    )
-	.bind(token.user_id as i64)
-	.bind(limit)
-	.bind(offset)
-	.fetch_all(db)
-	.await?;
-    let mut out_list = Vec::new();
+         FROM foods f LEFT JOIN food_stats fs ON fs.food_id=f.food_id JOIN user_food_mark m ON f.food_id=m.food_id WHERE m.user_id="
+    );
+    qb.push_bind(token.user_id as i64);
+    qb.push(" AND m.mark_type='LIKE'");
+
+    if let Some(cursor_str) = &q.cursor {
+        if let Some(cursor) = decode_cursor::<FoodCursor>(cursor_str) {
+            qb.push(" AND (f.created_at, f.food_id) < (");
+            qb.push_bind(cursor.created_at);
+            qb.push(", ");
+            qb.push_bind(cursor.food_id);
+            qb.push(")");
+        }
+    }
+
+    qb.push(" ORDER BY f.created_at DESC, f.food_id DESC LIMIT ")
+        .push_bind(limit + 1);
+
+    let mut rows: Vec<FoodWithStatsRecord> = qb.build_query_as().fetch_all(db).await?;
+
+    let has_more = rows.len() > limit as usize;
+    if has_more {
+        rows.pop();
+    }
+
+    let next_cursor = if has_more {
+        rows.last().map(|r| {
+            encode_cursor(&FoodCursor {
+                created_at: r.created_at,
+                food_id: r.food_id,
+            })
+        })
+    } else {
+        None
+    };
+
+    let mut items = Vec::new();
     for rec in rows {
         let tag_row: Option<TagRecord> = if let Some(tid) = rec.tag_id {
             sqlx::query_as("SELECT * FROM tags WHERE tag_id=$1")
@@ -267,13 +331,18 @@ pub async fn get_marked_foods(
         } else {
             None
         };
-        out_list.push(FoodOut::from_with_stats(
+        items.push(FoodOut::from_with_stats(
             rec,
             tag_row,
             vec![MarkTypeEnum::LIKE],
         ));
     }
-    Ok(HttpResponse::Ok().json(&out_list))
+
+    Ok(HttpResponse::Ok().json(&CursorPage {
+        items,
+        next_cursor,
+        has_more,
+    }))
 }
 
 #[utoipa::path(

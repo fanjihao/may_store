@@ -1,15 +1,26 @@
 use crate::{
     errors::CustomError,
-    models::foods::{IngredientCreateInput, IngredientOut, IngredientRecord, IngredientUpdateInput},
+    models::{
+        foods::{IngredientCreateInput, IngredientOut, IngredientRecord, IngredientUpdateInput},
+        pagination::{decode_cursor, encode_cursor, CursorPage},
+    },
     AppState,
 };
 use ntex::web::{
     types::{Json, Query, State},
     HttpResponse, Responder,
 };
+use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 // ================= Ingredient CRUD =================
+
+#[derive(Debug, Deserialize, Serialize)]
+pub struct IngredientCursor {
+    pub sort: Option<i32>,
+    pub name: String,
+    pub ingredient_id: i64,
+}
 
 #[derive(Debug, serde::Deserialize, utoipa::IntoParams, utoipa::ToSchema)]
 #[serde(rename_all = "camelCase")]
@@ -17,10 +28,8 @@ use std::sync::Arc;
 pub struct IngredientQuery {
     pub group_id: Option<i64>,
     pub keyword: Option<String>,
-    #[serde(default)]
-    pub limit: i64,
-    #[serde(default)]
-    pub offset: i64,
+    pub limit: Option<i64>,
+    pub cursor: Option<String>,
 }
 
 #[utoipa::path(
@@ -28,7 +37,7 @@ pub struct IngredientQuery {
     path = "/ingredients",
     tag = "食材",
     params(IngredientQuery),
-    responses((status = 200, body = [IngredientOut])),
+    responses((status = 200, body = CursorPage<IngredientOut>)),
     security(("cookie_auth" = []))
 )]
 pub async fn list_ingredients(
@@ -40,37 +49,73 @@ pub async fn list_ingredients(
     // 使用用户所属组或请求中的组ID
     let group_id = query.group_id.or(user_token.user.as_ref().and_then(|u| u.group_id));
     let keyword = query.keyword.as_deref().unwrap_or("");
-    let limit = query.limit.clamp(1, 200);
-    let offset = query.offset;
+    let limit = query.limit.unwrap_or(50).clamp(1, 200);
 
-    let sql = r#"
-        SELECT ingredient_id, name, group_id, unit, calories, description, icon, sort, created_at, updated_at
-        FROM ingredients
-        WHERE group_id = $1
-        ORDER BY sort ASC, name ASC
-        LIMIT $3 OFFSET $4
-    "#;
+    let mut qb = sqlx::QueryBuilder::<sqlx::Postgres>::new(
+        r#"SELECT ingredient_id, name, group_id, unit, calories, description, icon, sort, created_at, updated_at
+           FROM ingredients
+           WHERE group_id = "#,
+    );
+    qb.push_bind(group_id);
 
-    let rows = sqlx::query_as::<_, IngredientRecord>(sql)
-        .bind(group_id)
-        .bind(format!("%{}%", keyword))
-        .bind(limit)
-        .bind(offset)
-        .fetch_all(db)
-        .await?;
+    if !keyword.is_empty() {
+        qb.push(" AND name ILIKE ");
+        qb.push_bind(format!("%{}%", keyword));
+    }
 
-    let list: Vec<IngredientOut> = rows.into_iter().map(|r| IngredientOut {
-        ingredient_id: r.ingredient_id,
-        name: r.name,
-        group_id: r.group_id,
-        unit: r.unit,
-        calories: r.calories,
-        description: r.description,
-        icon: r.icon,
-        sort: r.sort,
-    }).collect();
+    if let Some(cursor_str) = &query.cursor {
+        if let Some(cursor) = decode_cursor::<IngredientCursor>(cursor_str) {
+            qb.push(" AND (sort, name, ingredient_id) > (");
+            qb.push_bind(cursor.sort);
+            qb.push(", ");
+            qb.push_bind(cursor.name);
+            qb.push(", ");
+            qb.push_bind(cursor.ingredient_id);
+            qb.push(")");
+        }
+    }
 
-    Ok(HttpResponse::Ok().json(&list))
+    qb.push(" ORDER BY sort ASC, name ASC, ingredient_id ASC LIMIT ");
+    qb.push_bind(limit + 1);
+
+    let mut rows = qb.build_query_as::<IngredientRecord>().fetch_all(db).await?;
+
+    let has_more = rows.len() > limit as usize;
+    if has_more {
+        rows.pop();
+    }
+
+    let next_cursor = if has_more {
+        rows.last().map(|r| {
+            encode_cursor(&IngredientCursor {
+                sort: r.sort,
+                name: r.name.clone(),
+                ingredient_id: r.ingredient_id,
+            })
+        })
+    } else {
+        None
+    };
+
+    let list: Vec<IngredientOut> = rows
+        .into_iter()
+        .map(|r| IngredientOut {
+            ingredient_id: r.ingredient_id,
+            name: r.name,
+            group_id: r.group_id,
+            unit: r.unit,
+            calories: r.calories,
+            description: r.description,
+            icon: r.icon,
+            sort: r.sort,
+        })
+        .collect();
+
+    Ok(HttpResponse::Ok().json(&CursorPage {
+        items: list,
+        next_cursor,
+        has_more,
+    }))
 }
 
 #[utoipa::path(

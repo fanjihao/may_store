@@ -5,6 +5,7 @@ use crate::{
         GroupInfoSimple, OrderItemOut, OrderOutNew, OrderQuery, OrderRecord, OrderStatusEnum,
         OrderStatusHistoryOut,
     },
+    models::pagination::{decode_cursor, encode_cursor, CursorPage},
     AppState,
 };
 use chrono::{DateTime, Utc};
@@ -12,15 +13,22 @@ use ntex::web::{
     types::{Path, Query, State},
     HttpResponse, Responder,
 };
+use serde::{Deserialize, Serialize};
 use sqlx::Row;
 use std::sync::Arc;
+
+#[derive(Debug, Deserialize, Serialize)]
+pub struct OrderCursor {
+    pub created_at: DateTime<Utc>,
+    pub order_id: i64,
+}
 
 #[utoipa::path(
     get,
     path = "/orders",
     tag = "订单",
     params(OrderQuery),
-    responses((status = 200, body = [OrderOutNew]))
+    responses((status = 200, body = CursorPage<OrderOutNew>))
 )]
 pub async fn get_orders(
     token: UserToken,
@@ -28,6 +36,8 @@ pub async fn get_orders(
     query: Query<OrderQuery>,
 ) -> Result<impl Responder, CustomError> {
     let db = &state.db_pool;
+    let limit = query.limit.unwrap_or(50).clamp(1, 200);
+
     // 使用 QueryBuilder 动态构建过滤条件
     let mut qb = sqlx::QueryBuilder::<sqlx::Postgres>::new(
         "SELECT o.order_id, o.user_id, o.guest_id, o.group_id, o.status, o.goal_time, o.remark, o.points_reward, o.cancel_reason, o.reject_reason, o.last_status_change_at, o.created_at, o.updated_at, \
@@ -69,24 +79,47 @@ pub async fn get_orders(
     }
 
     if let Some(st) = query.status {
-        // 直接绑定枚举，让 sqlx 以 order_status_enum 类型传参，避免 enum=text 比较错误
         qb.push(" AND o.status = ");
-        qb.push_bind(st); // st: OrderStatusEnum implements sqlx::Type + Encode
+        qb.push_bind(st);
     } else if query.expired_only.unwrap_or(false) {
         qb.push(" AND o.status IN ('EXPIRED', 'CANCELLED', 'REJECTED', 'SYSTEM_CLOSED') ");
     }
 
-    let limit = if query.limit == 0 { 50 } else { query.limit.clamp(1, 200) };
-    let offset = query.offset;
+    if let Some(cursor_str) = &query.cursor {
+        if let Some(cursor) = decode_cursor::<OrderCursor>(cursor_str) {
+            qb.push(" AND (o.created_at, o.order_id) < (");
+            qb.push_bind(cursor.created_at);
+            qb.push(", ");
+            qb.push_bind(cursor.order_id);
+            qb.push(")");
+        }
+    }
 
-    qb.push(" ORDER BY o.created_at DESC ");
+    qb.push(" ORDER BY o.created_at DESC, o.order_id DESC ");
     qb.push(" LIMIT ");
-    qb.push_bind(limit);
-    qb.push(" OFFSET ");
-    qb.push_bind(offset);
+    qb.push_bind(limit + 1);
+
     let orders_rows = qb.build().fetch_all(db).await?;
-    let mut out_list: Vec<OrderOutNew> = Vec::new();
-    for row in orders_rows {
+
+    let has_more = orders_rows.len() > limit as usize;
+    let mut rows = orders_rows;
+    if has_more {
+        rows.pop();
+    }
+
+    let next_cursor = if has_more {
+        rows.last().map(|r| {
+            encode_cursor(&OrderCursor {
+                created_at: r.get("created_at"),
+                order_id: r.get("order_id"),
+            })
+        })
+    } else {
+        None
+    };
+
+    let mut items: Vec<OrderOutNew> = Vec::new();
+    for row in rows {
         let order = OrderRecord {
             order_id: row.get("order_id"),
             user_id: row.get("user_id"),
@@ -114,7 +147,7 @@ pub async fn get_orders(
         let creator_nick_name: Option<String> = row.try_get("creator_nick_name").ok();
         let creator_avatar: Option<String> = row.try_get("creator_avatar").ok();
 
-        let items: Vec<OrderItemOut> = sqlx::query(
+        let order_items: Vec<OrderItemOut> = sqlx::query(
             "SELECT oi.id, oi.food_id, oi.quantity, oi.price, f.food_name, f.food_photo \
              FROM order_items oi LEFT JOIN foods f ON f.food_id = oi.food_id WHERE oi.order_id=$1",
         )
@@ -140,7 +173,7 @@ pub async fn get_orders(
         .fetch_all(db)
         .await?;
         let history = history_rows.into_iter().map(map_history_row).collect();
-        let mut out = OrderOutNew::from((order, items, history));
+        let mut out = OrderOutNew::from((order, order_items, history));
         out.group_name = group_name;
         out.group_info = group_info;
         out.receiver_nick_name = db_guest_nick_name;
@@ -150,9 +183,13 @@ pub async fn get_orders(
             out.receiver_nick_name = creator_nick_name;
             out.receiver_avatar = creator_avatar;
         }
-        out_list.push(out);
+        items.push(out);
     }
-    Ok(HttpResponse::Ok().json(&out_list))
+    Ok(HttpResponse::Ok().json(&CursorPage {
+        items,
+        next_cursor,
+        has_more,
+    }))
 }
 
 #[utoipa::path(
