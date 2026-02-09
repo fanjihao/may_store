@@ -608,7 +608,7 @@ pub async fn bind_user_directly(
 
     // Check if already paired
     let existing_pair = sqlx::query_scalar::<_, i64>(
-        "SELECT ag.group_id FROM association_groups ag JOIN association_group_members m1 ON ag.group_id = m1.group_id JOIN association_group_members m2 ON ag.group_id = m2.group_id WHERE ag.group_type='PAIR' AND m1.user_id=$1 AND m2.user_id=$2 LIMIT 1"
+        "SELECT ag.group_id FROM association_groups ag JOIN association_group_members m1 ON ag.group_id = m1.group_id JOIN association_group_members m2 ON ag.group_id = m2.group_id WHERE ag.group_type='PAIR' AND m1.user_id=$1 AND m2.user_id=$2 AND ag.status = 1 LIMIT 1"
     )
     .bind(uid)
     .bind(target)
@@ -618,6 +618,27 @@ pub async fn bind_user_directly(
     if existing_pair.is_some() {
         tx.rollback().await.ok();
         return Err(CustomError::BadRequest("已绑定".into()));
+    }
+
+    // Check if either user is already in another team
+    let in_team = sqlx::query_scalar::<_, i64>(
+        "SELECT m.user_id FROM association_group_members m \
+         JOIN association_groups g ON m.group_id = g.group_id \
+         WHERE m.user_id IN ($1, $2) AND g.group_type = 'PAIR' AND g.status = 1 LIMIT 1"
+    )
+    .bind(uid)
+    .bind(target)
+    .fetch_optional(&mut *tx)
+    .await?;
+
+    if let Some(user_id) = in_team {
+        tx.rollback().await.ok();
+        let msg = if user_id == uid {
+            "你已经绑定了另一半了"
+        } else {
+            "对方已经绑定了另一半了"
+        };
+        return Err(CustomError::BadRequest(msg.into()));
     }
 
     let group_name = format!("pair-{}-{}", uid, target);
