@@ -29,6 +29,7 @@ CREATE TYPE point_tx_type_enum AS ENUM (
     'ADMIN_ADJUST',
     'LOTTERY_REWARD',
     'SIGN_IN_REWARD',
+    'SWEET_TALK_REWARD',
     'OTHER'
 );
 CREATE TYPE wish_status_enum AS ENUM ('ON', 'OFF');
@@ -396,6 +397,22 @@ COMMENT ON COLUMN sign_records.consecutive_days IS '连续签到天数';
 COMMENT ON COLUMN sign_records.points_earned IS '本次签到获得积分';
 COMMENT ON COLUMN sign_records.created_at IS '签到时间';
 CREATE INDEX idx_sr_user_date ON sign_records(user_id, sign_date DESC);
+-- ================= SWEET TALKS =================
+CREATE TABLE sweet_talks (
+    talk_id BIGSERIAL PRIMARY KEY,
+    user_id BIGINT NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+    group_id BIGINT NOT NULL REFERENCES association_groups(group_id) ON DELETE CASCADE,
+    content TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+COMMENT ON TABLE sweet_talks IS '每日情话记录';
+COMMENT ON COLUMN sweet_talks.talk_id IS '情话主键ID';
+COMMENT ON COLUMN sweet_talks.user_id IS '发送者用户ID';
+COMMENT ON COLUMN sweet_talks.group_id IS '所属关联组ID';
+COMMENT ON COLUMN sweet_talks.content IS '情话内容';
+COMMENT ON COLUMN sweet_talks.created_at IS '发送时间';
+CREATE INDEX idx_st_group_time ON sweet_talks(group_id, created_at DESC);
+CREATE INDEX idx_st_user_today ON sweet_talks(user_id, (CAST(created_at AT TIME ZONE 'Asia/Shanghai' AS DATE)));
 -- ================= WISHES =================
 CREATE TABLE wishes (
     wish_id BIGSERIAL PRIMARY KEY,

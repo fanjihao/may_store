@@ -10,7 +10,7 @@ pub struct CursorPage<T> {
     pub has_more: bool,
 }
 
-#[derive(Debug, Deserialize, IntoParams)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema, IntoParams)]
 #[into_params(parameter_in = Query)]
 #[serde(rename_all = "camelCase")]
 pub struct CursorQuery {

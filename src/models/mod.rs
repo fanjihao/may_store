@@ -6,6 +6,7 @@ pub mod orders;
 pub mod wishes;
 pub mod sign;
 pub mod dashboard;
+pub mod sweet_talk;
 
 pub mod game_im;
 pub mod game_ws;

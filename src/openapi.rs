@@ -18,6 +18,9 @@ use crate::{foods, game_im, models, models::dashboard, orders, users, upload};
         users::view::is_register,
         users::role::switch_role,
         users::view::get_user_info,
+        users::sweet_talk::add_sweet_talk,
+        users::sweet_talk::update_sweet_talk,
+        users::sweet_talk::get_sweet_talks,
 
         // 团队 (Team)
         users::invitation::get_invitation,
@@ -76,11 +79,8 @@ use crate::{foods, game_im, models, models::dashboard, orders, users, upload};
         crate::wishes::new::create_wish,
         crate::wishes::view::get_wishes,
         crate::wishes::update::update_wish,
-        crate::wishes::view::get_wish_detail,
         crate::wishes::update::disable_wish,
         crate::wishes::claim::claim_wish,
-        crate::wishes::claim::get_claim,
-        crate::wishes::claim::update_wish_claim,
 
         // 微信 (WeChat)
         crate::wx::verify::wx_sign_verify,
@@ -101,6 +101,7 @@ use crate::{foods, game_im, models, models::dashboard, orders, users, upload};
         users::sign::get_sign_info,
         crate::wishes::checkin::create_wish_claim_checkin,
         crate::wishes::checkin::list_wish_claim_checkins,
+        crate::wishes::checkin::update_wish_claim_checkin,
 
         // 上传
         upload::upload::get_qiniu_token,
@@ -119,6 +120,10 @@ use crate::{foods, game_im, models, models::dashboard, orders, users, upload};
             models::sign::SignInResponse,
             models::sign::SignRecordOut,
             models::sign::SignInfoResponse,
+            // 情话
+            models::sweet_talk::SweetTalkRequest,
+            models::sweet_talk::SweetTalkOut,
+            models::sweet_talk::SweetTalkQuery,
         ),
         // 邀请
         schemas(

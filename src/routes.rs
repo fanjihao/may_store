@@ -68,6 +68,18 @@ fn user_routes(cfg: &mut web::ServiceConfig) {
             .route(
                 "/getInfoByUsername",
                 web::get().to(users::view::get_user_info),
+            )
+            .route(
+                "/sweet-talk",
+                web::post().to(users::sweet_talk::add_sweet_talk),
+            )
+            .route(
+                "/sweet-talk/{id}",
+                web::put().to(users::sweet_talk::update_sweet_talk),
+            )
+            .route(
+                "/sweet-talks",
+                web::get().to(users::sweet_talk::get_sweet_talks),
             ),
     );
 }
@@ -79,7 +91,10 @@ fn team_routes(cfg: &mut web::ServiceConfig) {
         web::scope("/invitation")
             .route("", web::get().to(users::invitation::get_invitation))
             .route("", web::post().to(users::invitation::new_invitation))
-            .route("/{id}", web::put().to(users::invitation::confirm_invitation))
+            .route(
+                "/{id}",
+                web::put().to(users::invitation::confirm_invitation),
+            )
             .route(
                 "/{id}",
                 web::delete().to(users::invitation::cancel_invitation),
@@ -89,7 +104,10 @@ fn team_routes(cfg: &mut web::ServiceConfig) {
                 "/bind",
                 web::post().to(users::invitation::bind_user_directly),
             )
-            .route("/group/{id}", web::get().to(users::invitation::get_group_info))
+            .route(
+                "/group/{id}",
+                web::get().to(users::invitation::get_group_info),
+            )
             .route(
                 "/groups/{group_id}",
                 web::put().to(users::group_update::update_group),
@@ -104,7 +122,10 @@ fn dish_routes(cfg: &mut web::ServiceConfig) {
             .route("", web::post().to(foods::new::create_food))
             .route("", web::get().to(foods::view::get_foods))
             .route("/marks", web::get().to(foods::view::get_marked_foods))
-            .route("/blind_box/draw", web::post().to(foods::view::draw_blind_box))
+            .route(
+                "/blind_box/draw",
+                web::post().to(foods::view::draw_blind_box),
+            )
             .route("/mark", web::post().to(foods::update::mark_food))
             .route(
                 "/mark/{food_id}/{mark_type}",
@@ -139,7 +160,10 @@ fn ingredient_routes(cfg: &mut web::ServiceConfig) {
                 web::post().to(foods::ingredients::update_ingredients_sort),
             )
             .route("/{id}", web::get().to(foods::ingredients::get_ingredient))
-            .route("/{id}", web::put().to(foods::ingredients::update_ingredient))
+            .route(
+                "/{id}",
+                web::put().to(foods::ingredients::update_ingredient),
+            )
             .route(
                 "/{id}",
                 web::delete().to(foods::ingredients::delete_ingredient),
@@ -153,7 +177,10 @@ fn order_routes(cfg: &mut web::ServiceConfig) {
         web::scope("/orders")
             .route("", web::post().to(orders::new::create_order))
             .route("", web::get().to(orders::view::get_orders))
-            .route("/status", web::put().to(orders::update::update_order_status))
+            .route(
+                "/status",
+                web::put().to(orders::update::update_order_status),
+            )
             .route("/{id}", web::get().to(orders::view::get_order_detail))
             .route("/{id}", web::delete().to(orders::delete::delete_order)),
     )
@@ -167,8 +194,14 @@ fn order_routes(cfg: &mut web::ServiceConfig) {
 fn rating_routes(cfg: &mut web::ServiceConfig) {
     cfg.service(
         web::scope("/orders-rating")
-            .route("/{order_id}", web::post().to(orders::rating::create_order_rating))
-            .route("/{order_id}", web::get().to(orders::rating::get_order_rating)),
+            .route(
+                "/{order_id}",
+                web::post().to(orders::rating::create_order_rating),
+            )
+            .route(
+                "/{order_id}",
+                web::get().to(orders::rating::get_order_rating),
+            ),
     );
 }
 
@@ -179,15 +212,9 @@ fn wish_routes(cfg: &mut web::ServiceConfig) {
             .route("", web::post().to(wishes::new::create_wish))
             .route("", web::get().to(wishes::view::get_wishes))
             .route("", web::put().to(wishes::update::update_wish))
-            .route("/{id}", web::get().to(wishes::view::get_wish_detail))
             .route("/{id}", web::delete().to(wishes::update::disable_wish)),
     )
-    .service(
-        web::scope("/wish_claims")
-            .route("", web::post().to(wishes::claim::claim_wish))
-            .route("", web::get().to(wishes::claim::get_claim))
-            .route("/status", web::put().to(wishes::claim::update_wish_claim)),
-    );
+    .service(web::scope("/wish_claims").route("", web::post().to(wishes::claim::claim_wish)));
 }
 
 /// 签到 (Check-in)
@@ -209,6 +236,10 @@ fn checkin_routes(cfg: &mut web::ServiceConfig) {
             .route(
                 "/{claim_id}/checkins",
                 web::get().to(wishes::checkin::list_wish_claim_checkins),
+            )
+            .route(
+                "/checkins/{id}",
+                web::put().to(wishes::checkin::update_wish_claim_checkin),
             ),
     );
 }
@@ -218,7 +249,10 @@ fn wechat_routes(cfg: &mut web::ServiceConfig) {
     cfg.service(
         web::scope("/wx")
             .route("/sign-verify", web::get().to(wx::verify::wx_sign_verify))
-            .route("/sign-verify", web::post().to(wx::verify::wx_offical_received))
+            .route(
+                "/sign-verify",
+                web::post().to(wx::verify::wx_offical_received),
+            )
             .route("/templates", web::get().to(wx::template::get_templates)),
     );
 }
@@ -251,6 +285,9 @@ fn dashboard_routes(cfg: &mut web::ServiceConfig) {
                 "/week-order-dates",
                 web::get().to(dashboard::metrics::get_week_order_dates),
             )
-            .route("/date-foods", web::get().to(dashboard::metrics::get_date_foods)),
+            .route(
+                "/date-foods",
+                web::get().to(dashboard::metrics::get_date_foods),
+            ),
     );
 }

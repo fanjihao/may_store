@@ -197,6 +197,16 @@ pub struct WishClaimCheckinCreateInput {
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
+pub struct WishClaimCheckinUpdateInput {
+    pub photo_url: Option<String>,
+    pub location_text: Option<String>,
+    pub mood_text: Option<String>,
+    pub feeling_text: Option<String>,
+    pub checkin_time: Option<DateTime<Utc>>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
 pub struct WishClaimCheckinOut {
     pub id: i64,
     pub claim_id: i64,

@@ -4,6 +4,7 @@ use crate::{
         users::UserToken,
         wishes::{
             WishClaimCheckinCreateInput,
+            WishClaimCheckinUpdateInput,
             WishClaimCheckinOut,
             WishClaimCheckinQuery,
             WishClaimCheckinRecord,
@@ -181,4 +182,69 @@ pub async fn list_wish_claim_checkins(
         next_cursor,
         has_more,
     }))
+}
+
+#[utoipa::path(
+    put,
+    path = "/wish_claims/checkins/{id}",
+    tag = "签到",
+    params(("id" = i64, Path, description = "打卡记录ID")),
+    request_body = WishClaimCheckinUpdateInput,
+    responses((status = 200, body = WishClaimCheckinOut))
+)]
+pub async fn update_wish_claim_checkin(
+    user_token: UserToken,
+    state: State<Arc<AppState>>,
+    id: Path<i64>,
+    body: Json<WishClaimCheckinUpdateInput>
+) -> Result<impl Responder, CustomError> {
+    let db = &state.db_pool;
+
+    // 校验记录存在且属于当前用户
+    let checkin = sqlx::query_as::<_, WishClaimCheckinRecord>(
+        "SELECT * FROM wish_claim_checkins WHERE id = $1"
+    )
+    .bind(*id)
+    .fetch_optional(db)
+    .await?;
+
+    let Some(c) = checkin else {
+        return Err(CustomError::BadRequest("打卡记录不存在".into()));
+    };
+
+    if c.user_id != user_token.user_id {
+        return Err(CustomError::BadRequest("无权修改他人的打卡记录".into()));
+    }
+
+    let photo_url = body.photo_url.as_ref().or(c.photo_url.as_ref());
+    let location_text = body.location_text.as_ref().or(c.location_text.as_ref());
+    let mood_text = body.mood_text.as_ref().or(c.mood_text.as_ref());
+    let feeling_text = body.feeling_text.as_ref().or(c.feeling_text.as_ref());
+    let checkin_time = body.checkin_time.unwrap_or(c.checkin_time);
+
+    let row = sqlx::query(
+        "UPDATE wish_claim_checkins SET photo_url=$1, location_text=$2, mood_text=$3, feeling_text=$4, checkin_time=$5 WHERE id=$6 RETURNING *"
+    )
+    .bind(photo_url)
+    .bind(location_text)
+    .bind(mood_text)
+    .bind(feeling_text)
+    .bind(checkin_time)
+    .bind(*id)
+    .fetch_one(db)
+    .await?;
+
+    let rec = WishClaimCheckinRecord {
+        id: row.get("id"),
+        claim_id: row.get("claim_id"),
+        user_id: row.get("user_id"),
+        photo_url: row.try_get("photo_url").ok(),
+        location_text: row.try_get("location_text").ok(),
+        mood_text: row.try_get("mood_text").ok(),
+        feeling_text: row.try_get("feeling_text").ok(),
+        checkin_time: row.get("checkin_time"),
+        created_at: row.get("created_at"),
+    };
+
+    Ok(HttpResponse::Ok().json(&WishClaimCheckinOut::from(rec)))
 }
