@@ -28,6 +28,7 @@ use crate::{foods, game_im, models, models::dashboard, orders, users, upload};
         users::invitation::confirm_invitation,
         users::invitation::cancel_invitation,
         users::invitation::unbind_request,
+        users::invitation::bind_user_directly,
         users::invitation::get_group_info,
         users::group_update::update_group,
 
@@ -76,11 +77,16 @@ use crate::{foods, game_im, models, models::dashboard, orders, users, upload};
         orders::rating::get_order_rating,
 
         // 心愿 (Wish)
-        crate::wishes::new::create_wish,
-        crate::wishes::view::get_wishes,
-        crate::wishes::update::update_wish,
-        crate::wishes::update::disable_wish,
-        crate::wishes::claim::claim_wish,
+        crate::wishes::handlers::create_wish,
+        crate::wishes::handlers::list_wishes,
+        crate::wishes::handlers::get_wish,
+        crate::wishes::handlers::update_wish,
+        crate::wishes::handlers::delete_wish,
+        crate::wishes::claims::redeem_wish,
+        crate::wishes::claims::update_claim_status,
+        crate::wishes::claims::list_my_claims,
+        crate::wishes::claims::get_claim,
+        crate::wishes::claims::submit_feedback,
 
         // 微信 (WeChat)
         crate::wx::verify::wx_sign_verify,
@@ -99,9 +105,6 @@ use crate::{foods, game_im, models, models::dashboard, orders, users, upload};
         users::checkin::daily_checkin,
         users::sign::sign_in,
         users::sign::get_sign_info,
-        crate::wishes::checkin::create_wish_claim_checkin,
-        crate::wishes::checkin::list_wish_claim_checkins,
-        crate::wishes::checkin::update_wish_claim_checkin,
 
         // 上传
         upload::upload::get_qiniu_token,
@@ -176,9 +179,8 @@ use crate::{foods, game_im, models, models::dashboard, orders, users, upload};
             models::wishes::WishClaimCreateInput,
             models::wishes::WishClaimUpdateInput,
             models::wishes::WishClaimOut,
-            models::wishes::WishClaimCheckinQuery,
-            models::wishes::WishClaimCheckinCreateInput,
-            models::wishes::WishClaimCheckinOut,
+            models::wishes::WishClaimFeedbackInput,
+            crate::wishes::claims::RedeemInput,
             dashboard::GroupActivityEventOut,
             dashboard::TopFoodOrderOut,
             dashboard::TopFoodRankingResponse,

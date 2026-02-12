@@ -207,14 +207,44 @@ fn rating_routes(cfg: &mut web::ServiceConfig) {
 
 /// 心愿 (Wish)
 fn wish_routes(cfg: &mut web::ServiceConfig) {
+    // 1. Core Wish Resources
     cfg.service(
         web::scope("/wishes")
-            .route("", web::post().to(wishes::new::create_wish))
-            .route("", web::get().to(wishes::view::get_wishes))
-            .route("", web::put().to(wishes::update::update_wish))
-            .route("/{id}", web::delete().to(wishes::update::disable_wish)),
-    )
-    .service(web::scope("/wish_claims").route("", web::post().to(wishes::claim::claim_wish)));
+            .route("", web::get().to(wishes::handlers::list_wishes))
+            .route("", web::post().to(wishes::handlers::create_wish))
+            .route("/{id}", web::get().to(wishes::handlers::get_wish))
+            .route("/{id}", web::put().to(wishes::handlers::update_wish))
+            .route("/{id}", web::delete().to(wishes::handlers::delete_wish))
+            // 2. Redemption Action (Sub-resource of a wish)
+            .route("/{id}/redeem", web::post().to(wishes::claims::redeem_wish)),
+    );
+
+    // 3. Claims Management & Feedback
+    cfg.service(
+        web::scope("/wish_claims")
+            .route("", web::get().to(wishes::claims::list_my_claims))
+            .route(
+                "/{id}",
+                web::put().to(wishes::claims::update_claim_status),
+            )
+            // Feedback routes (Sub-resource of claims)
+            .route(
+                "/{claim_id}/feedback",
+                web::post().to(wishes::feedbacks::create_feedback),
+            )
+            .route(
+                "/{claim_id}/feedback",
+                web::get().to(wishes::feedbacks::list_feedback),
+            ),
+    );
+
+    // 4. Direct Feedback Management
+    cfg.service(
+        web::scope("/wish_feedbacks").route(
+            "/{id}",
+            web::put().to(wishes::feedbacks::update_feedback),
+        ),
+    );
 }
 
 /// 签到 (Check-in)
@@ -226,21 +256,6 @@ fn checkin_routes(cfg: &mut web::ServiceConfig) {
         web::scope("/sign")
             .route("", web::post().to(users::sign::sign_in))
             .route("/info", web::get().to(users::sign::get_sign_info)),
-    )
-    .service(
-        web::scope("/wish_claims")
-            .route(
-                "/{claim_id}/checkins",
-                web::post().to(wishes::checkin::create_wish_claim_checkin),
-            )
-            .route(
-                "/{claim_id}/checkins",
-                web::get().to(wishes::checkin::list_wish_claim_checkins),
-            )
-            .route(
-                "/checkins/{id}",
-                web::put().to(wishes::checkin::update_wish_claim_checkin),
-            ),
     );
 }
 

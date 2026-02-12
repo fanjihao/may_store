@@ -1,6 +1,7 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
+use ntex::web::types::Query;
 
 // ================= Enums =================
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, ToSchema, sqlx::Type, PartialEq, Eq)]
@@ -29,7 +30,8 @@ pub struct WishRecord {
     pub wish_name: String,
     pub wish_cost: i32,
     pub status: WishStatusEnum,
-    pub created_by: i64, // group_id
+    pub created_by: i64, // user_id
+    pub group_id: i64,   // group_id
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -46,10 +48,17 @@ pub struct WishClaimRecord {
     pub fulfill_at: Option<DateTime<Utc>>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
+    // Feedback Fields
+    pub photo_url: Option<String>,
+    pub location_text: Option<String>,
+    pub mood_text: Option<String>,
+    pub feeling_text: Option<String>,
+    pub feedback_at: Option<DateTime<Utc>>,
 }
 
-// ================= DTOs =================
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+// ================= Inputs & Outputs =================
+
+#[derive(Debug, Deserialize, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct WishCreateInput {
     pub wish_name: String,
@@ -57,30 +66,12 @@ pub struct WishCreateInput {
     pub group_id: i64,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[derive(Debug, Deserialize, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct WishUpdateInput {
-    pub wish_id: i64,
     pub wish_name: Option<String>,
     pub wish_cost: Option<i32>,
     pub status: Option<WishStatusEnum>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema, utoipa::IntoParams)]
-#[serde(rename_all = "camelCase")]
-pub struct WishQuery {
-    pub status: Option<WishStatusEnum>,
-    pub created_by: Option<i64>,
-    pub limit: Option<i64>,
-    pub cursor: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema, utoipa::IntoParams)]
-#[serde(rename_all = "camelCase")]
-#[into_params(parameter_in = Query)]
-pub struct WishClaimCheckinQuery {
-    pub limit: Option<i64>,
-    pub cursor: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
@@ -90,10 +81,13 @@ pub struct WishOut {
     pub wish_name: String,
     pub wish_cost: i32,
     pub status: WishStatusEnum,
-    pub created_by: i64, // group_id
+    pub created_by: i64,
+    pub group_id: i64,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
-    pub current_claim_status: Option<WishClaimStatusEnum>,
+    // Enriched fields
+    pub claim_status: Option<WishClaimStatusEnum>,
+    pub claimant_id: Option<i64>,
 }
 
 impl From<WishRecord> for WishOut {
@@ -104,24 +98,33 @@ impl From<WishRecord> for WishOut {
             wish_cost: r.wish_cost,
             status: r.status,
             created_by: r.created_by,
+            group_id: r.group_id,
             created_at: r.created_at,
             updated_at: r.updated_at,
-            current_claim_status: None,
+            claim_status: None,
+            claimant_id: None,
         }
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema, utoipa::IntoParams)]
+#[serde(rename_all = "camelCase")]
+#[into_params(parameter_in = Query)]
+pub struct WishQuery {
+    pub group_id: Option<i64>,
+    pub status: Option<WishStatusEnum>,
+}
+
+#[derive(Debug, Deserialize, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct WishClaimCreateInput {
     pub wish_id: i64,
     pub remark: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[derive(Debug, Deserialize, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct WishClaimUpdateInput {
-    pub claim_id: i64,
     pub to_status: WishClaimStatusEnum,
     pub remark: Option<String>,
 }
@@ -138,6 +141,12 @@ pub struct WishClaimOut {
     pub fulfill_at: Option<DateTime<Utc>>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
+    // Feedback
+    pub photo_url: Option<String>,
+    pub location_text: Option<String>,
+    pub mood_text: Option<String>,
+    pub feeling_text: Option<String>,
+    pub feedback_at: Option<DateTime<Utc>>,
 }
 
 impl From<WishClaimRecord> for WishClaimOut {
@@ -152,6 +161,11 @@ impl From<WishClaimRecord> for WishClaimOut {
             fulfill_at: r.fulfill_at,
             created_at: r.created_at,
             updated_at: r.updated_at,
+            photo_url: r.photo_url,
+            location_text: r.location_text,
+            mood_text: r.mood_text,
+            feeling_text: r.feeling_text,
+            feedback_at: r.feedback_at,
         }
     }
 }
@@ -169,68 +183,12 @@ impl WishClaimStatusEnum {
     }
 }
 
-// ================= Post-Fulfillment Check-in =================
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema, sqlx::FromRow)]
-#[serde(rename_all = "camelCase")]
-pub struct WishClaimCheckinRecord {
-    pub id: i64,
-    pub claim_id: i64,
-    pub user_id: i64,
-    pub photo_url: Option<String>,
-    pub location_text: Option<String>,
-    pub mood_text: Option<String>,
-    pub feeling_text: Option<String>,
-    pub checkin_time: DateTime<Utc>,
-    pub created_at: DateTime<Utc>,
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
-pub struct WishClaimCheckinCreateInput {
-    pub claim_id: i64,
+pub struct WishClaimFeedbackInput {
     pub photo_url: Option<String>,
     pub location_text: Option<String>,
     pub mood_text: Option<String>,
     pub feeling_text: Option<String>,
-    pub checkin_time: Option<DateTime<Utc>>, // 客户端可覆盖时间
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
-#[serde(rename_all = "camelCase")]
-pub struct WishClaimCheckinUpdateInput {
-    pub photo_url: Option<String>,
-    pub location_text: Option<String>,
-    pub mood_text: Option<String>,
-    pub feeling_text: Option<String>,
-    pub checkin_time: Option<DateTime<Utc>>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
-#[serde(rename_all = "camelCase")]
-pub struct WishClaimCheckinOut {
-    pub id: i64,
-    pub claim_id: i64,
-    pub user_id: i64,
-    pub photo_url: Option<String>,
-    pub location_text: Option<String>,
-    pub mood_text: Option<String>,
-    pub feeling_text: Option<String>,
-    pub checkin_time: DateTime<Utc>,
-    pub created_at: DateTime<Utc>,
-}
-
-impl From<WishClaimCheckinRecord> for WishClaimCheckinOut {
-    fn from(r: WishClaimCheckinRecord) -> Self {
-        Self {
-            id: r.id,
-            claim_id: r.claim_id,
-            user_id: r.user_id,
-            photo_url: r.photo_url,
-            location_text: r.location_text,
-            mood_text: r.mood_text,
-            feeling_text: r.feeling_text,
-            checkin_time: r.checkin_time,
-            created_at: r.created_at,
-        }
-    }
+    pub feedback_at: Option<DateTime<Utc>>,
 }

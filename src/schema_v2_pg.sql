@@ -419,7 +419,8 @@ CREATE TABLE wishes (
     wish_name VARCHAR(128) NOT NULL,
     wish_cost INT NOT NULL,
     status wish_status_enum NOT NULL DEFAULT 'ON',
-    created_by BIGINT NOT NULL REFERENCES association_groups(group_id) ON DELETE RESTRICT,
+    created_by BIGINT NOT NULL REFERENCES users(user_id) ON DELETE RESTRICT,
+    group_id BIGINT NOT NULL REFERENCES association_groups(group_id) ON DELETE CASCADE,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
@@ -428,11 +429,14 @@ COMMENT ON COLUMN wishes.wish_id IS '心愿ID';
 COMMENT ON COLUMN wishes.wish_name IS '心愿名称';
 COMMENT ON COLUMN wishes.wish_cost IS '心愿所需积分';
 COMMENT ON COLUMN wishes.status IS '心愿状态';
-COMMENT ON COLUMN wishes.created_by IS '创建者团队ID（关联组ID）';
+COMMENT ON COLUMN wishes.created_by IS '创建者用户ID';
+COMMENT ON COLUMN wishes.group_id IS '所属关联组ID';
 COMMENT ON COLUMN wishes.created_at IS '创建时间';
 COMMENT ON COLUMN wishes.updated_at IS '更新时间';
 CREATE INDEX idx_wish_status ON wishes(status);
 CREATE INDEX idx_wish_created_by ON wishes(created_by);
+CREATE INDEX idx_wish_group ON wishes(group_id);
+
 CREATE TABLE wish_claims (
     id BIGSERIAL PRIMARY KEY,
     wish_id BIGINT NOT NULL REFERENCES wishes(wish_id) ON DELETE CASCADE,
@@ -441,10 +445,16 @@ CREATE TABLE wish_claims (
     status wish_claim_status_enum NOT NULL DEFAULT 'PROCESSING',
     remark VARCHAR(255),
     fulfill_at TIMESTAMPTZ,
+    -- Feedback fields merged here
+    photo_url VARCHAR(512),
+    location_text VARCHAR(255),
+    mood_text VARCHAR(128),
+    feeling_text VARCHAR(255),
+    feedback_at TIMESTAMPTZ,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
-COMMENT ON TABLE wish_claims IS '心愿兑换记录';
+COMMENT ON TABLE wish_claims IS '心愿兑换及反馈记录';
 COMMENT ON COLUMN wish_claims.id IS '兑换记录主键';
 COMMENT ON COLUMN wish_claims.wish_id IS '心愿ID';
 COMMENT ON COLUMN wish_claims.user_id IS '兑换用户ID';
@@ -452,33 +462,17 @@ COMMENT ON COLUMN wish_claims.cost IS '消耗积分';
 COMMENT ON COLUMN wish_claims.status IS '兑换状态';
 COMMENT ON COLUMN wish_claims.remark IS '备注';
 COMMENT ON COLUMN wish_claims.fulfill_at IS '完成时间';
+COMMENT ON COLUMN wish_claims.photo_url IS '反馈图片URL';
+COMMENT ON COLUMN wish_claims.location_text IS '反馈地点';
+COMMENT ON COLUMN wish_claims.mood_text IS '反馈心情';
+COMMENT ON COLUMN wish_claims.feeling_text IS '反馈感受';
+COMMENT ON COLUMN wish_claims.feedback_at IS '反馈时间';
 COMMENT ON COLUMN wish_claims.created_at IS '创建时间';
 COMMENT ON COLUMN wish_claims.updated_at IS '更新时间';
 CREATE INDEX idx_wc_user ON wish_claims(user_id);
 CREATE INDEX idx_wc_status ON wish_claims(status);
-CREATE TABLE wish_claim_checkins (
-    id BIGSERIAL PRIMARY KEY,
-    claim_id BIGINT NOT NULL REFERENCES wish_claims(id) ON DELETE CASCADE,
-    user_id BIGINT NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
-    photo_url VARCHAR(512),
-    location_text VARCHAR(255),
-    mood_text VARCHAR(128),
-    feeling_text VARCHAR(255),
-    checkin_time TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-COMMENT ON TABLE wish_claim_checkins IS '心愿兑换后的打卡反馈记录';
-COMMENT ON COLUMN wish_claim_checkins.id IS '打卡主键';
-COMMENT ON COLUMN wish_claim_checkins.claim_id IS '兑换记录ID';
-COMMENT ON COLUMN wish_claim_checkins.user_id IS '打卡用户ID';
-COMMENT ON COLUMN wish_claim_checkins.photo_url IS '图片URL';
-COMMENT ON COLUMN wish_claim_checkins.location_text IS '地点描述';
-COMMENT ON COLUMN wish_claim_checkins.mood_text IS '心情标签/短语';
-COMMENT ON COLUMN wish_claim_checkins.feeling_text IS '感受描述';
-COMMENT ON COLUMN wish_claim_checkins.checkin_time IS '打卡时间';
-COMMENT ON COLUMN wish_claim_checkins.created_at IS '记录创建时间';
-CREATE INDEX idx_wcc_claim ON wish_claim_checkins(claim_id);
-CREATE INDEX idx_wcc_user_time ON wish_claim_checkins(user_id, checkin_time);
+CREATE UNIQUE INDEX idx_wc_wish_active ON wish_claims(wish_id) WHERE status != 'CANCELLED';
+
 -- ================= ORDER RATINGS =================
 CREATE TABLE order_ratings (
     rating_id BIGSERIAL PRIMARY KEY,
