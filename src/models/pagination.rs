@@ -8,6 +8,7 @@ pub struct CursorPage<T> {
     pub items: Vec<T>,
     pub next_cursor: Option<String>,
     pub has_more: bool,
+    pub total: Option<i64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema, IntoParams)]

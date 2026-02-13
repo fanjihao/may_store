@@ -129,7 +129,7 @@ pub async fn get_group_activities(
             -- 心愿创建
             SELECT
                 w.wish_id AS ref_id,
-                NULL::bigint AS actor_user_id,
+                w.created_by AS actor_user_id,
                 'WISH_CREATED' AS event_type,
                 w.created_at AS occurred_at,
                 w.wish_name AS ref_name,
@@ -137,22 +137,21 @@ pub async fn get_group_activities(
                 NULL::text AS point_tx_type,
                 NULL::int AS point_balance_after
             FROM wishes w
-            WHERE w.created_by=$1
+            WHERE w.group_id=$1
 
             UNION ALL
-            -- 心愿兑换（组内成员）
+            -- 心愿兑换
             SELECT
-                wc.id AS ref_id,
-                wc.user_id AS actor_user_id,
+                w.wish_id AS ref_id,
+                w.claimed_by AS actor_user_id,
                 'WISH_CLAIMED' AS event_type,
-                wc.created_at AS occurred_at,
+                w.claimed_at AS occurred_at,
                 w.wish_name AS ref_name,
                 NULL::int AS point_amount,
                 NULL::text AS point_tx_type,
                 NULL::int AS point_balance_after
-            FROM wish_claims wc
-            JOIN wishes w ON w.wish_id=wc.wish_id
-            JOIN association_group_members agm ON agm.user_id=wc.user_id AND agm.group_id=$1
+            FROM wishes w
+            WHERE w.group_id=$1 AND w.claimed_at IS NOT NULL
 
             UNION ALL
             -- 积分流水（组内成员）
@@ -237,5 +236,6 @@ pub async fn get_group_activities(
         items,
         next_cursor,
         has_more,
+        total: None,
     }))
 }

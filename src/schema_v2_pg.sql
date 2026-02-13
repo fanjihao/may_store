@@ -32,8 +32,7 @@ CREATE TYPE point_tx_type_enum AS ENUM (
     'SWEET_TALK_REWARD',
     'OTHER'
 );
-CREATE TYPE wish_status_enum AS ENUM ('ON', 'OFF');
-CREATE TYPE wish_claim_status_enum AS ENUM ('PROCESSING', 'DONE', 'CANCELLED');
+CREATE TYPE wish_status_enum AS ENUM ('CREATED', 'CLAIMED', 'FINISHED', 'CLOSED');
 CREATE TYPE lottery_success_enum AS ENUM ('SUCCESS', 'FAIL');
 CREATE TYPE message_status_enum AS ENUM ('ACTIVE', 'REVOKED');
 CREATE TYPE feedback_status_enum AS ENUM ('NEW', 'PROCESSING', 'CLOSED');
@@ -418,60 +417,52 @@ CREATE TABLE wishes (
     wish_id BIGSERIAL PRIMARY KEY,
     wish_name VARCHAR(128) NOT NULL,
     wish_cost INT NOT NULL,
-    status wish_status_enum NOT NULL DEFAULT 'ON',
+    status wish_status_enum NOT NULL DEFAULT 'CREATED',
     created_by BIGINT NOT NULL REFERENCES users(user_id) ON DELETE RESTRICT,
     group_id BIGINT NOT NULL REFERENCES association_groups(group_id) ON DELETE CASCADE,
+    claimed_by BIGINT REFERENCES users(user_id) ON DELETE SET NULL,
+    claimed_at TIMESTAMPTZ,
+    claim_cost INT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
-COMMENT ON TABLE wishes IS '心愿模板';
+COMMENT ON TABLE wishes IS '心愿模板及状态';
 COMMENT ON COLUMN wishes.wish_id IS '心愿ID';
 COMMENT ON COLUMN wishes.wish_name IS '心愿名称';
 COMMENT ON COLUMN wishes.wish_cost IS '心愿所需积分';
-COMMENT ON COLUMN wishes.status IS '心愿状态';
+COMMENT ON COLUMN wishes.status IS '心愿状态: CREATED/CLAIMED/FINISHED/CLOSED';
 COMMENT ON COLUMN wishes.created_by IS '创建者用户ID';
 COMMENT ON COLUMN wishes.group_id IS '所属关联组ID';
+COMMENT ON COLUMN wishes.claimed_by IS '兑换者用户ID';
+COMMENT ON COLUMN wishes.claimed_at IS '兑换时间';
+COMMENT ON COLUMN wishes.claim_cost IS '兑换时消耗积分';
 COMMENT ON COLUMN wishes.created_at IS '创建时间';
 COMMENT ON COLUMN wishes.updated_at IS '更新时间';
 CREATE INDEX idx_wish_status ON wishes(status);
 CREATE INDEX idx_wish_created_by ON wishes(created_by);
 CREATE INDEX idx_wish_group ON wishes(group_id);
+CREATE INDEX idx_wish_claimed_by ON wishes(claimed_by);
 
-CREATE TABLE wish_claims (
-    id BIGSERIAL PRIMARY KEY,
+CREATE TABLE wish_feedbacks (
+    feedback_id BIGSERIAL PRIMARY KEY,
     wish_id BIGINT NOT NULL REFERENCES wishes(wish_id) ON DELETE CASCADE,
     user_id BIGINT NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
-    cost INT NOT NULL,
-    status wish_claim_status_enum NOT NULL DEFAULT 'PROCESSING',
-    remark VARCHAR(255),
-    fulfill_at TIMESTAMPTZ,
-    -- Feedback fields merged here
-    photo_url VARCHAR(512),
-    location_text VARCHAR(255),
-    mood_text VARCHAR(128),
-    feeling_text VARCHAR(255),
-    feedback_at TIMESTAMPTZ,
+    content TEXT,
+    images JSONB,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE(wish_id)
 );
-COMMENT ON TABLE wish_claims IS '心愿兑换及反馈记录';
-COMMENT ON COLUMN wish_claims.id IS '兑换记录主键';
-COMMENT ON COLUMN wish_claims.wish_id IS '心愿ID';
-COMMENT ON COLUMN wish_claims.user_id IS '兑换用户ID';
-COMMENT ON COLUMN wish_claims.cost IS '消耗积分';
-COMMENT ON COLUMN wish_claims.status IS '兑换状态';
-COMMENT ON COLUMN wish_claims.remark IS '备注';
-COMMENT ON COLUMN wish_claims.fulfill_at IS '完成时间';
-COMMENT ON COLUMN wish_claims.photo_url IS '反馈图片URL';
-COMMENT ON COLUMN wish_claims.location_text IS '反馈地点';
-COMMENT ON COLUMN wish_claims.mood_text IS '反馈心情';
-COMMENT ON COLUMN wish_claims.feeling_text IS '反馈感受';
-COMMENT ON COLUMN wish_claims.feedback_at IS '反馈时间';
-COMMENT ON COLUMN wish_claims.created_at IS '创建时间';
-COMMENT ON COLUMN wish_claims.updated_at IS '更新时间';
-CREATE INDEX idx_wc_user ON wish_claims(user_id);
-CREATE INDEX idx_wc_status ON wish_claims(status);
-CREATE UNIQUE INDEX idx_wc_wish_active ON wish_claims(wish_id) WHERE status != 'CANCELLED';
+COMMENT ON TABLE wish_feedbacks IS '心愿反馈记录';
+COMMENT ON COLUMN wish_feedbacks.feedback_id IS '反馈主键ID';
+COMMENT ON COLUMN wish_feedbacks.wish_id IS '心愿ID';
+COMMENT ON COLUMN wish_feedbacks.user_id IS '反馈用户ID(通常是兑换者)';
+COMMENT ON COLUMN wish_feedbacks.content IS '反馈内容';
+COMMENT ON COLUMN wish_feedbacks.images IS '反馈图片列表JSON';
+COMMENT ON COLUMN wish_feedbacks.created_at IS '创建时间';
+COMMENT ON COLUMN wish_feedbacks.updated_at IS '更新时间';
+CREATE INDEX idx_wf_wish ON wish_feedbacks(wish_id);
+
 
 -- ================= ORDER RATINGS =================
 CREATE TABLE order_ratings (
@@ -695,13 +686,3 @@ CREATE INDEX idx_wst_active ON wx_subscription_templates(is_active);
 --     NOW()
 -- );
 -- ============================================
-
--- ========= OPTIONAL TRIGGERS (COMMENTED OUT) =========
--- CREATE OR REPLACE FUNCTION touch_updated_at()
--- RETURNS trigger AS $$
--- BEGIN
---   NEW.updated_at = NOW();
---   RETURN NEW;
--- END; $$ LANGUAGE plpgsql;
--- Example: CREATE TRIGGER trg_touch_users BEFORE UPDATE ON users FOR EACH ROW EXECUTE FUNCTION touch_updated_at();
--- End of unified schema v2

@@ -115,6 +115,7 @@ pub async fn list_ingredients(
         items: list,
         next_cursor,
         has_more,
+        total: None,
     }))
 }
 

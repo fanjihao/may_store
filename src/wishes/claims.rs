@@ -1,43 +1,21 @@
 use crate::{
     errors::CustomError,
     models::{
-        pagination::{decode_cursor, encode_cursor, CursorPage},
         users::UserToken,
         wishes::{
-            WishClaimFeedbackInput, WishClaimOut, WishClaimRecord, WishClaimStatusEnum,
-            WishClaimUpdateInput, WishStatusEnum,
+            WishFeedbackInput, WishFeedbackRecord, WishOut, WishRecord, WishStatusEnum,
         },
     },
     AppState,
 };
-use chrono::Utc;
+// use chrono::Utc;
 use ntex::web::{
-    types::{Json, Path, Query, State},
+    types::{Json, Path, State},
     HttpResponse, Responder,
 };
-use serde::{Deserialize, Serialize};
-use sqlx::{QueryBuilder, Row};
+use sqlx::{types::Json as SqlxJson, Row, FromRow};
 use std::sync::Arc;
-use utoipa::ToSchema;
-
-#[derive(Debug, Deserialize, Serialize, ToSchema)]
-pub struct RedeemInput {
-    pub remark: Option<String>,
-}
-
-#[derive(Debug, Deserialize, Serialize)]
-pub struct ClaimCursor {
-    pub created_at: chrono::DateTime<chrono::Utc>,
-    pub id: i64,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema, utoipa::IntoParams)]
-#[serde(rename_all = "camelCase")]
-#[into_params(parameter_in = Query)]
-pub struct WishClaimQuery {
-    pub limit: Option<i64>,
-    pub cursor: Option<String>,
-}
+// use utoipa::ToSchema;
 
 // 5. Redeem wish
 #[utoipa::path(
@@ -45,55 +23,42 @@ pub struct WishClaimQuery {
     path = "/wishes/{id}/redeem",
     tag = "心愿",
     params(("id" = i64, Path, description = "心愿ID")),
-    request_body = RedeemInput,
-    responses((status = 201, body = WishClaimOut))
+    responses((status = 200, body = WishOut))
 )]
 pub async fn redeem_wish(
     user_token: UserToken,
     state: State<Arc<AppState>>,
     id: Path<i64>,
-    data: Json<RedeemInput>,
 ) -> Result<impl Responder, CustomError> {
     let db = &state.db_pool;
     let mut tx = db.begin().await?;
 
-    // Get wish
+    // Get wish with lock
     let wish_row = sqlx::query(
-        "SELECT wish_id, wish_name, wish_cost, status, created_by FROM wishes WHERE wish_id=$1 FOR SHARE"
+        "SELECT * FROM wishes WHERE wish_id=$1 FOR UPDATE"
     )
     .bind(*id)
     .fetch_optional(&mut *tx).await?;
 
-    let Some(wr) = wish_row else {
+    let Some(r) = wish_row else {
         tx.rollback().await.ok();
         return Err(CustomError::BadRequest("心愿不存在".into()));
     };
+    // Map to WishRecord manually or via from_row if we use query_as earlier
+    // But r is PgRow. Let's cast.
+    let wish_rec = WishRecord::from_row(&r).map_err(|e| CustomError::InternalServerError(e.to_string()))?;
 
-    let wish_cost: i32 = wr.get("wish_cost");
-    let status: WishStatusEnum = wr.get("status");
-    let created_by: i64 = wr.get("created_by");
-
-    if status != WishStatusEnum::ON {
+    if wish_rec.status != WishStatusEnum::CREATED {
         tx.rollback().await.ok();
-        return Err(CustomError::BadRequest("心愿已关闭".into()));
+        return Err(CustomError::BadRequest("心愿状态不可兑换".into()));
     }
 
-    if created_by == user_token.user_id {
+    if wish_rec.created_by == user_token.user_id {
         tx.rollback().await.ok();
         return Err(CustomError::BadRequest("无法兑换自己的心愿".into()));
     }
 
-    // Check for ANY existing processing or done claim (Global uniqueness)
-    let existing = sqlx::query(
-        "SELECT id FROM wish_claims WHERE wish_id=$1 AND status != 'CANCELLED'"
-    )
-    .bind(*id)
-    .fetch_optional(&mut *tx).await?;
-
-    if existing.is_some() {
-        tx.rollback().await.ok();
-        return Err(CustomError::BadRequest("该心愿已被抢先兑换".into()));
-    }
+    let cost = wish_rec.wish_cost;
 
     // Check points
     let user_row = sqlx::query("SELECT love_point FROM users WHERE user_id=$1 FOR UPDATE")
@@ -101,12 +66,12 @@ pub async fn redeem_wish(
         .fetch_one(&mut *tx).await?;
     let love_point: i32 = user_row.get("love_point");
 
-    if love_point < wish_cost {
+    if love_point < cost {
         tx.rollback().await.ok();
         return Err(CustomError::BadRequest("积分不足".into()));
     }
 
-    let balance_after = love_point - wish_cost;
+    let balance_after = love_point - cost;
 
     // Deduct points
     sqlx::query("UPDATE users SET love_point=$2 WHERE user_id=$1")
@@ -119,264 +84,98 @@ pub async fn redeem_wish(
         "INSERT INTO point_transactions(user_id, amount, type, ref_type, ref_id, balance_after) VALUES($1,$2,'WISH_COST',2,$3,$4)"
     )
     .bind(user_token.user_id)
-    .bind(-wish_cost)
+    .bind(-cost)
     .bind(*id)
     .bind(balance_after)
     .execute(&mut *tx).await?;
 
-    // Create claim
-    let claim_row = sqlx::query(
-        "INSERT INTO wish_claims (wish_id, user_id, cost, status, remark) VALUES ($1,$2,$3,'PROCESSING',$4) RETURNING *"
+    // Update wish
+    let updated_rec = sqlx::query_as::<_, WishRecord>(
+        "UPDATE wishes SET status='CLAIMED', claimed_by=$1, claimed_at=NOW(), claim_cost=$2, updated_at=NOW() WHERE wish_id=$3 RETURNING *"
     )
-    .bind(*id)
     .bind(user_token.user_id)
-    .bind(wish_cost)
-    .bind(&data.remark)
+    .bind(cost)
+    .bind(*id)
     .fetch_one(&mut *tx).await?;
 
     tx.commit().await?;
-    let rec = WishClaimRecord::from_row(&claim_row).map_err(|e| CustomError::InternalServerError(e.to_string()))?;
 
-    Ok(HttpResponse::Created().json(&WishClaimOut::from(rec)))
-}
-
-// Update claim status (for redemption workflow)
-#[utoipa::path(
-    put,
-    path = "/wish_claims/{id}",
-    tag = "心愿",
-    params(("id" = i64, Path, description = "兑换ID")),
-    request_body = WishClaimUpdateInput,
-    responses((status = 200, body = WishClaimOut))
-)]
-pub async fn update_claim_status(
-    user_token: UserToken,
-    state: State<Arc<AppState>>,
-    id: Path<i64>,
-    data: Json<WishClaimUpdateInput>,
-) -> Result<impl Responder, CustomError> {
-    let db = &state.db_pool;
-    let mut tx = db.begin().await?;
-
-    let row = sqlx::query(
-        "SELECT * FROM wish_claims WHERE id=$1 FOR UPDATE"
-    )
-    .bind(*id)
-    .fetch_optional(&mut *tx).await?;
-
-    let Some(r) = row else {
-        tx.rollback().await.ok();
-        return Err(CustomError::BadRequest("兑换记录不存在".into()));
-    };
-    let rec_origin = WishClaimRecord::from_row(&r).map_err(|e| CustomError::InternalServerError(e.to_string()))?;
-
-    if rec_origin.status == data.to_status {
-        tx.rollback().await.ok();
-        return Err(CustomError::BadRequest("状态未变化".into()));
-    }
-    if !rec_origin.status.can_transition(data.to_status) {
-        tx.rollback().await.ok();
-        return Err(CustomError::BadRequest("非法状态流转".into()));
-    }
-
-    if rec_origin.user_id != user_token.user_id {
-        tx.rollback().await.ok();
-        return Err(CustomError::BadRequest("只能操作自己的兑换".into()));
-    }
-
-    match data.to_status {
-        WishClaimStatusEnum::DONE => {
-            let row = sqlx::query(
-                "UPDATE wish_claims SET status='DONE', fulfill_at=NOW(), remark=$2, updated_at=NOW() WHERE id=$1 RETURNING *"
-            )
-            .bind(*id)
-            .bind(&data.remark)
-            .fetch_one(&mut *tx).await?;
-
-            tx.commit().await?;
-
-            // Pseudo push (async)
-            let pool_clone = state.db_pool.clone();
-            let wish_id = rec_origin.wish_id;
-            tokio::spawn(async move {
-                if let Err(e) = crate::services::notifications::push_order_status(wish_id, pool_clone).await {
-                    log::warn!("wish fulfill push error: {}", e);
-                }
-            });
-
-            let rec = WishClaimRecord::from_row(&row).map_err(|e| CustomError::InternalServerError(e.to_string()))?;
-            Ok(HttpResponse::Ok().json(&WishClaimOut::from(rec)))
-        }
-        WishClaimStatusEnum::CANCELLED => {
-            let row = sqlx::query(
-                "UPDATE wish_claims SET status='CANCELLED', remark=$2, updated_at=NOW() WHERE id=$1 RETURNING *"
-            )
-            .bind(*id)
-            .bind(&data.remark)
-            .fetch_one(&mut *tx).await?;
-
-            tx.commit().await?;
-
-            let rec = WishClaimRecord::from_row(&row).map_err(|e| CustomError::InternalServerError(e.to_string()))?;
-            Ok(HttpResponse::Ok().json(&WishClaimOut::from(rec)))
-        }
-        _ => {
-            tx.rollback().await.ok();
-            Err(CustomError::BadRequest("不支持的目标状态".into()))
-        }
-    }
-}
-
-// Get user's claim history
-#[utoipa::path(
-    get,
-    path = "/wish_claims",
-    tag = "心愿",
-    params(WishClaimQuery),
-    responses((status = 200, body = CursorPage<WishClaimOut>))
-)]
-pub async fn list_my_claims(
-    user_token: UserToken,
-    state: State<Arc<AppState>>,
-    query: Query<WishClaimQuery>,
-) -> Result<impl Responder, CustomError> {
-    let limit = query.limit.unwrap_or(20).clamp(1, 100);
-
-    let mut qb: QueryBuilder<sqlx::Postgres> = QueryBuilder::new(
-        "SELECT * FROM wish_claims WHERE user_id = "
-    );
-    qb.push_bind(user_token.user_id);
-
-    if let Some(cursor_str) = &query.cursor {
-        if let Some(cursor) = decode_cursor::<ClaimCursor>(cursor_str) {
-            qb.push(" AND (created_at, id) < (");
-            qb.push_bind(cursor.created_at);
-            qb.push(", ");
-            qb.push_bind(cursor.id);
-            qb.push(") ");
-        }
-    }
-
-    qb.push(" ORDER BY created_at DESC, id DESC LIMIT ");
-    qb.push_bind(limit + 1);
-
-    let rows = qb.build().fetch_all(&state.db_pool).await?;
-
-    let mut rows = rows;
-    let has_more = rows.len() > limit as usize;
-    if has_more {
-        rows.pop();
-    }
-
-    let next_cursor = if has_more {
-        rows.last().map(|r| {
-            encode_cursor(&ClaimCursor {
-                created_at: r.get("created_at"),
-                id: r.get("id"),
-            })
-        })
-    } else {
-        None
-    };
-
-    let items: Vec<WishClaimOut> = rows
-        .into_iter()
-        .map(|r| {
-             let rec = WishClaimRecord::from_row(&r).unwrap(); // safe given query
-             WishClaimOut::from(rec)
-        })
-        .collect();
-
-    Ok(HttpResponse::Ok().json(&CursorPage {
-        items,
-        next_cursor,
-        has_more,
-    }))
-}
-
-// 6. Get Single Claim (with feedback)
-#[utoipa::path(
-    get,
-    path = "/wish_claims/{id}",
-    tag = "心愿",
-    params(("id" = i64, Path, description = "兑换ID")),
-    responses((status = 200, body = WishClaimOut))
-)]
-pub async fn get_claim(
-    _user_token: UserToken, // Allow any user to view? Or restrict?
-    // Requirement says: Creator can see feedback, Redeemer can edit.
-    // Let's allow authenticated users to view for now, usually Group members.
-    state: State<Arc<AppState>>,
-    id: Path<i64>,
-) -> Result<impl Responder, CustomError> {
-    let row = sqlx::query("SELECT * FROM wish_claims WHERE id=$1")
-        .bind(*id)
-        .fetch_optional(&state.db_pool).await?;
-
-    let Some(r) = row else {
-        return Err(CustomError::BadRequest("兑换记录不存在".into()));
-    };
-
-    let rec = WishClaimRecord::from_row(&r).map_err(|e| CustomError::InternalServerError(e.to_string()))?;
-    Ok(HttpResponse::Ok().json(&WishClaimOut::from(rec)))
+    Ok(HttpResponse::Ok().json(&WishOut::from_record(updated_rec, None)))
 }
 
 // 7. Submit/Update Feedback
 #[utoipa::path(
     put,
-    path = "/wish_claims/{id}/feedback",
+    path = "/wishes/{id}/feedback",
     tag = "心愿",
-    params(("id" = i64, Path, description = "兑换ID")),
-    request_body = WishClaimFeedbackInput,
-    responses((status = 200, body = WishClaimOut))
+    params(("id" = i64, Path, description = "心愿ID")),
+    request_body = WishFeedbackInput,
+    responses((status = 200, body = WishOut))
 )]
 pub async fn submit_feedback(
     user_token: UserToken,
     state: State<Arc<AppState>>,
     id: Path<i64>,
-    data: Json<WishClaimFeedbackInput>,
+    data: Json<WishFeedbackInput>,
 ) -> Result<impl Responder, CustomError> {
     let db = &state.db_pool;
     let mut tx = db.begin().await?;
 
-    // Lock row
-    let row = sqlx::query("SELECT * FROM wish_claims WHERE id=$1 FOR UPDATE")
+    // Lock wish
+    let wish_row = sqlx::query("SELECT * FROM wishes WHERE wish_id=$1 FOR UPDATE")
         .bind(*id)
         .fetch_optional(&mut *tx).await?;
 
-    let Some(r) = row else {
+    let Some(r) = wish_row else {
         tx.rollback().await.ok();
-        return Err(CustomError::BadRequest("兑换记录不存在".into()));
+        return Err(CustomError::BadRequest("心愿不存在".into()));
     };
-    let rec = WishClaimRecord::from_row(&r).map_err(|e| CustomError::InternalServerError(e.to_string()))?;
+    let wish_rec = WishRecord::from_row(&r).map_err(|e| CustomError::InternalServerError(e.to_string()))?;
 
-    // Check ownership
-    if rec.user_id != user_token.user_id {
+    // Check status
+    // Must be CLAIMED or FINISHED (allow editing)
+    if wish_rec.status != WishStatusEnum::CLAIMED && wish_rec.status != WishStatusEnum::FINISHED {
          tx.rollback().await.ok();
-         return Err(CustomError::BadRequest("只能为自己的兑换提交反馈".into()));
+         return Err(CustomError::BadRequest("心愿状态不可反馈".into()));
     }
 
-    if rec.status == WishClaimStatusEnum::CANCELLED {
+    // Check ownership: Must be the Claimer
+    if wish_rec.claimed_by != Some(user_token.user_id) {
         tx.rollback().await.ok();
-        return Err(CustomError::BadRequest("已取消的兑换无法提交反馈".into()));
+        return Err(CustomError::BadRequest("只能为自己兑换的心愿提交反馈".into()));
     }
 
-    let feedback_at = data.feedback_at.unwrap_or_else(Utc::now);
+    let images_json = data.images.clone().map(SqlxJson);
 
-    // Update fields and ensure status is DONE
-    let updated_row = sqlx::query(
-        "UPDATE wish_claims SET photo_url=$1, location_text=$2, mood_text=$3, feeling_text=$4, feedback_at=$5, status='DONE', fulfill_at=COALESCE(fulfill_at, NOW()), updated_at=NOW() WHERE id=$6 RETURNING *"
+    // Upsert feedback
+    // Since we have UNIQUE(wish_id) on wish_feedbacks, we can use ON CONFLICT
+    let feedback_rec = sqlx::query_as::<_, WishFeedbackRecord>(
+        r#"
+        INSERT INTO wish_feedbacks (wish_id, user_id, content, images, created_at, updated_at)
+        VALUES ($1, $2, $3, $4, NOW(), NOW())
+        ON CONFLICT (wish_id)
+        DO UPDATE SET content = EXCLUDED.content, images = EXCLUDED.images, updated_at = NOW()
+        RETURNING *
+        "#
     )
-    .bind(&data.photo_url)
-    .bind(&data.location_text)
-    .bind(&data.mood_text)
-    .bind(&data.feeling_text)
-    .bind(feedback_at)
     .bind(*id)
+    .bind(user_token.user_id)
+    .bind(&data.content)
+    .bind(images_json)
     .fetch_one(&mut *tx).await?;
+
+    // Update wish status to FINISHED if it was CLAIMED
+    let final_wish_rec = if wish_rec.status == WishStatusEnum::CLAIMED {
+        sqlx::query_as::<_, WishRecord>(
+            "UPDATE wishes SET status='FINISHED', updated_at=NOW() WHERE wish_id=$1 RETURNING *"
+        )
+        .bind(*id)
+        .fetch_one(&mut *tx).await?
+    } else {
+        wish_rec
+    };
 
     tx.commit().await?;
 
-    let rec_new = WishClaimRecord::from_row(&updated_row).map_err(|e| CustomError::InternalServerError(e.to_string()))?;
-    Ok(HttpResponse::Ok().json(&WishClaimOut::from(rec_new)))
+    Ok(HttpResponse::Ok().json(&WishOut::from_record(final_wish_rec, Some(feedback_rec))))
 }

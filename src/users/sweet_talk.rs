@@ -277,5 +277,6 @@ pub async fn get_sweet_talks(
         items,
         next_cursor,
         has_more,
+        total: None,
     }))
 }

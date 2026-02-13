@@ -4,8 +4,7 @@ use crate::{
         pagination::{decode_cursor, encode_cursor, CursorPage},
         users::UserToken,
         wishes::{
-            WishClaimStatusEnum, WishCreateInput, WishOut, WishQuery, WishRecord, WishStatusEnum,
-            WishUpdateInput,
+            WishCreateInput, WishFeedbackRecord, WishOut, WishQuery, WishRecord, WishUpdateInput,
         },
     },
     AppState,
@@ -39,32 +38,46 @@ pub async fn list_wishes(
 ) -> Result<impl Responder, CustomError> {
     let limit = query.limit.unwrap_or(50).clamp(1, 200);
 
-    // Require group_id or try to find one?
-    // For now let's assume if not provided, we might return empty or error.
-    // Better to require it or pick the user's primary group.
-    // Let's assume the client sends it. If not, we return empty list for now or error.
+    // Require group_id or assume current user's group context?
+    // Client should provide group_id.
     let Some(group_id) = query.group_id else {
         return Err(CustomError::BadRequest("Missing group_id".into()));
     };
 
     let mut qb: QueryBuilder<sqlx::Postgres> = QueryBuilder::new(
-        "SELECT w.wish_id, w.wish_name, w.wish_cost, w.status, w.created_by, w.group_id, w.created_at, w.updated_at, \
-         wc.status as claim_status, wc.user_id as claimant_id, wc.id as claim_id \
-         FROM wishes w \
-         LEFT JOIN wish_claims wc ON w.wish_id = wc.wish_id AND wc.status != 'CANCELLED' \
-         WHERE w.group_id = "
+        "SELECT * FROM wishes WHERE group_id = "
     );
     qb.push_bind(group_id);
 
-    qb.push(" AND (w.created_by = ");
+    // Visibility Logic:
+    // 1. Created by me
+    // 2. OR Claimed by me
+    // 3. OR Status != CLOSED (Visible to group)
+    let visibility_sql = " AND (created_by = $2 OR claimed_by = $2 OR status != 'CLOSED') ";
+
+    // 1. Get total count (before cursor)
+    let total: i64 = sqlx::query_scalar(&format!(
+        "SELECT COUNT(*) FROM wishes WHERE group_id = $1 {}",
+        visibility_sql
+    ))
+    .bind(group_id)
+    .bind(user_token.user_id)
+    .fetch_one(&state.db_pool)
+    .await?;
+
+    let mut qb: QueryBuilder<sqlx::Postgres> = QueryBuilder::new(
+        "SELECT * FROM wishes WHERE group_id = "
+    );
+    qb.push_bind(group_id);
+    qb.push(" AND (created_by = ");
     qb.push_bind(user_token.user_id);
-    qb.push(" OR (w.status = 'ON' AND wc.id IS NULL) OR wc.user_id = ");
+    qb.push(" OR claimed_by = ");
     qb.push_bind(user_token.user_id);
-    qb.push(") ");
+    qb.push(" OR status != 'CLOSED') ");
 
     if let Some(cursor_str) = &query.cursor {
         if let Some(cursor) = decode_cursor::<WishCursor>(cursor_str) {
-            qb.push(" AND (w.created_at, w.wish_id) < (");
+            qb.push(" AND (created_at, wish_id) < (");
             qb.push_bind(cursor.created_at);
             qb.push(", ");
             qb.push_bind(cursor.wish_id);
@@ -72,11 +85,13 @@ pub async fn list_wishes(
         }
     }
 
-    qb.push(" ORDER BY w.created_at DESC, w.wish_id DESC ");
+    qb.push(" ORDER BY created_at DESC, wish_id DESC ");
     qb.push(" LIMIT ");
-    qb.push_bind(limit + 1);
+    qb.push_bind((limit + 1) as i64);
 
-    let rows = qb.build().fetch_all(&state.db_pool).await?;
+    let rows = qb.build_query_as::<WishRecord>()
+        .fetch_all(&state.db_pool)
+        .await?;
 
     let has_more = rows.len() > limit as usize;
     let mut rows = rows;
@@ -87,40 +102,26 @@ pub async fn list_wishes(
     let next_cursor = if has_more {
         rows.last().map(|r| {
             encode_cursor(&WishCursor {
-                created_at: r.get("created_at"),
-                wish_id: r.get("wish_id"),
+                created_at: r.created_at,
+                wish_id: r.wish_id,
             })
         })
     } else {
         None
     };
 
+    // For list view, we skip fetching feedback details to be lightweight,
+    // or maybe fetch them if needed? Let's keep it lightweight: feedback=None.
     let items: Vec<WishOut> = rows
         .into_iter()
-        .map(|r| {
-            let claim_status: Option<WishClaimStatusEnum> =
-                r.try_get("claim_status").ok().flatten();
-            let claim_id: Option<i64> = r.try_get("claim_id").ok().flatten();
-            let claimant_id: Option<i64> = r.try_get("claimant_id").ok().flatten();
-            WishOut {
-                wish_id: r.get("wish_id"),
-                wish_name: r.get("wish_name"),
-                wish_cost: r.get("wish_cost"),
-                status: r.get("status"),
-                created_by: r.get("created_by"),
-                group_id: r.get("group_id"),
-                created_at: r.get("created_at"),
-                updated_at: r.get("updated_at"),
-                claim_status,
-                claimant_id,
-            }
-        })
+        .map(|r| WishOut::from_record(r, None))
         .collect();
 
     Ok(HttpResponse::Ok().json(&CursorPage {
         items,
         next_cursor,
         has_more,
+        total: Some(total),
     }))
 }
 
@@ -156,27 +157,16 @@ pub async fn create_wish(
         return Err(CustomError::BadRequest("您不是该组成员".into()));
     }
 
-    let db = &state.db_pool;
-    let row = sqlx::query(
-        "INSERT INTO wishes (wish_name, wish_cost, created_by, group_id) VALUES ($1,$2,$3,$4) RETURNING wish_id, wish_name, wish_cost, status, created_by, group_id, created_at, updated_at"
+    let rec = sqlx::query_as::<_, WishRecord>(
+        "INSERT INTO wishes (wish_name, wish_cost, created_by, group_id, status) VALUES ($1,$2,$3,$4,'CREATED') RETURNING *"
     )
     .bind(&data.wish_name)
     .bind(data.wish_cost)
     .bind(user_token.user_id)
     .bind(data.group_id)
-    .fetch_one(db).await?;
+    .fetch_one(&state.db_pool).await?;
 
-    let rec = WishRecord {
-        wish_id: row.get("wish_id"),
-        wish_name: row.get("wish_name"),
-        wish_cost: row.get("wish_cost"),
-        status: WishStatusEnum::ON,
-        created_by: row.get("created_by"),
-        group_id: row.get("group_id"),
-        created_at: row.get("created_at"),
-        updated_at: row.get("updated_at"),
-    };
-    Ok(HttpResponse::Created().json(&WishOut::from(rec)))
+    Ok(HttpResponse::Created().json(&WishOut::from_record(rec, None)))
 }
 
 // Get single wish
@@ -192,40 +182,24 @@ pub async fn get_wish(
     state: State<Arc<AppState>>,
     id: Path<i64>,
 ) -> Result<impl Responder, CustomError> {
-    let row = sqlx::query(
-        "SELECT w.wish_id, w.wish_name, w.wish_cost, w.status, w.created_by, w.group_id, w.created_at, w.updated_at, \
-         wc.status as claim_status, wc.user_id as claimant_id, wc.id as claim_id \
-         FROM wishes w \
-         LEFT JOIN wish_claims wc ON w.wish_id = wc.wish_id AND wc.status != 'CANCELLED' \
-         WHERE w.wish_id=$1"
-    )
-    .bind(*id)
-    .fetch_optional(&state.db_pool).await?;
+    let rec = sqlx::query_as::<_, WishRecord>("SELECT * FROM wishes WHERE wish_id=$1")
+        .bind(*id)
+        .fetch_optional(&state.db_pool)
+        .await?;
 
-    let Some(r) = row else {
+    let Some(r) = rec else {
         return Err(CustomError::BadRequest("心愿不存在".into()));
     };
 
-    // Visibility check (optional, but good practice)
-    // For now we allow if they know the ID, but maybe we should check group?
-    // Let's assume if they have the ID and are in the group they can see it.
+    // Fetch feedback if exists
+    let feedback = sqlx::query_as::<_, WishFeedbackRecord>(
+        "SELECT * FROM wish_feedbacks WHERE wish_id=$1"
+    )
+    .bind(*id)
+    .fetch_optional(&state.db_pool)
+    .await?;
 
-    let claim_status: Option<WishClaimStatusEnum> = r.try_get("claim_status").ok().flatten();
-    let claimant_id: Option<i64> = r.try_get("claimant_id").ok().flatten();
-
-    let out = WishOut {
-        wish_id: r.get("wish_id"),
-        wish_name: r.get("wish_name"),
-        wish_cost: r.get("wish_cost"),
-        status: r.get("status"),
-        created_by: r.get("created_by"),
-        group_id: r.get("group_id"),
-        created_at: r.get("created_at"),
-        updated_at: r.get("updated_at"),
-        claim_status: claim_status,
-        claimant_id,
-    };
-    Ok(HttpResponse::Ok().json(&out))
+    Ok(HttpResponse::Ok().json(&WishOut::from_record(r, feedback)))
 }
 
 // 3. Edit wish
@@ -288,20 +262,19 @@ pub async fn update_wish(
 
     qb.push(", updated_at = NOW() WHERE wish_id = ")
         .push_bind(*id)
-        .push(" RETURNING wish_id, wish_name, wish_cost, status, created_by, group_id, created_at, updated_at");
+        .push(" RETURNING *");
 
-    let updated = qb.build().fetch_one(db).await?;
-    let rec = WishRecord {
-        wish_id: updated.get("wish_id"),
-        wish_name: updated.get("wish_name"),
-        wish_cost: updated.get("wish_cost"),
-        status: updated.get("status"),
-        created_by,
-        group_id: updated.get("group_id"),
-        created_at: updated.get("created_at"),
-        updated_at: updated.get("updated_at"),
-    };
-    Ok(HttpResponse::Ok().json(&WishOut::from(rec)))
+    let updated = qb.build_query_as::<WishRecord>().fetch_one(db).await?;
+
+    // Fetch feedback just in case (though update doesn't touch feedback)
+    let feedback = sqlx::query_as::<_, WishFeedbackRecord>(
+        "SELECT * FROM wish_feedbacks WHERE wish_id=$1"
+    )
+    .bind(*id)
+    .fetch_optional(db)
+    .await?;
+
+    Ok(HttpResponse::Ok().json(&WishOut::from_record(updated, feedback)))
 }
 
 // 4. Delete wish
@@ -319,7 +292,7 @@ pub async fn delete_wish(
 ) -> Result<impl Responder, CustomError> {
     let db = &state.db_pool;
     let row = sqlx::query(
-        "SELECT wish_id, wish_name, wish_cost, status, created_by, group_id, created_at, updated_at FROM wishes WHERE wish_id=$1"
+        "SELECT created_by FROM wishes WHERE wish_id=$1"
     )
     .bind(*id)
     .fetch_optional(db).await?;
@@ -332,21 +305,13 @@ pub async fn delete_wish(
         return Err(CustomError::BadRequest("只能删除自己创建的心愿".into()));
     }
 
-    // Soft delete (OFF)
-    sqlx::query("UPDATE wishes SET status='OFF', updated_at=NOW() WHERE wish_id=$1")
-        .bind(*id)
-        .execute(db)
-        .await?;
+    // Soft delete (CLOSED)
+    let rec = sqlx::query_as::<_, WishRecord>(
+        "UPDATE wishes SET status='CLOSED', updated_at=NOW() WHERE wish_id=$1 RETURNING *"
+    )
+    .bind(*id)
+    .fetch_one(db)
+    .await?;
 
-    let rec = WishRecord {
-        wish_id: r.get("wish_id"),
-        wish_name: r.get("wish_name"),
-        wish_cost: r.get("wish_cost"),
-        status: WishStatusEnum::OFF,
-        created_by,
-        group_id: r.get("group_id"),
-        created_at: r.get("created_at"),
-        updated_at: chrono::Utc::now(),
-    };
-    Ok(HttpResponse::Ok().json(&WishOut::from(rec)))
+    Ok(HttpResponse::Ok().json(&WishOut::from_record(rec, None)))
 }

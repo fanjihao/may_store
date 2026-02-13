@@ -189,6 +189,7 @@ pub async fn get_orders(
         items,
         next_cursor,
         has_more,
+        total: None,
     }))
 }
 

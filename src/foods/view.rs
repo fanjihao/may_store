@@ -151,6 +151,7 @@ pub async fn get_foods(
         items,
         next_cursor,
         has_more,
+        total: None,
     }))
 }
 
@@ -342,6 +343,7 @@ pub async fn get_marked_foods(
         items,
         next_cursor,
         has_more,
+        total: None,
     }))
 }
 

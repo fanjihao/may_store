@@ -215,35 +215,12 @@ fn wish_routes(cfg: &mut web::ServiceConfig) {
             .route("/{id}", web::get().to(wishes::handlers::get_wish))
             .route("/{id}", web::put().to(wishes::handlers::update_wish))
             .route("/{id}", web::delete().to(wishes::handlers::delete_wish))
-            // 2. Redemption Action (Sub-resource of a wish)
-            .route("/{id}/redeem", web::post().to(wishes::claims::redeem_wish)),
-    );
-
-    // 3. Claims Management & Feedback
-    cfg.service(
-        web::scope("/wish_claims")
-            .route("", web::get().to(wishes::claims::list_my_claims))
+            // 2. Actions
+            .route("/{id}/redeem", web::post().to(wishes::claims::redeem_wish))
             .route(
-                "/{id}",
-                web::put().to(wishes::claims::update_claim_status),
-            )
-            // Feedback routes (Sub-resource of claims)
-            .route(
-                "/{claim_id}/feedback",
-                web::post().to(wishes::feedbacks::create_feedback),
-            )
-            .route(
-                "/{claim_id}/feedback",
-                web::get().to(wishes::feedbacks::list_feedback),
+                "/{id}/feedback",
+                web::put().to(wishes::claims::submit_feedback),
             ),
-    );
-
-    // 4. Direct Feedback Management
-    cfg.service(
-        web::scope("/wish_feedbacks").route(
-            "/{id}",
-            web::put().to(wishes::feedbacks::update_feedback),
-        ),
     );
 }
 

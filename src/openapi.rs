@@ -83,9 +83,6 @@ use crate::{foods, game_im, models, models::dashboard, orders, users, upload};
         crate::wishes::handlers::update_wish,
         crate::wishes::handlers::delete_wish,
         crate::wishes::claims::redeem_wish,
-        crate::wishes::claims::update_claim_status,
-        crate::wishes::claims::list_my_claims,
-        crate::wishes::claims::get_claim,
         crate::wishes::claims::submit_feedback,
 
         // 微信 (WeChat)
@@ -176,11 +173,8 @@ use crate::{foods, game_im, models, models::dashboard, orders, users, upload};
             models::wishes::WishUpdateInput,
             models::wishes::WishOut,
             models::wishes::WishQuery,
-            models::wishes::WishClaimCreateInput,
-            models::wishes::WishClaimUpdateInput,
-            models::wishes::WishClaimOut,
-            models::wishes::WishClaimFeedbackInput,
-            crate::wishes::claims::RedeemInput,
+            models::wishes::WishFeedbackInput,
+            models::wishes::WishFeedbackOut,
             dashboard::GroupActivityEventOut,
             dashboard::TopFoodOrderOut,
             dashboard::TopFoodRankingResponse,
