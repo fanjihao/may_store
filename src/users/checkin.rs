@@ -1,7 +1,7 @@
 use crate::{
+    config::AppState,
     errors::CustomError,
     models::users::{DailyCheckinOut, UserToken},
-    AppState,
 };
 use ntex::web::{types::State, HttpResponse, Responder};
 use sqlx::Row;

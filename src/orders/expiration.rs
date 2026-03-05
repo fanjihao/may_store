@@ -1,5 +1,5 @@
 use crate::models::orders::OrderStatusEnum;
-use crate::{errors::CustomError, AppState};
+use crate::{config::AppState, errors::CustomError};
 use chrono::{Duration, Utc};
 use sqlx::Acquire;
 use sqlx::Row;
@@ -21,12 +21,11 @@ async fn expire_pending(db: &sqlx::Pool<sqlx::Postgres>) -> Result<(), CustomErr
     let mut conn = db.acquire().await?;
 
     // Find candidate orders (still PENDING, older than threshold)
-    let rows = sqlx::query(
-        "SELECT order_id FROM orders WHERE status='PENDING' AND created_at < $1"
-    )
-    .bind(threshold)
-    .fetch_all(&mut *conn)
-    .await?;
+    let rows =
+        sqlx::query("SELECT order_id FROM orders WHERE status='PENDING' AND created_at < $1")
+            .bind(threshold)
+            .fetch_all(&mut *conn)
+            .await?;
     if rows.is_empty() {
         return Ok(());
     }
@@ -60,8 +59,10 @@ async fn expire_pending(db: &sqlx::Pool<sqlx::Postgres>) -> Result<(), CustomErr
             if let Err(e) = crate::services::notifications::push_order_with_type(
                 oid,
                 crate::services::notifications::OrderPushType::StatusUpdated,
-                pool_clone
-            ).await {
+                pool_clone,
+            )
+            .await
+            {
                 log::warn!("order expire push error: {}", e);
             }
         });

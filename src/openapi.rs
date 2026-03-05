@@ -4,8 +4,8 @@ use utoipa::openapi::security::{ApiKey, ApiKeyValue, SecurityScheme};
 use utoipa::{Modify, OpenApi};
 
 // Re-export model modules for macro path resolution
-use crate::{foods, game_im, models, models::dashboard, orders, users, upload};
-// 注意：不要导入 models::wishes 为 wishes 避免遮蔽根模块 wishes
+use crate::{dashboard, foods, game_im, models, orders, upload, users};
+// 注意：不要导入 crate::wishes::models 为 wishes 避免遮蔽根模块 wishes
 
 #[derive(OpenApi)]
 #[openapi(
@@ -33,36 +33,36 @@ use crate::{foods, game_im, models, models::dashboard, orders, users, upload};
         users::group_update::update_group,
 
         // 游戏 (Game)
-        game_im::sign::get_user_sig,
-        game_im::rooms::list_rooms,
-        game_im::werewolf::start_game,
-        game_im::werewolf::vote,
+        game_im::routes::get_user_sig,
+        game_im::routes::list_rooms,
+        game_im::routes::start_game,
+        game_im::routes::vote,
 
         // 菜品 (Dish)
-        foods::new::create_food,
-        foods::view::get_foods,
-        foods::view::get_marked_foods,
-        foods::view::draw_blind_box,
-        foods::update::mark_food,
-        foods::update::unmark_food,
-        foods::view::get_food_detail,
-        foods::update::update_food,
-        foods::delete::delete_food,
+        foods::routes::food::create_food,
+        foods::routes::food::get_foods,
+        foods::routes::food::get_marked_foods,
+        foods::routes::food::draw_blind_box,
+        foods::routes::food::mark_food,
+        foods::routes::food::unmark_food,
+        foods::routes::food::get_food_detail,
+        foods::routes::food::update_food,
+        foods::routes::food::delete_food,
 
         // 标签 (Tag)
-        foods::new::create_tag,
-        foods::view::get_tags,
-        foods::update::update_tags_sort,
-        foods::update::update_tag,
-        foods::delete::delete_tag,
+        foods::routes::tag::create_tag,
+        foods::routes::tag::get_tags,
+        foods::routes::tag::update_tags_sort,
+        foods::routes::tag::update_tag,
+        foods::routes::tag::delete_tag,
 
         // 食材 (Ingredient)
-        foods::ingredients::list_ingredients,
-        foods::ingredients::create_ingredient,
-        foods::ingredients::update_ingredients_sort,
-        foods::ingredients::get_ingredient,
-        foods::ingredients::update_ingredient,
-        foods::ingredients::delete_ingredient,
+        foods::routes::ingredient::list_ingredients,
+        foods::routes::ingredient::create_ingredient,
+        foods::routes::ingredient::update_ingredients_sort,
+        foods::routes::ingredient::get_ingredient,
+        foods::routes::ingredient::update_ingredient,
+        foods::routes::ingredient::delete_ingredient,
 
         // 订单 (Order)
         orders::new::create_order,
@@ -77,26 +77,26 @@ use crate::{foods, game_im, models, models::dashboard, orders, users, upload};
         orders::rating::get_order_rating,
 
         // 心愿 (Wish)
-        crate::wishes::handlers::create_wish,
-        crate::wishes::handlers::list_wishes,
-        crate::wishes::handlers::get_wish,
-        crate::wishes::handlers::update_wish,
-        crate::wishes::handlers::delete_wish,
-        crate::wishes::claims::redeem_wish,
-        crate::wishes::claims::submit_feedback,
+        crate::wishes::routes::create_wish,
+        crate::wishes::routes::list_wishes,
+        crate::wishes::routes::get_wish,
+        crate::wishes::routes::update_wish,
+        crate::wishes::routes::delete_wish,
+        crate::wishes::routes::redeem_wish,
+        crate::wishes::routes::submit_feedback,
 
         // 微信 (WeChat)
-        crate::wx::verify::wx_sign_verify,
-        crate::wx::template::get_templates,
+        crate::wx::routes::wx_sign_verify,
+        crate::wx::routes::get_templates,
 
         // 看板 (Dashboard)
-        crate::dashboard::activities::get_group_activities,
-        crate::dashboard::metrics::get_top_food_orders,
-        crate::dashboard::metrics::get_my_today_orders,
-        crate::dashboard::metrics::get_my_order_stats,
-        crate::dashboard::metrics::get_points_journey,
-        crate::dashboard::metrics::get_week_order_dates,
-        crate::dashboard::metrics::get_date_foods,
+        crate::dashboard::routes::get_group_activities,
+        crate::dashboard::routes::get_top_food_orders,
+        crate::dashboard::routes::get_my_today_orders,
+        crate::dashboard::routes::get_my_order_stats,
+        crate::dashboard::routes::get_points_journey,
+        crate::dashboard::routes::get_week_order_dates,
+        crate::dashboard::routes::get_date_foods,
 
         // 签到 (Check-in)
         users::checkin::daily_checkin,
@@ -104,7 +104,7 @@ use crate::{foods, game_im, models, models::dashboard, orders, users, upload};
         users::sign::get_sign_info,
 
         // 上传
-        upload::upload::get_qiniu_token,
+        upload::routes::get_qiniu_token,
     ),
     components(
         // 用户
@@ -137,23 +137,23 @@ use crate::{foods, game_im, models, models::dashboard, orders, users, upload};
         ),
         // 菜品
         schemas(
-            models::foods::FoodCreateInput,
-            models::foods::FoodUpdateInput,
-            models::foods::FoodOut,
-            models::foods::FoodTagOut,
-            models::foods::TagCreateInput,
-            models::foods::TagUpdateInput,
-            models::foods::BatchTagSortInput,
-            models::foods::TagSortItem,
-            models::foods::FoodFilterQuery,
-            models::foods::FoodMarkActionInput,
-            models::foods::BlindBoxDrawInput,
-            models::foods::BlindBoxDrawResultOut,
+            foods::models::food::FoodCreateInput,
+            foods::models::food::FoodUpdateInput,
+            foods::models::food::FoodOut,
+            foods::models::tag::FoodTagOut,
+            foods::models::tag::TagCreateInput,
+            foods::models::tag::TagUpdateInput,
+            foods::models::tag::BatchTagSortInput,
+            foods::models::tag::TagSortItem,
+            foods::models::food::FoodFilterQuery,
+            foods::models::food::FoodMarkActionInput,
+            foods::models::food::BlindBoxDrawInput,
+            foods::models::food::BlindBoxDrawResultOut,
             // 食材
-            models::foods::IngredientCreateInput,
-            models::foods::IngredientUpdateInput,
-            models::foods::IngredientOut,
-            foods::ingredients::IngredientQuery,
+            foods::models::ingredient::IngredientCreateInput,
+            foods::models::ingredient::IngredientUpdateInput,
+            foods::models::ingredient::IngredientOut,
+            foods::routes::ingredient::IngredientQuery,
         ),
         // 订单新模型
         schemas(
@@ -169,34 +169,34 @@ use crate::{foods, game_im, models, models::dashboard, orders, users, upload};
         ),
         // 心愿模型
         schemas(
-            models::wishes::WishCreateInput,
-            models::wishes::WishUpdateInput,
-            models::wishes::WishOut,
-            models::wishes::WishQuery,
-            models::wishes::WishFeedbackInput,
-            models::wishes::WishFeedbackOut,
-            dashboard::GroupActivityEventOut,
-            dashboard::TopFoodOrderOut,
-            dashboard::TopFoodRankingResponse,
-            dashboard::TodayOrderEntryOut,
-            dashboard::TodayOrdersResponse,
-            dashboard::OrderStatsOut,
-            dashboard::JourneyOrderOut,
-            dashboard::PointsJourneyOut,
-            dashboard::WeekOrderDatesOut,
-            dashboard::WeekDateInfo,
-            dashboard::DateFoodsResponse,
-            dashboard::DateFoodOut,
+            crate::wishes::models::WishCreateInput,
+            crate::wishes::models::WishUpdateInput,
+            crate::wishes::models::WishOut,
+            crate::wishes::models::WishQuery,
+            crate::wishes::models::WishFeedbackInput,
+            crate::wishes::models::WishFeedbackOut,
+            dashboard::models::GroupActivityEventOut,
+            dashboard::models::TopFoodOrderOut,
+            dashboard::models::TopFoodRankingResponse,
+            dashboard::models::TodayOrderEntryOut,
+            dashboard::models::TodayOrdersResponse,
+            dashboard::models::OrderStatsOut,
+            dashboard::models::JourneyOrderOut,
+            dashboard::models::PointsJourneyOut,
+            dashboard::models::WeekOrderDatesOut,
+            dashboard::models::WeekDateInfo,
+            dashboard::models::DateFoodsResponse,
+            dashboard::models::DateFoodOut,
 
             // IM
-            models::game_im::ImUserSigOut,
-            models::game_im::ImRoomOut,
-            models::game_im::ImRoomListOut,
-            models::game_im::ImStartGameOut,
-            models::game_im::ImVoteIn,
-            models::game_im::ImVoteOut,
+            game_im::models::ImUserSigOut,
+            game_im::models::ImRoomOut,
+            game_im::models::ImRoomListOut,
+            game_im::models::ImStartGameOut,
+            game_im::models::ImVoteIn,
+            game_im::models::ImVoteOut,
             // 微信
-            models::wx::WxSubscriptionTemplateOut,
+            crate::wx::models::WxSubscriptionTemplateOut,
         ),
     ),
     modifiers(&SecurityAddon),

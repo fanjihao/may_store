@@ -1,9 +1,15 @@
 use crate::{
+    config::AppState,
     errors::CustomError,
-    models::{ orders::{ OrderRatingCreateInput, OrderRatingOut, OrderStatusEnum }, users::UserToken },
-    AppState,
+    models::{
+        orders::{OrderRatingCreateInput, OrderRatingOut, OrderStatusEnum},
+        users::UserToken,
+    },
 };
-use ntex::web::{ types::{ Json, Path, State }, HttpResponse, Responder };
+use ntex::web::{
+    types::{Json, Path, State},
+    HttpResponse, Responder,
+};
 use sqlx::Row;
 use std::sync::Arc;
 
@@ -19,17 +25,18 @@ pub async fn create_order_rating(
     user_token: UserToken,
     state: State<Arc<AppState>>,
     order_id: Path<i64>,
-    body: Json<OrderRatingCreateInput>
+    body: Json<OrderRatingCreateInput>,
 ) -> Result<impl Responder, CustomError> {
     let db = &state.db_pool;
     // 校验 delta
     if body.delta == 0 || body.delta.abs() > 5 {
-        return Err(CustomError::BadRequest("评分增减范围为 -5..5 且不能为0".into()));
+        return Err(CustomError::BadRequest(
+            "评分增减范围为 -5..5 且不能为0".into(),
+        ));
     }
     // 获取订单并校验状态、权限
-    let order_row = sqlx
-        ::query(
-            "SELECT
+    let order_row = sqlx::query(
+        "SELECT
                 o.order_id,
                 o.user_id,
                 o.status,
@@ -41,10 +48,11 @@ pub async fn create_order_rating(
             ON 
                 agm.group_id = o.group_id
             WHERE
-                o.order_id = $1 AND agm.role_in_group = 'RECEIVING' FOR UPDATE"
-        )
-        .bind(*order_id)
-        .fetch_optional(db).await?;
+                o.order_id = $1 AND agm.role_in_group = 'RECEIVING' FOR UPDATE",
+    )
+    .bind(*order_id)
+    .fetch_optional(db)
+    .await?;
     let Some(or) = order_row else {
         return Err(CustomError::BadRequest("订单不存在".into()));
     };
@@ -59,10 +67,10 @@ pub async fn create_order_rating(
     let receiver_id: i64 = or.get("target_user");
 
     // 检查是否已有评分
-    let existing = sqlx
-        ::query("SELECT rating_id FROM order_ratings WHERE order_id=$1")
+    let existing = sqlx::query("SELECT rating_id FROM order_ratings WHERE order_id=$1")
         .bind(*order_id)
-        .fetch_optional(db).await?;
+        .fetch_optional(db)
+        .await?;
     if existing.is_some() {
         return Err(CustomError::BadRequest("该订单已评分".into()));
     }
@@ -70,21 +78,21 @@ pub async fn create_order_rating(
     // 开启事务
     let mut tx = db.begin().await?;
     // 锁定接单用户积分
-    let target_row = sqlx
-        ::query("SELECT love_point FROM users WHERE user_id=$1 FOR UPDATE")
+    let target_row = sqlx::query("SELECT love_point FROM users WHERE user_id=$1 FOR UPDATE")
         .bind(receiver_id)
-        .fetch_optional(&mut *tx).await?;
+        .fetch_optional(&mut *tx)
+        .await?;
     let Some(target_row) = target_row else {
         tx.rollback().await.ok();
         return Err(CustomError::BadRequest("被评分用户不存在".into()));
     };
     let current_lp: i32 = target_row.get("love_point");
     let balance_after = current_lp + body.delta; // delta 可为负
-    sqlx
-        ::query("UPDATE users SET love_point=$2 WHERE user_id=$1")
+    sqlx::query("UPDATE users SET love_point=$2 WHERE user_id=$1")
         .bind(receiver_id)
         .bind(balance_after)
-        .execute(&mut *tx).await?;
+        .execute(&mut *tx)
+        .await?;
     // 积分流水
     sqlx
         ::query(
@@ -129,14 +137,14 @@ pub async fn create_order_rating(
 pub async fn get_order_rating(
     user_token: UserToken,
     state: State<Arc<AppState>>,
-    order_id: Path<i64>
+    order_id: Path<i64>,
 ) -> Result<impl Responder, CustomError> {
     let db = &state.db_pool;
     // 订单存在性与权限（必须为下单用户或客人之一）
-    let order_row = sqlx
-        ::query("SELECT user_id, guest_id FROM orders WHERE order_id=$1")
+    let order_row = sqlx::query("SELECT user_id, guest_id FROM orders WHERE order_id=$1")
         .bind(*order_id)
-        .fetch_optional(db).await?;
+        .fetch_optional(db)
+        .await?;
     let Some(or) = order_row else {
         return Err(CustomError::BadRequest("订单不存在".into()));
     };

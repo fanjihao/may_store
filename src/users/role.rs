@@ -1,7 +1,7 @@
 use crate::{
+    config::AppState,
     errors::CustomError,
     models::users::{UserRoleEnum, UserToken},
-    AppState,
 };
 use chrono::Utc;
 use ntex::web::{
@@ -49,7 +49,9 @@ pub async fn switch_role(
         return Err(CustomError::BadRequest("未找到可用的PAIR关联组".into()));
     };
     let group_id: i64 = group_row.get("group_id");
-    let gtype: String = group_row.try_get::<String, _>("group_type").unwrap_or_else(|_| "".into());
+    let gtype: String = group_row
+        .try_get::<String, _>("group_type")
+        .unwrap_or_else(|_| "".into());
     if gtype != "PAIR" {
         return Err(CustomError::BadRequest("仅支持PAIR类型组内角色互换".into()));
     }
@@ -90,14 +92,16 @@ pub async fn switch_role(
 
     // 检查是否有未完成订单 (PENDING, ACCEPTED)
     let incomplete_count: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM orders WHERE group_id=$1 AND status IN ('PENDING', 'ACCEPTED')"
+        "SELECT COUNT(*) FROM orders WHERE group_id=$1 AND status IN ('PENDING', 'ACCEPTED')",
     )
     .bind(group_id)
     .fetch_one(db)
     .await?;
 
     if incomplete_count > 0 {
-        return Err(CustomError::BadRequest("当前组内存在未完成订单，无法切换角色".into()));
+        return Err(CustomError::BadRequest(
+            "当前组内存在未完成订单，无法切换角色".into(),
+        ));
     }
 
     // 目标角色

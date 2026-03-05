@@ -1,15 +1,15 @@
 use std::sync::Arc;
 
 use crate::{
+    config::AppState,
     errors::CustomError,
     models::{
         orders::{
-            OrderCreateInput, OrderItemOut, OrderOutNew, OrderRecord,
-            OrderStatusEnum, OrderStatusHistoryOut,
+            OrderCreateInput, OrderItemOut, OrderOutNew, OrderRecord, OrderStatusEnum,
+            OrderStatusHistoryOut,
         },
         users::UserToken,
     },
-    AppState,
 };
 use ntex::web::{
     types::{Json, State},
@@ -44,19 +44,19 @@ pub async fn create_order(
         .bind(user_token.user_id as i64)
         .fetch_one(&mut *tx)
         .await?;
-        
+
         if !is_member {
             // 检查邀请码
             let mut allowed = false;
             if let Some(code) = &data.invite_code {
                 let group_code: Option<String> = sqlx::query_scalar(
-                    "SELECT invite_code FROM association_groups WHERE group_id=$1"
+                    "SELECT invite_code FROM association_groups WHERE group_id=$1",
                 )
                 .bind(gid)
                 .fetch_optional(&mut *tx)
                 .await?
                 .flatten();
-                
+
                 if let Some(gc) = group_code {
                     if gc == *code {
                         allowed = true;
@@ -117,7 +117,7 @@ pub async fn create_order(
     // 读取条目并附加食品信息
     let items_out: Vec<OrderItemOut> = sqlx::query(
         "SELECT oi.id, oi.food_id, oi.quantity, oi.price, f.food_name, f.food_photo \
-         FROM order_items oi LEFT JOIN foods f ON f.food_id = oi.food_id WHERE oi.order_id=$1"
+         FROM order_items oi LEFT JOIN foods f ON f.food_id = oi.food_id WHERE oi.order_id=$1",
     )
     .bind(rec.order_id)
     .fetch_all(&mut *tx)
@@ -136,20 +136,18 @@ pub async fn create_order(
     let history_rows: Vec<OrderStatusHistoryOut> = sqlx::query(
         "SELECT h.from_status, h.to_status, u.nick_name, h.remark, h.changed_at \
          FROM order_status_history h LEFT JOIN users u ON h.changed_by = u.user_id \
-         WHERE h.order_id=$1 ORDER BY h.changed_at"
+         WHERE h.order_id=$1 ORDER BY h.changed_at",
     )
     .bind(rec.order_id)
     .fetch_all(&mut *tx)
     .await?
     .into_iter()
-    .map(|row| {
-        OrderStatusHistoryOut {
-            from_status: row.get("from_status"),
-            to_status: row.get("to_status"),
-            changed_by: row.try_get("nick_name").ok().flatten(),
-            remark: row.try_get("remark").ok(),
-            changed_at: row.get("changed_at"),
-        }
+    .map(|row| OrderStatusHistoryOut {
+        from_status: row.get("from_status"),
+        to_status: row.get("to_status"),
+        changed_by: row.try_get("nick_name").ok().flatten(),
+        remark: row.try_get("remark").ok(),
+        changed_at: row.get("changed_at"),
     })
     .collect();
 
@@ -163,8 +161,10 @@ pub async fn create_order(
             if let Err(e) = crate::services::notifications::push_order_with_type(
                 oid,
                 crate::services::notifications::OrderPushType::Created,
-                pool_clone
-            ).await {
+                pool_clone,
+            )
+            .await
+            {
                 log::warn!("order create push error: {}", e);
             }
         });

@@ -1,4 +1,5 @@
 use crate::{
+    config::AppState,
     errors::CustomError,
     models::{
         orders::{
@@ -7,7 +8,6 @@ use crate::{
         },
         users::UserToken,
     },
-    AppState,
 };
 use chrono::Utc;
 use ntex::web::{
@@ -213,8 +213,10 @@ pub async fn update_order_status(
             if let Err(e) = crate::services::notifications::push_order_with_type(
                 oid,
                 crate::services::notifications::OrderPushType::StatusUpdated,
-                pool_clone
-            ).await {
+                pool_clone,
+            )
+            .await
+            {
                 log::warn!("order status update push error: {}", e);
             }
         });

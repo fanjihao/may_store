@@ -1,12 +1,60 @@
+use std::io::Write;
+use std::sync::Arc;
+use std::sync::OnceLock;
+
+use base64::{engine::general_purpose::STANDARD, Engine as _};
+use flate2::{write::ZlibEncoder, Compression};
+use hmac::{Hmac, Mac};
 use rand::Rng;
 use reqwest::Url;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+use sha2::Sha256;
 
+use crate::config::AppState;
 use crate::errors::CustomError;
-use crate::game_im::sign::generate_user_sig;
-use crate::models::game_im::ImConfig;
+use crate::game_im::models::{ImConfig, WerewolfRuntime};
+
+type HmacSha256 = Hmac<Sha256>;
+
+fn usersig_encode_urlsafe(b64: String) -> String {
+    b64.replace('+', "*").replace('/', "-").replace('=', "_")
+}
+
+pub fn generate_user_sig(
+    identifier: &str,
+    sdk_app_id: u64,
+    secret_key: &str,
+    expire_seconds: u64,
+    now_seconds: i64,
+) -> Result<String, CustomError> {
+    let content = format!(
+		"TLS.identifier:{identifier}\nTLS.sdkappid:{sdk_app_id}\nTLS.time:{now_seconds}\nTLS.expire:{expire_seconds}\n",
+	);
+
+    let mut mac = HmacSha256::new_from_slice(secret_key.as_bytes())
+        .map_err(|_| CustomError::InternalServerError("Invalid IM secret key".into()))?;
+    mac.update(content.as_bytes());
+    let sig = STANDARD.encode(mac.finalize().into_bytes());
+
+    let payload = json!({
+        "TLS.ver": "2.0",
+        "TLS.identifier": identifier,
+        "TLS.sdkappid": sdk_app_id,
+        "TLS.expire": expire_seconds,
+        "TLS.time": now_seconds,
+        "TLS.sig": sig,
+    });
+
+    let payload_str = serde_json::to_string(&payload)?;
+    let mut encoder = ZlibEncoder::new(Vec::new(), Compression::default());
+    encoder.write_all(payload_str.as_bytes())?;
+    let compressed = encoder.finish()?;
+
+    let b64 = STANDARD.encode(compressed);
+    Ok(usersig_encode_urlsafe(b64))
+}
 
 #[derive(Debug, Clone)]
 pub struct ImRestClient {
@@ -60,7 +108,9 @@ impl ImRestClient {
         let status = resp.status();
         let text = resp.text().await?;
         if !status.is_success() {
-            return Err(CustomError::BadRequest(format!("IM http error: {status} {text}")));
+            return Err(CustomError::BadRequest(format!(
+                "IM http error: {status} {text}"
+            )));
         }
         let parsed: TResp = serde_json::from_str(&text)?;
         Ok(parsed)
@@ -105,10 +155,14 @@ impl ImRestClient {
             )
             .await?;
         if out.action_status != "OK" || out.error_code != 0 {
-            return Err(CustomError::BadRequest(format!("IM create_group failed: {}", out.error_info)));
+            return Err(CustomError::BadRequest(format!(
+                "IM create_group failed: {}",
+                out.error_info
+            )));
         }
-        out.group_id
-            .ok_or_else(|| CustomError::InternalServerError("IM create_group missing GroupId".into()))
+        out.group_id.ok_or_else(|| {
+            CustomError::InternalServerError("IM create_group missing GroupId".into())
+        })
     }
 
     pub async fn account_import(&self, identifier: &str) -> Result<(), CustomError> {
@@ -127,15 +181,27 @@ impl ImRestClient {
             error_info: String,
         }
         let out: Resp = self
-            .post_json("im_open_login_svc/account_import", &Req { user_id: identifier })
+            .post_json(
+                "im_open_login_svc/account_import",
+                &Req {
+                    user_id: identifier,
+                },
+            )
             .await?;
         if out.action_status != "OK" || out.error_code != 0 {
-            return Err(CustomError::BadRequest(format!("IM account_import failed: {}", out.error_info)));
+            return Err(CustomError::BadRequest(format!(
+                "IM account_import failed: {}",
+                out.error_info
+            )));
         }
         Ok(())
     }
 
-    pub async fn add_group_member(&self, group_id: &str, identifier: &str) -> Result<(), CustomError> {
+    pub async fn add_group_member(
+        &self,
+        group_id: &str,
+        identifier: &str,
+    ) -> Result<(), CustomError> {
         #[derive(Debug, Serialize)]
         struct Member<'a> {
             #[serde(rename = "Member_Account")]
@@ -162,17 +228,25 @@ impl ImRestClient {
                 "group_open_http_svc/add_group_member",
                 &Req {
                     group_id,
-                    member_list: vec![Member { member_account: identifier }],
+                    member_list: vec![Member {
+                        member_account: identifier,
+                    }],
                 },
             )
             .await?;
         if out.action_status != "OK" || out.error_code != 0 {
-            return Err(CustomError::BadRequest(format!("IM add_group_member failed: {}", out.error_info)));
+            return Err(CustomError::BadRequest(format!(
+                "IM add_group_member failed: {}",
+                out.error_info
+            )));
         }
         Ok(())
     }
 
-    pub async fn get_group_owner_account(&self, group_id: &str) -> Result<Option<String>, CustomError> {
+    pub async fn get_group_owner_account(
+        &self,
+        group_id: &str,
+    ) -> Result<Option<String>, CustomError> {
         #[derive(Debug, Serialize)]
         struct InfoReq {
             #[serde(rename = "GroupIdList")]
@@ -257,7 +331,10 @@ impl ImRestClient {
         Ok(())
     }
 
-    pub async fn get_group_member_accounts(&self, group_id: &str) -> Result<Vec<String>, CustomError> {
+    pub async fn get_group_member_accounts(
+        &self,
+        group_id: &str,
+    ) -> Result<Vec<String>, CustomError> {
         #[derive(Debug, Serialize)]
         struct Req<'a> {
             #[serde(rename = "GroupId")]
@@ -294,7 +371,10 @@ impl ImRestClient {
             )
             .await?;
         if out.action_status != "OK" || out.error_code != 0 {
-            return Err(CustomError::BadRequest(format!("IM get_group_member_info failed: {}", out.error_info)));
+            return Err(CustomError::BadRequest(format!(
+                "IM get_group_member_info failed: {}",
+                out.error_info
+            )));
         }
         Ok(out
             .member_list
@@ -304,7 +384,11 @@ impl ImRestClient {
             .collect())
     }
 
-    pub async fn send_group_custom(&self, group_id: &str, custom: serde_json::Value) -> Result<(), CustomError> {
+    pub async fn send_group_custom(
+        &self,
+        group_id: &str,
+        custom: serde_json::Value,
+    ) -> Result<(), CustomError> {
         #[derive(Debug, Serialize)]
         struct Elem<'a> {
             #[serde(rename = "MsgType")]
@@ -345,12 +429,19 @@ impl ImRestClient {
             )
             .await?;
         if out.action_status != "OK" || out.error_code != 0 {
-            return Err(CustomError::BadRequest(format!("IM send_group_msg failed: {}", out.error_info)));
+            return Err(CustomError::BadRequest(format!(
+                "IM send_group_msg failed: {}",
+                out.error_info
+            )));
         }
         Ok(())
     }
 
-    pub async fn send_c2c_custom(&self, to_identifier: &str, custom: serde_json::Value) -> Result<(), CustomError> {
+    pub async fn send_c2c_custom(
+        &self,
+        to_identifier: &str,
+        custom: serde_json::Value,
+    ) -> Result<(), CustomError> {
         #[derive(Debug, Serialize)]
         struct Elem<'a> {
             #[serde(rename = "MsgType")]
@@ -394,12 +485,17 @@ impl ImRestClient {
             )
             .await?;
         if out.action_status != "OK" || out.error_code != 0 {
-            return Err(CustomError::BadRequest(format!("IM sendmsg failed: {}", out.error_info)));
+            return Err(CustomError::BadRequest(format!(
+                "IM sendmsg failed: {}",
+                out.error_info
+            )));
         }
         Ok(())
     }
 
-    pub async fn list_groups(&self) -> Result<Vec<(String, String, Option<u32>, Option<String>)>, CustomError> {
+    pub async fn list_groups(
+        &self,
+    ) -> Result<Vec<(String, String, Option<u32>, Option<String>)>, CustomError> {
         // Step 1: get group ids
         #[derive(Debug, Serialize)]
         struct ListReq {
@@ -428,7 +524,10 @@ impl ImRestClient {
         let list_out: ListResp = self
             .post_json(
                 "group_open_http_svc/get_appid_group_list",
-                &ListReq { limit: 100, offset: 0 },
+                &ListReq {
+                    limit: 100,
+                    offset: 0,
+                },
             )
             .await?;
 
@@ -518,4 +617,10 @@ impl ImRestClient {
             })
             .collect())
     }
+}
+
+pub fn runtime(_state: &Arc<AppState>) -> Arc<WerewolfRuntime> {
+    static RT: OnceLock<Arc<WerewolfRuntime>> = OnceLock::new();
+    RT.get_or_init(|| Arc::new(WerewolfRuntime::default()))
+        .clone()
 }

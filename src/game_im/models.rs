@@ -91,3 +91,46 @@ impl ImConfig {
         })
     }
 }
+
+use std::collections::{HashMap, HashSet};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RoomPhase {
+    Lobby,
+    Started,
+    Voting,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Role {
+    Wolf,
+    Villager,
+}
+
+#[derive(Debug, Default)]
+pub struct WerewolfRuntime {
+    pub rooms: tokio::sync::Mutex<HashMap<String, RoomRuntime>>,
+}
+
+#[derive(Debug)]
+pub struct RoomRuntime {
+    pub phase: RoomPhase,
+    pub ready: HashSet<String>,
+    pub alive: HashSet<String>,
+    pub votes: HashMap<String, Option<String>>, // voter -> target (None=abstain)
+    pub roles: HashMap<String, Role>,
+    pub started_at: i64,
+}
+
+impl RoomRuntime {
+    pub fn new() -> Self {
+        Self {
+            phase: RoomPhase::Lobby,
+            ready: HashSet::new(),
+            alive: HashSet::new(),
+            votes: HashMap::new(),
+            roles: HashMap::new(),
+            started_at: 0,
+        }
+    }
+}

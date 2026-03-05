@@ -1,9 +1,9 @@
 use crate::{
+    config::AppState,
     errors::CustomError,
-    models::sweet_talk::{SweetTalkOut, SweetTalkQuery, SweetTalkRequest, SweetTalkCursor},
+    models::pagination::{decode_cursor, encode_cursor, CursorPage},
+    models::sweet_talk::{SweetTalkCursor, SweetTalkOut, SweetTalkQuery, SweetTalkRequest},
     models::users::UserToken,
-    models::pagination::{encode_cursor, decode_cursor, CursorPage},
-    AppState,
 };
 use chrono::Local;
 use ntex::web::{
@@ -43,7 +43,7 @@ pub async fn add_sweet_talk(
         "SELECT g.group_id FROM association_groups g
          JOIN association_group_members m ON g.group_id = m.group_id
          WHERE m.user_id = $1 AND g.group_type = 'PAIR' AND g.status = 1
-         LIMIT 1"
+         LIMIT 1",
     )
     .bind(user_id)
     .fetch_optional(db)
@@ -53,7 +53,7 @@ pub async fn add_sweet_talk(
     // 2. 检查今日是否已发表
     let today = Local::now().date_naive();
     let exists = sqlx::query_scalar::<_, i64>(
-        "SELECT talk_id FROM sweet_talks WHERE user_id = $1 AND created_at::DATE = $2 LIMIT 1"
+        "SELECT talk_id FROM sweet_talks WHERE user_id = $1 AND created_at::DATE = $2 LIMIT 1",
     )
     .bind(user_id)
     .bind(today)
@@ -159,13 +159,12 @@ pub async fn update_sweet_talk(
     }
 
     // 检查是否存在且属于该用户
-    let owner_id = sqlx::query_scalar::<_, i64>(
-        "SELECT user_id FROM sweet_talks WHERE talk_id = $1"
-    )
-    .bind(talk_id)
-    .fetch_optional(db)
-    .await?
-    .ok_or_else(|| CustomError::not_found("情话不存在"))?;
+    let owner_id =
+        sqlx::query_scalar::<_, i64>("SELECT user_id FROM sweet_talks WHERE talk_id = $1")
+            .bind(talk_id)
+            .fetch_optional(db)
+            .await?
+            .ok_or_else(|| CustomError::not_found("情话不存在"))?;
 
     if owner_id != user_id {
         return Err(CustomError::forbidden("无权编辑他人的情话"));
@@ -207,7 +206,7 @@ pub async fn get_sweet_talks(
     let group_id = if let Some(gid) = query.group_id {
         // 校验权限：用户是否在该组
         let is_member = sqlx::query_scalar::<_, i32>(
-            "SELECT 1 FROM association_group_members WHERE group_id = $1 AND user_id = $2"
+            "SELECT 1 FROM association_group_members WHERE group_id = $1 AND user_id = $2",
         )
         .bind(gid)
         .bind(user_id)
@@ -224,7 +223,7 @@ pub async fn get_sweet_talks(
             "SELECT g.group_id FROM association_groups g
              JOIN association_group_members m ON g.group_id = m.group_id
              WHERE m.user_id = $1 AND g.group_type = 'PAIR' AND g.status = 1
-             ORDER BY m.is_primary DESC LIMIT 1"
+             ORDER BY m.is_primary DESC LIMIT 1",
         )
         .bind(user_id)
         .fetch_optional(db)
@@ -232,18 +231,26 @@ pub async fn get_sweet_talks(
         .ok_or_else(|| CustomError::bad_request("未找到绑定关系"))?
     };
 
-    let cursor = query.pagination.cursor.as_deref().and_then(decode_cursor::<SweetTalkCursor>);
+    let cursor = query
+        .pagination
+        .cursor
+        .as_deref()
+        .and_then(decode_cursor::<SweetTalkCursor>);
 
     let mut sql = String::from(
         "SELECT st.talk_id, st.user_id, st.content, st.created_at, u.nick_name, u.avatar
          FROM sweet_talks st
          JOIN users u ON st.user_id = u.user_id
-         WHERE st.group_id = $1"
+         WHERE st.group_id = $1",
     );
 
     let mut bind_idx = 2;
     if cursor.is_some() {
-        sql.push_str(&format!(" AND (st.created_at, st.talk_id) < (${}, ${})", bind_idx, bind_idx + 1));
+        sql.push_str(&format!(
+            " AND (st.created_at, st.talk_id) < (${}, ${})",
+            bind_idx,
+            bind_idx + 1
+        ));
         bind_idx += 2;
     }
 

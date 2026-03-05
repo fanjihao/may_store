@@ -1,6 +1,4 @@
-use crate::errors::CustomError;
-use crate::models::users::UserToken;
-use crate::AppState;
+use crate::{config::AppState, errors::CustomError, models::users::UserToken};
 use ntex::web::{
     types::{Path, State},
     HttpResponse, Responder,

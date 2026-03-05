@@ -1,10 +1,6 @@
 use std::sync::Arc;
 
-use crate::{
-    errors::CustomError,
-    models::users::UserToken,
-    AppState,
-};
+use crate::{config::AppState, errors::CustomError, models::users::UserToken};
 use ntex::web::{
     types::{Json, Path, State},
     Responder,
@@ -43,7 +39,7 @@ pub async fn update_group(
 
     // 检查权限：必须是该组成员
     let is_member = sqlx::query_scalar::<_, bool>(
-        "SELECT EXISTS(SELECT 1 FROM association_group_members WHERE group_id=$1 AND user_id=$2)"
+        "SELECT EXISTS(SELECT 1 FROM association_group_members WHERE group_id=$1 AND user_id=$2)",
     )
     .bind(group_id)
     .bind(token.user_id)

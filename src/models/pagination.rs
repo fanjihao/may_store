@@ -1,6 +1,6 @@
-use serde::{Deserialize, Serialize};
-use utoipa::{ToSchema, IntoParams};
 use base64::{engine::general_purpose::STANDARD, Engine};
+use serde::{Deserialize, Serialize};
+use utoipa::{IntoParams, ToSchema};
 
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]

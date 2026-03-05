@@ -3,13 +3,13 @@ use std::sync::Arc;
 use crate::models::users::IsRegisterResponse;
 use crate::users::{verify_password, weixin_login};
 use crate::{
+    config::AppState,
     errors::CustomError,
     models::users::{
         LoginInput, LoginMethodEnum, LoginResponse, UserPublic, UserRecord, UserToken,
         UserTokenClaims,
     },
     utils::TOKEN_SECRET_KEY,
-    AppState,
 };
 use chrono::Utc;
 use jsonwebtoken::{encode, EncodingKey, Header};
@@ -63,7 +63,7 @@ pub async fn login(
             } else {
                 return Err(CustomError::BadRequest("账号不存在".into()));
             }
-        },
+        }
     };
 
     let stored = record.password_hash.clone().unwrap_or_default();
@@ -138,7 +138,6 @@ pub struct IsRegisterQuery {
     pub username: String,
 }
 
-
 #[utoipa::path(
     get,
     path = "/getInfoByUsername",
@@ -150,7 +149,7 @@ pub struct IsRegisterQuery {
 )]
 pub async fn get_user_info(
     q: Query<IsRegisterQuery>,
-    state: State<Arc<AppState>>
+    state: State<Arc<AppState>>,
 ) -> Result<Json<UserPublic>, CustomError> {
     // 兜底查询
     let db = &state.db_pool;

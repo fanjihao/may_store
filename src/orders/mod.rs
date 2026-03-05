@@ -1,7 +1,7 @@
+pub mod delete;
 pub mod new;
 pub mod update;
 pub mod view;
-pub mod delete;
 // Optional legacy / auxiliary modules
 // pub mod footprints; // disabled until confirmed needed
 pub mod expiration;

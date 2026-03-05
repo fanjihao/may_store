@@ -1,5 +1,3 @@
-pub mod new;
-pub mod update;
-pub mod delete;
-pub mod view;
-pub mod ingredients;
+pub mod models;
+pub mod routes;
+pub mod service;

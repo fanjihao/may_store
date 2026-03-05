@@ -1,20 +1,23 @@
 use crate::{
-    AppState, errors::CustomError, models::{
+    config::AppState,
+    errors::CustomError,
+    models::{
         invitation::{
-            BindUserDirectlyInput, ConfirmInvitationInput, GroupInfoOut, GroupMemberOut, InvitationListOut, InvitationRequestOut, NewInvitationInput, UnbindRequestInput
+            BindUserDirectlyInput, ConfirmInvitationInput, GroupInfoOut, GroupMemberOut,
+            InvitationListOut, InvitationRequestOut, NewInvitationInput, UnbindRequestInput,
         },
         users::{UserRoleEnum, UserToken},
-    }
+    },
 };
 use chrono::Utc;
 use ntex::web::{
     types::{Json, Path, State},
     HttpResponse, Responder,
 };
-use sqlx::FromRow;
-use std::sync::Arc;
-use sqlx::Row;
 use rand::Rng;
+use sqlx::FromRow;
+use sqlx::Row;
+use std::sync::Arc;
 
 // 内部查询结构体（不暴露到 OpenAPI）
 #[derive(FromRow)]
@@ -69,7 +72,7 @@ pub async fn get_invitation(
         WHERE 
             requester_id = $1 AND agr.status IN (0, 4)
         ORDER BY 
-            request_id DESC"
+            request_id DESC",
     )
     .bind(uid)
     .fetch_all(db)
@@ -92,7 +95,7 @@ pub async fn get_invitation(
         WHERE
             target_user_id = $1 AND agr.status IN (0, 4)
         ORDER BY
-            target_user_id DESC"
+            target_user_id DESC",
     )
     .bind(uid)
     .fetch_all(db)
@@ -222,13 +225,13 @@ pub async fn confirm_invitation(
             // 状态4是解绑申请，同意后：改为状态5(已解绑)，删除group信息
             let now = Utc::now();
             sqlx::query(
-                "UPDATE association_group_requests SET status=5, handled_at=$1 WHERE request_id=$2"
+                "UPDATE association_group_requests SET status=5, handled_at=$1 WHERE request_id=$2",
             )
             .bind(now)
             .bind(req.request_id)
             .execute(&mut *tx)
             .await?;
-            
+
             // 查找两人所在的 PAIR 组并删除
             let pair_id = sqlx::query_scalar::<_, Option<i64>>(
                 "SELECT ag.group_id FROM association_groups ag \
@@ -240,18 +243,20 @@ pub async fn confirm_invitation(
             .bind(req.target_user_id)
             .fetch_optional(&mut *tx)
             .await?.flatten();
-            
+
             if let Some(gid) = pair_id {
                 sqlx::query("DELETE FROM association_group_members WHERE group_id=$1")
                     .bind(gid)
                     .execute(&mut *tx)
                     .await?;
-                sqlx::query("UPDATE association_groups SET status=0, updated_at=NOW() WHERE group_id=$1")
-                    .bind(gid)
-                    .execute(&mut *tx)
-                    .await?;
+                sqlx::query(
+                    "UPDATE association_groups SET status=0, updated_at=NOW() WHERE group_id=$1",
+                )
+                .bind(gid)
+                .execute(&mut *tx)
+                .await?;
             }
-            
+
             tx.commit().await?;
             return Ok(HttpResponse::Ok().finish());
         }
@@ -330,15 +335,17 @@ pub async fn confirm_invitation(
         }
         if let Some(new_role) = adjusted_target_role {
             // 只调整被邀请者（target），保持发起者不变，未写 last_role_switch_at 因为这不是一次互换，只是初次补齐
-            sqlx::query("UPDATE users SET role=$2::user_role_enum, updated_at=NOW() WHERE user_id=$1")
-                .bind(req.target_user_id)
-                .bind(match new_role {
-                    UserRoleEnum::ORDERING => "ORDERING",
-                    UserRoleEnum::RECEIVING => "RECEIVING",
-                    UserRoleEnum::ADMIN => "ADMIN",
-                })
-                .execute(&mut *tx)
-                .await?;
+            sqlx::query(
+                "UPDATE users SET role=$2::user_role_enum, updated_at=NOW() WHERE user_id=$1",
+            )
+            .bind(req.target_user_id)
+            .bind(match new_role {
+                UserRoleEnum::ORDERING => "ORDERING",
+                UserRoleEnum::RECEIVING => "RECEIVING",
+                UserRoleEnum::ADMIN => "ADMIN",
+            })
+            .execute(&mut *tx)
+            .await?;
         }
         // 重新获取最终角色并写入组成员
         let final_req_role =
@@ -468,18 +475,18 @@ pub async fn unbind_request(
     .bind(target)
     .fetch_optional(db)
     .await?;
-    
+
     if existing.is_none() {
         return Err(CustomError::BadRequest("未找到绑定关系".into()));
     }
-    
+
     let request_id: i64 = existing.unwrap().get("request_id");
-    
+
     // 将状态更新为 4 (申请解绑中)，并更新 requester 为当前用户
     sqlx::query(
         "UPDATE association_group_requests \
          SET status=4, requester_id=$1, target_user_id=$2, remark=$3, created_at=NOW() \
-         WHERE request_id=$4"
+         WHERE request_id=$4",
     )
     .bind(uid)
     .bind(target)
@@ -487,10 +494,9 @@ pub async fn unbind_request(
     .bind(request_id)
     .execute(db)
     .await?;
-    
+
     Ok(HttpResponse::Ok().finish())
 }
-
 
 #[utoipa::path(
     get,
@@ -517,7 +523,10 @@ pub async fn get_group_info(
     .bind(id.0)
     .fetch_optional(db)
     .await?;
-    let g = match base { Some(r) => r, None => return Err(CustomError::BadRequest("群组不存在".into())) };
+    let g = match base {
+        Some(r) => r,
+        None => return Err(CustomError::BadRequest("群组不存在".into())),
+    };
     let member_rows = sqlx::query(
         "SELECT agm.user_id, u.nick_name, u.avatar, agm.role_in_group::text, agm.is_primary FROM association_group_members agm LEFT JOIN users u ON u.user_id=agm.user_id WHERE agm.group_id=$1 ORDER BY agm.is_primary DESC, agm.user_id"
     )
@@ -530,7 +539,10 @@ pub async fn get_group_info(
             user_id: r.get("user_id"),
             nick_name: r.try_get("nick_name").ok(),
             avatar: r.try_get("avatar").ok(),
-            role_in_group: r.try_get::<Option<String>, _>("role_in_group").ok().flatten(),
+            role_in_group: r
+                .try_get::<Option<String>, _>("role_in_group")
+                .ok()
+                .flatten(),
             is_primary: r.get("is_primary"),
         });
     }
@@ -539,18 +551,18 @@ pub async fn get_group_info(
     let stats = if member_ids.is_empty() {
         (0i64, 0i64)
     } else {
-        let total: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM orders WHERE user_id = ANY($1)"
-        )
-        .bind(&member_ids)
-        .fetch_one(db)
-        .await.unwrap_or(0);
+        let total: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM orders WHERE user_id = ANY($1)")
+            .bind(&member_ids)
+            .fetch_one(db)
+            .await
+            .unwrap_or(0);
         let completed: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM orders WHERE user_id = ANY($1) AND status = 'FINISHED'"
+            "SELECT COUNT(*) FROM orders WHERE user_id = ANY($1) AND status = 'FINISHED'",
         )
         .bind(&member_ids)
         .fetch_one(db)
-        .await.unwrap_or(0);
+        .await
+        .unwrap_or(0);
         (total, completed)
     };
     let out = GroupInfoOut {
@@ -597,10 +609,11 @@ pub async fn bind_user_directly(
     let mut tx = db.begin().await?;
 
     // Check if target exists
-    let target_exists = sqlx::query_scalar::<_, i64>("SELECT user_id FROM users WHERE user_id = $1 AND status = 1")
-        .bind(target)
-        .fetch_optional(&mut *tx)
-        .await?;
+    let target_exists =
+        sqlx::query_scalar::<_, i64>("SELECT user_id FROM users WHERE user_id = $1 AND status = 1")
+            .bind(target)
+            .fetch_optional(&mut *tx)
+            .await?;
     if target_exists.is_none() {
         tx.rollback().await.ok();
         return Err(CustomError::BadRequest("目标用户不存在或被禁用".into()));
@@ -624,7 +637,7 @@ pub async fn bind_user_directly(
     let in_team = sqlx::query_scalar::<_, i64>(
         "SELECT m.user_id FROM association_group_members m \
          JOIN association_groups g ON m.group_id = g.group_id \
-         WHERE m.user_id IN ($1, $2) AND g.group_type = 'PAIR' AND g.status = 1 LIMIT 1"
+         WHERE m.user_id IN ($1, $2) AND g.group_type = 'PAIR' AND g.status = 1 LIMIT 1",
     )
     .bind(uid)
     .bind(target)
@@ -643,7 +656,7 @@ pub async fn bind_user_directly(
 
     let group_name = format!("pair-{}-{}", uid, target);
     let invite_code = generate_invite_code();
-    
+
     let group_id = sqlx::query_scalar::<_, i64>(
         "INSERT INTO association_groups (group_name, group_type, invite_code) VALUES ($1, 'PAIR', $2) RETURNING group_id"
     )
@@ -660,10 +673,14 @@ pub async fn bind_user_directly(
         .bind(target)
         .fetch_optional(&mut *tx)
         .await?;
-        
+
     let mut role_rows: Vec<RoleRow> = Vec::new();
-    if let Some(r) = role_req { role_rows.push(r); }
-    if let Some(r) = role_tgt { role_rows.push(r); }
+    if let Some(r) = role_req {
+        role_rows.push(r);
+    }
+    if let Some(r) = role_tgt {
+        role_rows.push(r);
+    }
 
     if role_rows.len() != 2 {
         tx.rollback().await.ok();
@@ -671,16 +688,8 @@ pub async fn bind_user_directly(
     }
 
     // 判断是否需要自动补齐一对互补角色（双方都 ORDERING 或都 RECEIVING 时）
-    let req_role_enum = role_rows
-        .iter()
-        .find(|r| r.user_id == uid)
-        .unwrap()
-        .role;
-    let tgt_role_enum = role_rows
-        .iter()
-        .find(|r| r.user_id == target)
-        .unwrap()
-        .role;
+    let req_role_enum = role_rows.iter().find(|r| r.user_id == uid).unwrap().role;
+    let tgt_role_enum = role_rows.iter().find(|r| r.user_id == target).unwrap().role;
     let mut adjusted_target_role: Option<UserRoleEnum> = None;
     if matches!(req_role_enum, UserRoleEnum::ORDERING)
         && matches!(tgt_role_enum, UserRoleEnum::ORDERING)
@@ -702,13 +711,13 @@ pub async fn bind_user_directly(
             })
             .execute(&mut *tx)
             .await?;
-        
+
         // Update the role in role_rows for the target user so the group member insertion uses the correct role
         if let Some(r) = role_rows.iter_mut().find(|r| r.user_id == target) {
             r.role = new_role;
         }
     }
-    
+
     for r in role_rows {
         let g_role = match r.role {
             UserRoleEnum::ORDERING => "ORDERING",
@@ -740,4 +749,3 @@ fn generate_invite_code() -> String {
         .collect();
     code
 }
-

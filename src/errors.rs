@@ -3,7 +3,7 @@ use std::fmt;
 use log::error as log_error;
 use ntex::{
     http::{error, StatusCode},
-    web::{HttpResponse, WebResponseError, DefaultError},
+    web::{DefaultError, HttpResponse, WebResponseError},
 };
 use qiniu_upload_token::ToStringError;
 use redis::RedisError;
@@ -242,7 +242,6 @@ impl From<ntex::ws::error::HandshakeError> for CustomError {
 
 impl From<sqlx::Error> for CustomError {
     fn from(e: sqlx::Error) -> Self {
-
         // Handle database errors
         if let Some(db_err) = e.as_database_error() {
             let code = db_err.code();
@@ -252,9 +251,13 @@ impl From<sqlx::Error> for CustomError {
                 // PostgreSQL unique constraint violation
                 Some(cow) if cow == "23505" => Self::conflict("数据已存在，请勿重复添加"),
                 // PostgreSQL foreign key violation
-                Some(cow) if cow == "23503" => Self::bad_request(format!("关联数据不存在: {message}")),
+                Some(cow) if cow == "23503" => {
+                    Self::bad_request(format!("关联数据不存在: {message}"))
+                }
                 // PostgreSQL not null violation
-                Some(cow) if cow == "23502" => Self::bad_request(format!("必填字段不能为空: {message}")),
+                Some(cow) if cow == "23502" => {
+                    Self::bad_request(format!("必填字段不能为空: {message}"))
+                }
                 _ => {
                     log::debug!("Unhandled database error: {code:?} - {message}");
                     println!("Unhandled database error: {code:?} - {message}");
@@ -267,9 +270,7 @@ impl From<sqlx::Error> for CustomError {
                 sqlx::Error::ColumnNotFound(col) => {
                     Self::bad_request(format!("查询字段不存在: {col}"))
                 }
-                sqlx::Error::Decode(err) => {
-                    Self::bad_request(format!("数据解码失败: {err}"))
-                }
+                sqlx::Error::Decode(err) => Self::bad_request(format!("数据解码失败: {err}")),
                 sqlx::Error::Database(_) => Self::internal("数据库错误"),
                 sqlx::Error::Io(_) => Self::internal("数据库IO错误"),
                 sqlx::Error::Tls(_) => Self::internal("数据库TLS错误"),

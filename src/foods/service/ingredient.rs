@@ -1,19 +1,10 @@
-use crate::{
-    errors::CustomError,
-    models::{
-        foods::{IngredientCreateInput, IngredientOut, IngredientRecord, IngredientUpdateInput},
-        pagination::{decode_cursor, encode_cursor, CursorPage},
-    },
-    AppState,
+use crate::errors::CustomError;
+use crate::foods::models::ingredient::{
+    BatchIngredientSortInput, IngredientCreateInput, IngredientOut, IngredientRecord, IngredientUpdateInput,
 };
-use ntex::web::{
-    types::{Json, Query, State},
-    HttpResponse, Responder,
-};
+use crate::models::pagination::{decode_cursor, encode_cursor, CursorPage};
+use sqlx::PgPool;
 use serde::{Deserialize, Serialize};
-use std::sync::Arc;
-
-// ================= Ingredient CRUD =================
 
 #[derive(Debug, Deserialize, Serialize)]
 pub struct IngredientCursor {
@@ -22,35 +13,13 @@ pub struct IngredientCursor {
     pub ingredient_id: i64,
 }
 
-#[derive(Debug, serde::Deserialize, utoipa::IntoParams, utoipa::ToSchema)]
-#[serde(rename_all = "camelCase")]
-#[into_params(parameter_in = Query)]
-pub struct IngredientQuery {
-    pub group_id: Option<i64>,
-    pub keyword: Option<String>,
-    pub limit: Option<i64>,
-    pub cursor: Option<String>,
-}
-
-#[utoipa::path(
-    get,
-    path = "/ingredients",
-    tag = "食材",
-    params(IngredientQuery),
-    responses((status = 200, body = CursorPage<IngredientOut>)),
-    security(("cookie_auth" = []))
-)]
 pub async fn list_ingredients(
-    user_token: crate::models::users::UserToken,
-    state: State<Arc<AppState>>,
-    query: Query<IngredientQuery>,
-) -> Result<impl Responder, CustomError> {
-    let db = &state.db_pool;
-    // 使用用户所属组或请求中的组ID
-    let group_id = query.group_id.or(user_token.user.as_ref().and_then(|u| u.group_id));
-    let keyword = query.keyword.as_deref().unwrap_or("");
-    let limit = query.limit.unwrap_or(50).clamp(1, 200);
-
+    db: &PgPool,
+    group_id: Option<i64>,
+    keyword: &str,
+    limit: i64,
+    cursor_str: Option<&String>,
+) -> Result<CursorPage<IngredientOut>, CustomError> {
     let mut qb = sqlx::QueryBuilder::<sqlx::Postgres>::new(
         r#"SELECT ingredient_id, name, group_id, unit, calories, description, icon, sort, created_at, updated_at
            FROM ingredients
@@ -63,7 +32,7 @@ pub async fn list_ingredients(
         qb.push_bind(format!("%{}%", keyword));
     }
 
-    if let Some(cursor_str) = &query.cursor {
+    if let Some(cursor_str) = cursor_str {
         if let Some(cursor) = decode_cursor::<IngredientCursor>(cursor_str) {
             qb.push(" AND (sort, name, ingredient_id) > (");
             qb.push_bind(cursor.sort);
@@ -111,30 +80,15 @@ pub async fn list_ingredients(
         })
         .collect();
 
-    Ok(HttpResponse::Ok().json(&CursorPage {
+    Ok(CursorPage {
         items: list,
         next_cursor,
         has_more,
         total: None,
-    }))
+    })
 }
 
-#[utoipa::path(
-    get,
-    path = "/ingredients/{id}",
-    tag = "食材",
-    params(("id" = i64, Path, description = "食材ID")),
-    responses((status = 200, body = IngredientOut), (status = 404, body = CustomError)),
-    security(("cookie_auth" = []))
-)]
-pub async fn get_ingredient(
-    _user_token: crate::models::users::UserToken,
-    state: State<Arc<AppState>>,
-    id: ntex::web::types::Path<i64>,
-) -> Result<impl Responder, CustomError> {
-    let db = &state.db_pool;
-    let id = *id;
-
+pub async fn get_ingredient(db: &PgPool, id: i64) -> Result<IngredientOut, CustomError> {
     let row = sqlx::query_as::<_, IngredientRecord>(
         "SELECT ingredient_id, name, group_id, unit, calories, description, icon, sort, created_at, updated_at FROM ingredients WHERE ingredient_id=$1"
     )
@@ -143,40 +97,26 @@ pub async fn get_ingredient(
     .await?;
 
     match row {
-        Some(r) => {
-            let out = IngredientOut {
-                ingredient_id: r.ingredient_id,
-                name: r.name,
-                group_id: r.group_id,
-                unit: r.unit,
-                calories: r.calories,
-                description: r.description,
-                icon: r.icon,
-                sort: r.sort,
-            };
-            Ok(HttpResponse::Ok().json(&out))
-        }
+        Some(r) => Ok(IngredientOut {
+            ingredient_id: r.ingredient_id,
+            name: r.name,
+            group_id: r.group_id,
+            unit: r.unit,
+            calories: r.calories,
+            description: r.description,
+            icon: r.icon,
+            sort: r.sort,
+        }),
         None => Err(CustomError::NotFound("食材不存在".into())),
     }
 }
 
-#[utoipa::path(
-    post,
-    path = "/ingredients",
-    tag = "食材",
-    request_body = IngredientCreateInput,
-    responses((status = 201, body = IngredientOut)),
-    security(("cookie_auth" = []))
-)]
 pub async fn create_ingredient(
-    user_token: crate::models::users::UserToken,
-    state: State<Arc<AppState>>,
-    data: Json<IngredientCreateInput>,
-) -> Result<impl Responder, CustomError> {
-    let db = &state.db_pool;
-
-    // 使用用户的组ID或请求中的组ID
-    let group_id = data.group_id.or(user_token.user.as_ref().and_then(|u| u.group_id));
+    db: &PgPool,
+    data: &IngredientCreateInput,
+    user_group_id: Option<i64>,
+) -> Result<IngredientOut, CustomError> {
+    let group_id = data.group_id.or(user_group_id);
 
     let rec = sqlx::query_as::<_, IngredientRecord>(
         r#"INSERT INTO ingredients (name, group_id, unit, calories, description, icon, sort)
@@ -193,7 +133,7 @@ pub async fn create_ingredient(
     .fetch_one(db)
     .await?;
 
-    let out = IngredientOut {
+    Ok(IngredientOut {
         ingredient_id: rec.ingredient_id,
         name: rec.name,
         group_id: rec.group_id,
@@ -202,30 +142,14 @@ pub async fn create_ingredient(
         description: rec.description,
         icon: rec.icon,
         sort: rec.sort,
-    };
-
-    Ok(HttpResponse::Created().json(&out))
+    })
 }
 
-#[utoipa::path(
-    put,
-    path = "/ingredients/{id}",
-    tag = "食材",
-    params(("id" = i64, Path, description = "食材ID")),
-    request_body = IngredientUpdateInput,
-    responses((status = 200, body = IngredientOut), (status = 404, body = CustomError)),
-    security(("cookie_auth" = []))
-)]
 pub async fn update_ingredient(
-    _user_token: crate::models::users::UserToken,
-    state: State<Arc<AppState>>,
-    id: ntex::web::types::Path<i64>,
-    data: Json<IngredientUpdateInput>,
-) -> Result<impl Responder, CustomError> {
-    let db = &state.db_pool;
-    let id = *id;
-
-    // Check exists
+    db: &PgPool,
+    id: i64,
+    data: &IngredientUpdateInput,
+) -> Result<IngredientOut, CustomError> {
     let exists = sqlx::query("SELECT 1 FROM ingredients WHERE ingredient_id=$1")
         .bind(id)
         .fetch_optional(db)
@@ -257,7 +181,7 @@ pub async fn update_ingredient(
     .fetch_one(db)
     .await?;
 
-    let out = IngredientOut {
+    Ok(IngredientOut {
         ingredient_id: rec.ingredient_id,
         name: rec.name,
         group_id: rec.group_id,
@@ -266,68 +190,33 @@ pub async fn update_ingredient(
         description: rec.description,
         icon: rec.icon,
         sort: rec.sort,
-    };
-
-    Ok(HttpResponse::Ok().json(&out))
+    })
 }
 
-#[utoipa::path(
-    delete,
-    path = "/ingredients/{id}",
-    tag = "食材",
-    params(("id" = i64, Path, description = "食材ID")),
-    responses((status = 204), (status = 404, body = CustomError)),
-    security(("cookie_auth" = []))
-)]
-pub async fn delete_ingredient(
-    _user_token: crate::models::users::UserToken,
-    state: State<Arc<AppState>>,
-    id: ntex::web::types::Path<i64>,
-) -> Result<impl Responder, CustomError> {
-    let db = &state.db_pool;
-    let id = *id;
-
-    let deleted = sqlx::query("DELETE FROM ingredients WHERE ingredient_id=$1 RETURNING ingredient_id")
-        .bind(id)
-        .fetch_optional(db)
-        .await?;
+pub async fn delete_ingredient(db: &PgPool, id: i64) -> Result<(), CustomError> {
+    let deleted =
+        sqlx::query("DELETE FROM ingredients WHERE ingredient_id=$1 RETURNING ingredient_id")
+            .bind(id)
+            .fetch_optional(db)
+            .await?;
 
     if deleted.is_none() {
         return Err(CustomError::NotFound("食材不存在".into()));
     }
-
-    Ok(HttpResponse::NoContent())
+    Ok(())
 }
 
-use crate::models::foods::BatchIngredientSortInput;
-
-#[utoipa::path(
-    post,
-    path = "/ingredients/sort",
-    tag = "食材",
-    request_body = BatchIngredientSortInput,
-    responses((status = 200, body = String)),
-    security(("cookie_auth" = []))
-)]
 pub async fn update_ingredients_sort(
-    _user_token: crate::models::users::UserToken,
-    state: State<Arc<AppState>>,
-    data: Json<BatchIngredientSortInput>,
-) -> Result<impl Responder, CustomError> {
-    let db = &state.db_pool;
+    db: &PgPool,
+    data: &BatchIngredientSortInput,
+) -> Result<(), CustomError> {
     let items = &data.items;
-
     if items.is_empty() {
-        return Ok(HttpResponse::Ok().body("ok"));
+        return Ok(());
     }
 
     let mut tx = db.begin().await?;
-
-    // 使用 QueryBuilder 动态构建批量更新语句
-    // UPDATE ingredients SET sort = CASE ingredient_id WHEN 1 THEN 10 WHEN 2 THEN 20 ELSE sort END WHERE ingredient_id IN (1, 2)
-    use sqlx::QueryBuilder;
-
-    let mut qb: QueryBuilder<sqlx::Postgres> = QueryBuilder::new("UPDATE ingredients SET sort = CASE ingredient_id ");
+    let mut qb = sqlx::QueryBuilder::<sqlx::Postgres>::new("UPDATE ingredients SET sort = CASE ingredient_id ");
     let mut ids = Vec::new();
 
     for item in items {
@@ -348,8 +237,7 @@ pub async fn update_ingredients_sort(
     separated.push_unseparated(")");
 
     qb.build().execute(&mut *tx).await?;
-
     tx.commit().await?;
 
-    Ok(HttpResponse::Ok().body("ok"))
+    Ok(())
 }

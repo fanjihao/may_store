@@ -25,7 +25,7 @@ src/
 ├── main.rs              # 唯一入口：加载配置、初始化日志、启动 HTTP 服务
 ├── config.rs            # 全局配置管理 (数据库连接池、环境变量读取)
 ├── errors.rs            # 全局统一的错误处理 (AppError 枚举及 HTTP 响应映射)
-├── middlewares/         # 拦截器 (中间件)
+├── middlewares/         # 拦截器 (中间件) √
 │   ├── auth.rs          # JWT 鉴权拦截器
 │   └── logger.rs        # 请求日志拦截器
 ├── utils/               # 通用工具包
@@ -44,7 +44,7 @@ src/
 │   ├── service.rs
 │   └── models.rs
 │
-├── wishes/              # 【业务模块：心愿单】(包含许愿、打卡等)
+├── wishes/              # 【业务模块：心愿单】(包含许愿、打卡等) √
 │   ├── mod.rs
 │   ├── routes.rs
 │   ├── service.rs
@@ -56,31 +56,31 @@ src/
 │   ├── service.rs
 │   └── models.rs
 │
-├── game_im/             # 【业务模块：即时通讯游戏】
+├── game_im/             # 【业务模块：即时通讯游戏】√
 │   ├── mod.rs
 │   ├── routes.rs
 │   ├── service.rs
 │   └── models.rs
 │
-├── game_ws/             # 【业务模块：WebSocket游戏】
+├── game_ws/             # 【业务模块：WebSocket游戏】√
 │   ├── mod.rs
 │   ├── routes.rs
 │   ├── service.rs
 │   └── models.rs
 │
-├── wx/                  # 【业务模块：微信相关集成】(小程序登录、支付等)
+├── wx/                  # 【业务模块：微信相关集成】(小程序登录、支付等) √
 │   ├── mod.rs
 │   ├── routes.rs
 │   ├── service.rs
 │   └── models.rs
 │
-├── dashboard/           # 【业务模块：后台管理面板数据】
+├── dashboard/           # 【业务模块：后台管理面板数据】√
 │   ├── mod.rs
 │   ├── routes.rs
 │   ├── service.rs
 │   └── models.rs
 │
-└── upload/              # 【业务模块：文件上传】(如七牛云对接等)
+└── upload/              # 【业务模块：文件上传】(如七牛云对接等) √
     ├── mod.rs
     ├── routes.rs
     ├── service.rs

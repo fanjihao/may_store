@@ -1,4 +1,4 @@
-use crate::{errors::CustomError, utils::TOKEN_SECRET_KEY, AppState};
+use crate::{config::AppState, errors::CustomError, utils::TOKEN_SECRET_KEY};
 use jsonwebtoken::{decode, Algorithm, DecodingKey, Validation};
 use ntex::{
     http::Payload,
@@ -223,10 +223,8 @@ impl<E: ErrorRenderer> FromRequest<E> for UserToken {
 
             let decoding_key = DecodingKey::from_secret(TOKEN_SECRET_KEY);
             let validation = Validation::new(Algorithm::HS256);
-            let data =
-                decode::<UserTokenClaims>(&raw, &decoding_key, &validation).map_err(|e| {
-                    CustomError::unauthorized(format!("decode token error: {}", e))
-                })?;
+            let data = decode::<UserTokenClaims>(&raw, &decoding_key, &validation)
+                .map_err(|e| CustomError::unauthorized(format!("decode token error: {}", e)))?;
             let uid = data.claims.user_id;
 
             // 从缓存或数据库获取用户信息

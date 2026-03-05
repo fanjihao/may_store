@@ -1,18 +1,21 @@
-pub mod new;
-pub mod view;
-pub mod update;
-pub mod invitation;
-pub mod role;
-pub mod group_update;
 pub mod checkin;
+pub mod group_update;
+pub mod invitation;
+pub mod new;
+pub mod role;
 pub mod sign;
 pub mod sweet_talk;
+pub mod update;
+pub mod view;
 
-use argon2::{ Argon2, PasswordHash, PasswordHasher, PasswordVerifier };
-use password_hash::{ SaltString };
+use argon2::{Argon2, PasswordHash, PasswordHasher, PasswordVerifier};
+use password_hash::SaltString;
 use rand::thread_rng;
 
-use crate::{ errors::CustomError, utils::{ APP_ID, APP_SECRET } };
+use crate::{
+    errors::CustomError,
+    utils::{APP_ID, APP_SECRET},
+};
 
 pub fn hash_password(plain: &str) -> Result<(String, String), String> {
     let salt = SaltString::generate(&mut thread_rng());
@@ -32,17 +35,19 @@ pub fn verify_password(plain: &str, stored_hash: &str) -> Result<bool, String> {
 
 // 微信登录
 pub async fn weixin_login(code: &str) -> Result<String, CustomError> {
-    let res = reqwest
-        ::get(
-            "https://api.weixin.qq.com/sns/jscode2session?grant_type=authorization_code&appid=".to_string() +
-                APP_ID +
-                "&secret=" +
-                APP_SECRET +
-				"&js_code=" +
-				code,
-        ).await?
-        .text().await?;
-	
+    let res = reqwest::get(
+        "https://api.weixin.qq.com/sns/jscode2session?grant_type=authorization_code&appid="
+            .to_string()
+            + APP_ID
+            + "&secret="
+            + APP_SECRET
+            + "&js_code="
+            + code,
+    )
+    .await?
+    .text()
+    .await?;
+
     let response_json: Result<serde_json::Value, serde_json::Error> = serde_json::from_str(&res);
     match response_json {
         Ok(obj) => {

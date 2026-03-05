@@ -7,9 +7,9 @@ use ntex::web::{
 
 use crate::utils::{validate_nickname, validate_username};
 use crate::{
+    config::AppState,
     errors::CustomError,
     models::users::{UserPublic, UserRecord, UserToken},
-    AppState,
 };
 use crate::{
     models::users::ProfileUpdateInput,

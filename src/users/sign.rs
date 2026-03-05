@@ -1,8 +1,8 @@
 use crate::{
+    config::AppState,
     errors::CustomError,
-    models::sign::{SignInfoResponse, SignInResponse, SignRecordOut},
+    models::sign::{SignInResponse, SignInfoResponse, SignRecordOut},
     models::users::UserToken,
-    AppState,
 };
 use chrono::Local;
 use ntex::web::{types::State, HttpResponse, Responder};
@@ -31,13 +31,12 @@ pub async fn sign_in(
     let today = Local::now().date_naive();
 
     // 检查今天是否已签到
-    let existing_sign = sqlx::query(
-        "SELECT sign_id FROM sign_records WHERE user_id=$1 AND sign_date=$2"
-    )
-    .bind(user_id)
-    .bind(today)
-    .fetch_optional(db)
-    .await?;
+    let existing_sign =
+        sqlx::query("SELECT sign_id FROM sign_records WHERE user_id=$1 AND sign_date=$2")
+            .bind(user_id)
+            .bind(today)
+            .fetch_optional(db)
+            .await?;
 
     if existing_sign.is_some() {
         return Err(CustomError::bad_request("今日已签到，请明天再来"));
@@ -57,13 +56,12 @@ pub async fn sign_in(
         let yesterday = today.pred_opt().unwrap();
 
         // 获取昨天是否有签到记录
-        let yesterday_sign = sqlx::query(
-            "SELECT 1 FROM sign_records WHERE user_id=$1 AND sign_date=$2"
-        )
-        .bind(user_id)
-        .bind(yesterday)
-        .fetch_optional(db)
-        .await?;
+        let yesterday_sign =
+            sqlx::query("SELECT 1 FROM sign_records WHERE user_id=$1 AND sign_date=$2")
+                .bind(user_id)
+                .bind(yesterday)
+                .fetch_optional(db)
+                .await?;
 
         if yesterday_sign.is_some() {
             // 连续签到，加1，满7天后重置为1
@@ -96,7 +94,7 @@ pub async fn sign_in(
     // 插入签到记录
     let sign_id = sqlx::query(
         "INSERT INTO sign_records (user_id, sign_date, consecutive_days, points_earned)
-         VALUES ($1, $2, $3, $4) RETURNING sign_id"
+         VALUES ($1, $2, $3, $4) RETURNING sign_id",
     )
     .bind(user_id)
     .bind(today)
@@ -116,7 +114,7 @@ pub async fn sign_in(
     // 插入积分流水
     sqlx::query(
         "INSERT INTO point_transactions (user_id, amount, type, ref_type, ref_id, balance_after)
-         VALUES ($1, $2, 'SIGN_IN_REWARD', 1, $3, $4)"
+         VALUES ($1, $2, 'SIGN_IN_REWARD', 1, $3, $4)",
     )
     .bind(user_id)
     .bind(points_earned)
@@ -129,7 +127,10 @@ pub async fn sign_in(
 
     // 构建签到消息
     let message = if consecutive_days >= 7 {
-        format!("连续签到{}天，获得{}积分（满7天额外奖励）", consecutive_days, points_earned)
+        format!(
+            "连续签到{}天，获得{}积分（满7天额外奖励）",
+            consecutive_days, points_earned
+        )
     } else if consecutive_days == 1 {
         format!("首次签到，获得{}积分", points_earned)
     } else {
@@ -169,7 +170,7 @@ pub async fn get_sign_info(
     // 检查今天是否已签到
     let today_sign_row = sqlx::query(
         "SELECT sign_id, user_id, sign_date, consecutive_days, points_earned, created_at
-         FROM sign_records WHERE user_id=$1 AND sign_date=$2"
+         FROM sign_records WHERE user_id=$1 AND sign_date=$2",
     )
     .bind(user_id)
     .bind(today)
@@ -188,7 +189,7 @@ pub async fn get_sign_info(
     // 获取最近一条签到记录
     let last_sign_row = sqlx::query(
         "SELECT sign_id, user_id, sign_date, consecutive_days, points_earned, created_at
-         FROM sign_records WHERE user_id=$1 ORDER BY sign_date DESC, sign_id DESC LIMIT 1"
+         FROM sign_records WHERE user_id=$1 ORDER BY sign_date DESC, sign_id DESC LIMIT 1",
     )
     .bind(user_id)
     .fetch_optional(db)
@@ -204,17 +205,16 @@ pub async fn get_sign_info(
     });
 
     // 获取总签到天数
-    let total_sign_days: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM sign_records WHERE user_id=$1"
-    )
-    .bind(user_id)
-    .fetch_one(db)
-    .await?;
+    let total_sign_days: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM sign_records WHERE user_id=$1")
+            .bind(user_id)
+            .fetch_one(db)
+            .await?;
 
     // 获取最近7天签到记录
     let recent_rows = sqlx::query(
         "SELECT sign_id, user_id, sign_date, consecutive_days, points_earned, created_at
-         FROM sign_records WHERE user_id=$1 ORDER BY sign_date DESC, sign_id DESC LIMIT 7"
+         FROM sign_records WHERE user_id=$1 ORDER BY sign_date DESC, sign_id DESC LIMIT 7",
     )
     .bind(user_id)
     .fetch_all(db)

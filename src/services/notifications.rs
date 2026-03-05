@@ -3,7 +3,9 @@ use reqwest::Client;
 use sqlx::postgres::PgPool;
 use sqlx::Row;
 
-use crate::wx::auth::{fetch_set_access_token, get_access_token, fetch_set_mp_token, get_mp_token};
+use crate::wx::service::{
+    fetch_set_access_token, fetch_set_mp_token, get_access_token, get_mp_token,
+};
 use crate::{errors::CustomError, models::orders::OrderStatusEnum};
 
 // 订单推送类型枚举
@@ -161,11 +163,11 @@ pub async fn push_order_with_type(
                 for tg in mp_targets {
                     let json_data = match push_type {
                         OrderPushType::Created => {
-                             let order_time = created_at.format("%Y-%m-%d %H:%M").to_string();
-                             let goal_time_str = goal_time
+                            let order_time = created_at.format("%Y-%m-%d %H:%M").to_string();
+                            let goal_time_str = goal_time
                                 .map(|t| t.format("%Y-%m-%d %H:%M").to_string())
                                 .unwrap_or_else(|| "待定".to_string());
-                             serde_json::json!({
+                            serde_json::json!({
                                 "touser": &tg.openid,
                                 "template_id": template_id,
                                 "page": "/pages/order/order",
@@ -176,10 +178,10 @@ pub async fn push_order_with_type(
                                     "time26": {"value": goal_time_str}
                                 }
                             })
-                        },
+                        }
                         OrderPushType::StatusUpdated => {
                             let order_time = created_at.format("%Y-%m-%d %H:%M").to_string();
-                             serde_json::json!({
+                            serde_json::json!({
                                 "touser": &tg.openid,
                                 "template_id": template_id,
                                 "page": "/pages/order/order",
@@ -200,9 +202,9 @@ pub async fn push_order_with_type(
                         .json(&json_data)
                         .send()
                         .await;
-                     if let Err(e) = res {
-                         println!("push mp error: {}", e);
-                     }
+                    if let Err(e) = res {
+                        println!("push mp error: {}", e);
+                    }
                 }
             }
         }
@@ -225,11 +227,11 @@ pub async fn push_order_with_type(
                 for tg in official_targets {
                     let json_data = match push_type {
                         OrderPushType::Created => {
-                             let order_time = created_at.format("%Y-%m-%d %H:%M").to_string();
-                             let goal_time_str = goal_time
+                            let order_time = created_at.format("%Y-%m-%d %H:%M").to_string();
+                            let goal_time_str = goal_time
                                 .map(|t| t.format("%Y-%m-%d %H:%M").to_string())
                                 .unwrap_or_else(|| "待定".to_string());
-                             serde_json::json!({
+                            serde_json::json!({
                                 "touser": &tg.openid,
                                 "template_id": template_id,
                                 "data": {
@@ -239,10 +241,10 @@ pub async fn push_order_with_type(
                                     "time26": {"value": goal_time_str}
                                 }
                             })
-                        },
+                        }
                         OrderPushType::StatusUpdated => {
                             let order_time = created_at.format("%Y-%m-%d %H:%M").to_string();
-                             serde_json::json!({
+                            serde_json::json!({
                                 "touser": &tg.openid,
                                 "template_id": template_id,
                                 "data": {
@@ -254,7 +256,7 @@ pub async fn push_order_with_type(
                             })
                         }
                     };
-                     let res = client
+                    let res = client
                         .post(format!(
                             "https://api.weixin.qq.com/cgi-bin/message/template/send?access_token={}",
                             access_token
@@ -262,9 +264,9 @@ pub async fn push_order_with_type(
                         .json(&json_data)
                         .send()
                         .await;
-                     if let Err(e) = res {
-                         println!("push official error: {}", e);
-                     }
+                    if let Err(e) = res {
+                        println!("push official error: {}", e);
+                    }
                 }
             }
         }
@@ -273,7 +275,10 @@ pub async fn push_order_with_type(
     Ok(())
 }
 
-async fn fetch_user_openid(user_id: i64, db_pool: &PgPool) -> Result<Option<PushTarget>, CustomError> {
+async fn fetch_user_openid(
+    user_id: i64,
+    db_pool: &PgPool,
+) -> Result<Option<PushTarget>, CustomError> {
     let row = sqlx::query("SELECT open_id, push_id FROM users WHERE user_id=$1")
         .bind(user_id)
         .fetch_optional(db_pool)
@@ -291,7 +296,7 @@ async fn fetch_user_openid(user_id: i64, db_pool: &PgPool) -> Result<Option<Push
         }
         // 否则使用 open_id
         if let Ok(Some(oid)) = r.try_get::<Option<String>, _>("open_id") {
-             if !oid.is_empty() {
+            if !oid.is_empty() {
                 return Ok(Some(PushTarget {
                     openid: oid,
                     is_official: false,
@@ -311,7 +316,7 @@ async fn fetch_group_receiving_openids(
         "SELECT u.open_id, u.push_id
          FROM association_group_members agm
          JOIN users u ON agm.user_id = u.user_id
-         WHERE agm.group_id = $1 AND u.role = 'RECEIVING'"
+         WHERE agm.group_id = $1 AND u.role = 'RECEIVING'",
     )
     .bind(group_id)
     .fetch_all(db_pool)

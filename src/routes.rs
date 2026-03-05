@@ -1,7 +1,8 @@
 use crate::{
+    config::AppState,
     dashboard, foods, game_im, game_ws,
     openapi::{openapi_json, serve_swagger},
-    orders, upload, users, wishes, wx, AppState,
+    orders, upload, users, wishes, wx,
 };
 use ntex::web;
 use std::sync::Arc;
@@ -11,7 +12,7 @@ pub fn route(_state: Arc<AppState>, cfg: &mut web::ServiceConfig) {
     cfg.service(web::scope("/api-doc/openapi.json").route("", web::get().to(openapi_json)))
         .service(web::scope("/swagger-ui").route("/{tail:.*}", web::get().to(serve_swagger)))
         .service(
-            web::scope("/upload-token").route("", web::get().to(upload::upload::get_qiniu_token)),
+            web::scope("/upload-token").route("", web::get().to(upload::routes::get_qiniu_token)),
         );
 
     game_routes(cfg);
@@ -31,20 +32,20 @@ pub fn route(_state: Arc<AppState>, cfg: &mut web::ServiceConfig) {
 /// 游戏 (Game)
 fn game_routes(cfg: &mut web::ServiceConfig) {
     // Socket mode (self-hosted WebSocket)
-    cfg.service(web::resource("/ws/game").route(web::get().to(game_ws::ws_game)));
-    cfg.service(web::resource("/game/room-code").route(web::get().to(game_ws::get_room_code)));
+    cfg.service(web::resource("/ws/game").route(web::get().to(game_ws::routes::ws_game)));
+    cfg.service(web::resource("/game/room-code").route(web::get().to(game_ws::routes::get_room_code)));
 
     // Tencent Cloud IM
-    cfg.service(web::resource("/im/usersig").route(web::get().to(game_im::sign::get_user_sig)));
+    cfg.service(web::resource("/im/usersig").route(web::get().to(game_im::routes::get_user_sig)));
 
     // Mini-game (IM based)
-    cfg.service(web::resource("/game/rooms").route(web::get().to(game_im::rooms::list_rooms)));
+    cfg.service(web::resource("/game/rooms").route(web::get().to(game_im::routes::list_rooms)));
     cfg.service(
         web::resource("/game/rooms/{group_id}/start")
-            .route(web::post().to(game_im::werewolf::start_game)),
+            .route(web::post().to(game_im::routes::start_game)),
     );
     cfg.service(
-        web::resource("/game/rooms/{group_id}/vote").route(web::post().to(game_im::werewolf::vote)),
+        web::resource("/game/rooms/{group_id}/vote").route(web::post().to(game_im::routes::vote)),
     );
 }
 
@@ -119,21 +120,21 @@ fn team_routes(cfg: &mut web::ServiceConfig) {
 fn dish_routes(cfg: &mut web::ServiceConfig) {
     cfg.service(
         web::scope("/foods")
-            .route("", web::post().to(foods::new::create_food))
-            .route("", web::get().to(foods::view::get_foods))
-            .route("/marks", web::get().to(foods::view::get_marked_foods))
+            .route("", web::post().to(foods::routes::food::create_food))
+            .route("", web::get().to(foods::routes::food::get_foods))
+            .route("/marks", web::get().to(foods::routes::food::get_marked_foods))
             .route(
                 "/blind_box/draw",
-                web::post().to(foods::view::draw_blind_box),
+                web::post().to(foods::routes::food::draw_blind_box),
             )
-            .route("/mark", web::post().to(foods::update::mark_food))
+            .route("/mark", web::post().to(foods::routes::food::mark_food))
             .route(
                 "/mark/{food_id}/{mark_type}",
-                web::delete().to(foods::update::unmark_food),
+                web::delete().to(foods::routes::food::unmark_food),
             )
-            .route("/{id}", web::get().to(foods::view::get_food_detail))
-            .route("/{id}", web::put().to(foods::update::update_food))
-            .route("/{id}", web::delete().to(foods::delete::delete_food)),
+            .route("/{id}", web::get().to(foods::routes::food::get_food_detail))
+            .route("/{id}", web::put().to(foods::routes::food::update_food))
+            .route("/{id}", web::delete().to(foods::routes::food::delete_food)),
     );
 }
 
@@ -141,11 +142,11 @@ fn dish_routes(cfg: &mut web::ServiceConfig) {
 fn tag_routes(cfg: &mut web::ServiceConfig) {
     cfg.service(
         web::scope("/food_tags")
-            .route("", web::post().to(foods::new::create_tag))
-            .route("", web::get().to(foods::view::get_tags))
-            .route("/sort", web::post().to(foods::update::update_tags_sort))
-            .route("/{id}", web::put().to(foods::update::update_tag))
-            .route("/{id}", web::delete().to(foods::delete::delete_tag)),
+            .route("", web::post().to(foods::routes::tag::create_tag))
+            .route("", web::get().to(foods::routes::tag::get_tags))
+            .route("/sort", web::post().to(foods::routes::tag::update_tags_sort))
+            .route("/{id}", web::put().to(foods::routes::tag::update_tag))
+            .route("/{id}", web::delete().to(foods::routes::tag::delete_tag)),
     );
 }
 
@@ -153,20 +154,20 @@ fn tag_routes(cfg: &mut web::ServiceConfig) {
 fn ingredient_routes(cfg: &mut web::ServiceConfig) {
     cfg.service(
         web::scope("/ingredients")
-            .route("", web::get().to(foods::ingredients::list_ingredients))
-            .route("", web::post().to(foods::ingredients::create_ingredient))
+            .route("", web::get().to(foods::routes::ingredient::list_ingredients))
+            .route("", web::post().to(foods::routes::ingredient::create_ingredient))
             .route(
                 "/sort",
-                web::post().to(foods::ingredients::update_ingredients_sort),
+                web::post().to(foods::routes::ingredient::update_ingredients_sort),
             )
-            .route("/{id}", web::get().to(foods::ingredients::get_ingredient))
+            .route("/{id}", web::get().to(foods::routes::ingredient::get_ingredient))
             .route(
                 "/{id}",
-                web::put().to(foods::ingredients::update_ingredient),
+                web::put().to(foods::routes::ingredient::update_ingredient),
             )
             .route(
                 "/{id}",
-                web::delete().to(foods::ingredients::delete_ingredient),
+                web::delete().to(foods::routes::ingredient::delete_ingredient),
             ),
     );
 }
@@ -210,16 +211,16 @@ fn wish_routes(cfg: &mut web::ServiceConfig) {
     // 1. Core Wish Resources
     cfg.service(
         web::scope("/wishes")
-            .route("", web::get().to(wishes::handlers::list_wishes))
-            .route("", web::post().to(wishes::handlers::create_wish))
-            .route("/{id}", web::get().to(wishes::handlers::get_wish))
-            .route("/{id}", web::put().to(wishes::handlers::update_wish))
-            .route("/{id}", web::delete().to(wishes::handlers::delete_wish))
+            .route("", web::get().to(wishes::routes::list_wishes))
+            .route("", web::post().to(wishes::routes::create_wish))
+            .route("/{id}", web::get().to(wishes::routes::get_wish))
+            .route("/{id}", web::put().to(wishes::routes::update_wish))
+            .route("/{id}", web::delete().to(wishes::routes::delete_wish))
             // 2. Actions
-            .route("/{id}/redeem", web::post().to(wishes::claims::redeem_wish))
+            .route("/{id}/redeem", web::post().to(wishes::routes::redeem_wish))
             .route(
                 "/{id}/feedback",
-                web::put().to(wishes::claims::submit_feedback),
+                web::put().to(wishes::routes::submit_feedback),
             ),
     );
 }
@@ -240,12 +241,12 @@ fn checkin_routes(cfg: &mut web::ServiceConfig) {
 fn wechat_routes(cfg: &mut web::ServiceConfig) {
     cfg.service(
         web::scope("/wx")
-            .route("/sign-verify", web::get().to(wx::verify::wx_sign_verify))
+            .route("/sign-verify", web::get().to(wx::routes::wx_sign_verify))
             .route(
                 "/sign-verify",
-                web::post().to(wx::verify::wx_offical_received),
+                web::post().to(wx::routes::wx_offical_received),
             )
-            .route("/templates", web::get().to(wx::template::get_templates)),
+            .route("/templates", web::get().to(wx::routes::get_templates)),
     );
 }
 
@@ -253,33 +254,33 @@ fn wechat_routes(cfg: &mut web::ServiceConfig) {
 fn dashboard_routes(cfg: &mut web::ServiceConfig) {
     cfg.service(web::scope("/groups").route(
         "/{group_id}/activities",
-        web::get().to(dashboard::activities::get_group_activities),
+        web::get().to(dashboard::routes::get_group_activities),
     ))
     .service(
         web::scope("/dashboard")
             .route(
                 "/top-foods",
-                web::get().to(dashboard::metrics::get_top_food_orders),
+                web::get().to(dashboard::routes::get_top_food_orders),
             )
             .route(
                 "/my/orders-today",
-                web::get().to(dashboard::metrics::get_my_today_orders),
+                web::get().to(dashboard::routes::get_my_today_orders),
             )
             .route(
                 "/my/order-stats",
-                web::get().to(dashboard::metrics::get_my_order_stats),
+                web::get().to(dashboard::routes::get_my_order_stats),
             )
             .route(
                 "/my/points-journey",
-                web::get().to(dashboard::metrics::get_points_journey),
+                web::get().to(dashboard::routes::get_points_journey),
             )
             .route(
                 "/week-order-dates",
-                web::get().to(dashboard::metrics::get_week_order_dates),
+                web::get().to(dashboard::routes::get_week_order_dates),
             )
             .route(
                 "/date-foods",
-                web::get().to(dashboard::metrics::get_date_foods),
+                web::get().to(dashboard::routes::get_date_foods),
             ),
     );
 }

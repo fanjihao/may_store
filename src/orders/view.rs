@@ -1,12 +1,12 @@
 use crate::models::users::UserToken;
 use crate::{
+    config::AppState,
     errors::CustomError,
     models::orders::{
         GroupInfoSimple, OrderItemOut, OrderOutNew, OrderQuery, OrderRecord, OrderStatusEnum,
         OrderStatusHistoryOut,
     },
     models::pagination::{decode_cursor, encode_cursor, CursorPage},
-    AppState,
 };
 use chrono::{DateTime, Utc};
 use ntex::web::{
@@ -222,7 +222,14 @@ pub async fn get_order_detail(
         )
         .bind(*id)
         .fetch_optional(db).await?;
-    let (order, group_name, db_receiver_nick_name, db_receiver_avatar, creator_nick_name, creator_avatar) = match row {
+    let (
+        order,
+        group_name,
+        db_receiver_nick_name,
+        db_receiver_avatar,
+        creator_nick_name,
+        creator_avatar,
+    ) = match row {
         Some(r) => {
             // decode directly as OrderRecord via manual field pulls
             (

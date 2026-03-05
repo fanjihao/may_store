@@ -1,7 +1,7 @@
+use crate::models::pagination::CursorQuery;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use utoipa::{ToSchema, IntoParams};
-use crate::models::pagination::CursorQuery;
+use utoipa::{IntoParams, ToSchema};
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]

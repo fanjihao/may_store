@@ -1,66 +1,93 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use chrono::Utc;
 use ntex::web::types::{Json, Path, State};
 use ntex::web::{HttpResponse, Responder};
 use rand::seq::SliceRandom;
-use tokio::sync::Mutex;
 
-use crate::errors::CustomError;
-use crate::game_im::rest::ImRestClient;
-use crate::models::game_im::{ImStartGameOut, ImVoteIn, ImVoteOut};
-use crate::models::users::UserToken;
-use crate::AppState;
+use crate::{
+    config::AppState,
+    errors::CustomError,
+    game_im::models::{
+        ImRoomListOut, ImRoomOut, ImStartGameOut, ImUserSigOut, ImVoteIn, ImVoteOut, Role,
+        RoomPhase, RoomRuntime,
+    },
+    game_im::service::{generate_user_sig, runtime, ImRestClient},
+    middlewares::auth::UserToken,
+};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum RoomPhase {
-    Lobby,
-    Started,
-    Voting,
+#[utoipa::path(
+	get,
+	path = "/im/usersig",
+	tag = "游戏",
+	summary = "获取当前登录用户的腾讯云 IM UserSig",
+	responses(
+		(status = 200, body = ImUserSigOut),
+		(status = 400, body = CustomError),
+		(status = 401, body = CustomError)
+	),
+	security(("cookie_auth" = []))
+)]
+pub async fn get_user_sig(
+    token: UserToken,
+    state: State<Arc<AppState>>,
+) -> Result<impl Responder, CustomError> {
+    let Some(cfg) = state.im_config.clone() else {
+        return Err(CustomError::BadRequest(
+            "IM 未配置：请设置 TENCENT_IM_SDK_APP_ID / TENCENT_IM_SECRET_KEY".into(),
+        ));
+    };
+
+    let now = Utc::now().timestamp();
+    let identifier = token.user_id.to_string();
+    let user_sig = generate_user_sig(
+        &identifier,
+        cfg.sdk_app_id,
+        &cfg.secret_key,
+        cfg.expire_seconds,
+        now,
+    )?;
+    let expire_at = now + cfg.expire_seconds as i64;
+
+    Ok(HttpResponse::Ok().json(&ImUserSigOut {
+        sdk_app_id: cfg.sdk_app_id,
+        identifier,
+        user_id: token.user_id,
+        user_sig,
+        expire_at,
+    }))
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Role {
-    Wolf,
-    Villager,
-}
-
-#[derive(Debug, Default)]
-struct WerewolfRuntime {
-    rooms: Mutex<HashMap<String, RoomRuntime>>,
-}
-
-#[derive(Debug)]
-struct RoomRuntime {
-    phase: RoomPhase,
-    ready: HashSet<String>,
-    alive: HashSet<String>,
-    votes: HashMap<String, Option<String>>, // voter -> target (None=abstain)
-    roles: HashMap<String, Role>,
-    started_at: i64,
-}
-
-impl RoomRuntime {
-    fn new() -> Self {
-        Self {
-            phase: RoomPhase::Lobby,
-            ready: HashSet::new(),
-            alive: HashSet::new(),
-            votes: HashMap::new(),
-            roles: HashMap::new(),
-            started_at: 0,
-        }
-    }
-}
-
-fn runtime(state: &Arc<AppState>) -> Arc<WerewolfRuntime> {
-    // A tiny global runtime stored in extensions isn't available here; keep it in a static.
-    // Since this is a single-binary service, a static is acceptable for MVP.
-    use std::sync::OnceLock;
-    static RT: OnceLock<Arc<WerewolfRuntime>> = OnceLock::new();
-    let _ = state; // keep signature flexible
-    RT.get_or_init(|| Arc::new(WerewolfRuntime::default())).clone()
+#[utoipa::path(
+    get,
+    path = "/game/rooms",
+    tag = "游戏",
+    summary = "小游戏大厅：获取房间列表（IM 群组列表）",
+    responses((status = 200, body = ImRoomListOut), (status = 400, body = CustomError), (status = 401, body = CustomError)),
+    security(("cookie_auth" = []))
+)]
+pub async fn list_rooms(
+    _token: UserToken,
+    state: State<Arc<AppState>>,
+) -> Result<impl Responder, CustomError> {
+    let Some(cfg) = state.im_config.as_ref().map(|c| (**c).clone()) else {
+        return Err(CustomError::BadRequest(
+            "IM 未配置：请设置 TENCENT_IM_SDK_APP_ID / TENCENT_IM_SECRET_KEY".into(),
+        ));
+    };
+    let client = ImRestClient::new(cfg);
+    let groups = client.list_groups().await?;
+    let rooms = groups
+        .into_iter()
+        .map(|(group_id, name, member_num, owner_identifier)| ImRoomOut {
+            group_id,
+            name,
+            member_num,
+            owner_identifier,
+        })
+        .collect();
+    Ok(HttpResponse::Ok().json(&ImRoomListOut { rooms }))
 }
 
 #[utoipa::path(
@@ -95,7 +122,9 @@ pub async fn start_game(
     let rt = runtime(&state);
     {
         let mut rooms = rt.rooms.lock().await;
-        let room = rooms.entry(group_id.clone()).or_insert_with(RoomRuntime::new);
+        let room = rooms
+            .entry(group_id.clone())
+            .or_insert_with(RoomRuntime::new);
         if room.phase != RoomPhase::Lobby {
             return Err(CustomError::BadRequest("游戏已开始".into()));
         }
@@ -111,7 +140,11 @@ pub async fn start_game(
         shuffled.shuffle(&mut rand::thread_rng());
         let wolf_count = if shuffled.len() >= 6 { 2 } else { 1 };
         for (idx, id) in shuffled.iter().enumerate() {
-            let role = if idx < wolf_count { Role::Wolf } else { Role::Villager };
+            let role = if idx < wolf_count {
+                Role::Wolf
+            } else {
+                Role::Villager
+            };
             room.roles.insert(id.clone(), role);
         }
     }
@@ -120,13 +153,21 @@ pub async fn start_game(
     let rt = runtime(&state);
     let (started_at, roles) = {
         let rooms = rt.rooms.lock().await;
-        let room = rooms.get(&group_id).ok_or_else(|| CustomError::InternalServerError("room missing".into()))?;
+        let room = rooms
+            .get(&group_id)
+            .ok_or_else(|| CustomError::InternalServerError("room missing".into()))?;
         (room.started_at, room.roles.clone())
     };
 
     let wolves: Vec<String> = roles
         .iter()
-        .filter_map(|(id, r)| if *r == Role::Wolf { Some(id.clone()) } else { None })
+        .filter_map(|(id, r)| {
+            if *r == Role::Wolf {
+                Some(id.clone())
+            } else {
+                None
+            }
+        })
         .collect();
 
     for (to, role) in roles.iter() {
@@ -188,7 +229,9 @@ pub async fn vote(
 
     let (voted_count, total_alive, finished, eliminated) = {
         let mut rooms = rt.rooms.lock().await;
-        let room = rooms.entry(group_id.clone()).or_insert_with(RoomRuntime::new);
+        let room = rooms
+            .entry(group_id.clone())
+            .or_insert_with(RoomRuntime::new);
         if room.phase == RoomPhase::Lobby {
             return Err(CustomError::BadRequest("游戏未开始".into()));
         }
@@ -198,7 +241,8 @@ pub async fn vote(
         if room.phase == RoomPhase::Started {
             room.phase = RoomPhase::Voting;
         }
-        room.votes.insert(voter.clone(), body.target_identifier.clone());
+        room.votes
+            .insert(voter.clone(), body.target_identifier.clone());
         let total_alive = room.alive.len() as u32;
         let voted_count = room.votes.len() as u32;
         let finished = voted_count >= total_alive;

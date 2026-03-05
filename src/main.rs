@@ -1,3 +1,6 @@
+mod config;
+mod middlewares;
+
 mod cache;
 mod errors;
 mod models;
@@ -8,74 +11,38 @@ mod utils;
 mod game_im;
 mod game_ws;
 
-mod wx;
-mod users;
+mod dashboard;
 mod foods;
 mod orders;
-mod upload;
 mod services; // 新增服务模块用于通知推送
+mod upload;
+mod users;
 mod wishes; // 心愿与兑换模块
-mod dashboard; // 看板与组活动
+mod wx; // 看板与组活动
 
-use cache::RedisCache;
 use dotenvy::dotenv;
 use errors::CustomError;
 use idgenerator::{IdGeneratorOptions, IdInstance};
 use ntex::web::{middleware, App, HttpServer};
 use ntex_cors::Cors;
-use sqlx::{postgres::PgPoolOptions, Pool, Postgres};
 use std::{env, sync::Arc};
 
-use crate::models::game_im::ImConfig;
-
-#[derive(Debug, Clone)]
-pub struct AppState {
-    pub db_pool: Pool<Postgres>,
-    pub redis_cache: Arc<RedisCache>, // 添加Redis缓存
-    pub im_config: Option<Arc<ImConfig>>,
-    pub game_hub: Arc<game_ws::GameHub>,
-}
+use config::init_app_state;
+use middlewares::logger::init_logger;
 
 #[ntex::main]
 async fn main() -> Result<(), CustomError> {
     dotenv().ok();
 
     // log
-    env::set_var("RUST_LOG", "ntex=info");
-    env_logger::init();
+    init_logger();
 
     // 雪花id
     let options = IdGeneratorOptions::new().worker_id(1).worker_id_bit_len(6);
     let _ = IdInstance::init(options)?;
 
-    let db_url = env::var("DATABASE_URL").expect("Please set DATABASE_URL");
-    let redis_url = env::var("REDIS_URL").expect("Please set REDIS_URL");
-
-    // Tencent Cloud IM config (optional)
-    // If not provided, IM endpoints will return a clear error.
-    let im_config = match ImConfig::from_env() {
-        Ok(v) => Some(Arc::new(v)),
-        Err(_) => None,
-    };
-
-    // 初始化Redis缓存
-    let redis_cache = match RedisCache::new(&redis_url) {
-        Ok(cache) => Arc::new(cache),
-        Err(err) => {
-            eprintln!("Failed to connect to Redis: {}", err);
-            return Err(CustomError::internal(format!("Redis连接失败: {err}")));
-        }
-    };
     // state
-    let app_state: Arc<AppState> = Arc::new(AppState {
-        db_pool: PgPoolOptions::new()
-            .max_connections(10)
-            .connect(&db_url)
-            .await?,
-        redis_cache,
-        im_config,
-        game_hub: Arc::new(game_ws::GameHub::new()),
-    });
+    let app_state = init_app_state().await?;
     let app_state_clone = Arc::clone(&app_state);
 
     let allowed_origin = env::var("FRONTEND_ORIGIN").unwrap_or_else(|_| "*".to_string());
@@ -111,7 +78,8 @@ async fn main() -> Result<(), CustomError> {
     .run();
 
     // 启动订单过期后台任务（不阻塞主服务器运行）
-    let expiration_handle = tokio::spawn(orders::expiration::run_expiration_worker(app_state_clone));
+    let expiration_handle =
+        tokio::spawn(orders::expiration::run_expiration_worker(app_state_clone));
 
     // 运行 HTTP 服务器（阻塞直到停止）
     server.await?;

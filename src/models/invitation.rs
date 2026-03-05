@@ -65,8 +65,8 @@ pub struct GroupInfoOut {
     pub created_at: chrono::DateTime<chrono::Utc>,
     pub updated_at: chrono::DateTime<chrono::Utc>,
     pub members: Vec<GroupMemberOut>,
-    pub total_orders: i64,      // 该组总订单数
-    pub completed_orders: i64,  // 该组已完成订单数
+    pub total_orders: i64,     // 该组总订单数
+    pub completed_orders: i64, // 该组已完成订单数
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
