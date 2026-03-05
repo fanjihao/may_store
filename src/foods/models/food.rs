@@ -1,7 +1,7 @@
+use super::tag::{FoodTagOut, TagRecord};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use utoipa::{IntoParams, ToSchema};
-use super::tag::{TagRecord, FoodTagOut};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema, sqlx::Type)]
 #[sqlx(type_name = "food_status_enum", rename_all = "SCREAMING_SNAKE_CASE")]
@@ -258,4 +258,10 @@ pub struct BlindBoxFoodSnapshot {
 pub struct BlindBoxDrawResultOut {
     pub results: Vec<BlindBoxFoodSnapshot>,
     pub requested_tags: Vec<i64>,
+}
+
+#[derive(Debug, serde::Deserialize, serde::Serialize)]
+pub struct FoodCursor {
+    pub created_at: chrono::DateTime<chrono::Utc>,
+    pub food_id: i64,
 }

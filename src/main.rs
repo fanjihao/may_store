@@ -5,9 +5,9 @@ mod cache;
 mod errors;
 mod models;
 mod openapi;
+mod private;
 mod routes;
 mod utils;
-mod private;
 
 mod game_im;
 mod game_ws;
@@ -79,8 +79,9 @@ async fn main() -> Result<(), CustomError> {
     .run();
 
     // 启动订单过期后台任务（不阻塞主服务器运行）
-    let expiration_handle =
-        tokio::spawn(orders::expiration::run_expiration_worker(app_state_clone));
+    let expiration_handle = tokio::spawn(orders::service::OrderService::run_expiration_worker(
+        app_state_clone,
+    ));
 
     // 运行 HTTP 服务器（阻塞直到停止）
     server.await?;

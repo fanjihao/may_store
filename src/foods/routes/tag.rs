@@ -1,7 +1,11 @@
+use crate::foods::service::tag::TagService;
 use crate::{
     config::AppState,
     errors::CustomError,
-    foods::models::{tag::{FoodTagOut, TagCreateInput, TagUpdateInput, BatchTagSortInput}, food::FoodFilterQuery},
+    foods::models::{
+        food::FoodFilterQuery,
+        tag::{BatchTagSortInput, FoodTagOut, TagCreateInput, TagUpdateInput},
+    },
     models::users::UserToken,
 };
 use ntex::web::{
@@ -9,7 +13,6 @@ use ntex::web::{
     HttpResponse, Responder,
 };
 use std::sync::Arc;
-use crate::foods::service::tag as tag_service;
 
 #[utoipa::path(
     post,
@@ -24,7 +27,7 @@ pub async fn create_tag(
     data: Json<TagCreateInput>,
     state: State<Arc<AppState>>,
 ) -> Result<impl Responder, CustomError> {
-    let out = tag_service::create_tag(
+    let out = TagService::create_tag(
         &state.db_pool,
         &data,
         token.user.as_ref().and_then(|u| u.group_id),
@@ -45,7 +48,7 @@ pub async fn get_tags(
     state: State<Arc<AppState>>,
     q: Query<FoodFilterQuery>,
 ) -> Result<impl Responder, CustomError> {
-    let out = tag_service::get_tags(&state.db_pool, &q).await?;
+    let out = TagService::get_tags(&state.db_pool, &q).await?;
     Ok(HttpResponse::Ok().json(&out))
 }
 
@@ -64,7 +67,7 @@ pub async fn update_tag(
     id: Path<i64>,
     data: Json<TagUpdateInput>,
 ) -> Result<impl Responder, CustomError> {
-    let out = tag_service::update_tag(&state.db_pool, *id, &data).await?;
+    let out = TagService::update_tag(&state.db_pool, *id, &data).await?;
     Ok(HttpResponse::Ok().json(&out))
 }
 
@@ -81,7 +84,7 @@ pub async fn update_tags_sort(
     state: State<Arc<AppState>>,
     data: Json<BatchTagSortInput>,
 ) -> Result<impl Responder, CustomError> {
-    tag_service::update_tags_sort(&state.db_pool, &data).await?;
+    TagService::update_tags_sort(&state.db_pool, &data).await?;
     Ok(HttpResponse::Ok().body("ok"))
 }
 
@@ -98,6 +101,6 @@ pub async fn delete_tag(
     state: State<Arc<AppState>>,
     id: Path<i64>,
 ) -> Result<impl Responder, CustomError> {
-    tag_service::delete_tag(&state.db_pool, *id).await?;
+    TagService::delete_tag(&state.db_pool, *id).await?;
     Ok(HttpResponse::NoContent())
 }

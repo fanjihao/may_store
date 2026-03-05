@@ -509,7 +509,7 @@ impl DashboardService {
             steps: Option<String>,
             tag_name: Option<String>,
             goal_time: Option<chrono::DateTime<chrono::Utc>>,
-            status: crate::models::orders::OrderStatusEnum,
+            status: crate::orders::models::OrderStatusEnum,
             ingredient_ids: Vec<i64>,
         }
 
@@ -541,7 +541,7 @@ impl DashboardService {
             }
             all_ingredient_ids.extend(ids.iter().cloned());
 
-            let status: crate::models::orders::OrderStatusEnum = r.get("status");
+            let status: crate::orders::models::OrderStatusEnum = r.get("status");
 
             intermediates.push(IntermediateRow {
                 food_id: r.get("food_id"),

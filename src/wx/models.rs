@@ -125,3 +125,9 @@ pub struct WxSubscriptionTemplateOut {
     pub template_name: String,
     pub description: Option<String>,
 }
+
+#[derive(Debug, Clone)]
+pub struct Token {
+    pub access_token: Option<String>,
+    pub expiration_time: tokio::time::Instant,
+}

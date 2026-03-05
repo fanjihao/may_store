@@ -33,7 +33,9 @@ pub fn route(_state: Arc<AppState>, cfg: &mut web::ServiceConfig) {
 fn game_routes(cfg: &mut web::ServiceConfig) {
     // Socket mode (self-hosted WebSocket)
     cfg.service(web::resource("/ws/game").route(web::get().to(game_ws::routes::ws_game)));
-    cfg.service(web::resource("/game/room-code").route(web::get().to(game_ws::routes::get_room_code)));
+    cfg.service(
+        web::resource("/game/room-code").route(web::get().to(game_ws::routes::get_room_code)),
+    );
 
     // Tencent Cloud IM
     cfg.service(web::resource("/im/usersig").route(web::get().to(game_im::routes::get_user_sig)));
@@ -122,7 +124,10 @@ fn dish_routes(cfg: &mut web::ServiceConfig) {
         web::scope("/foods")
             .route("", web::post().to(foods::routes::food::create_food))
             .route("", web::get().to(foods::routes::food::get_foods))
-            .route("/marks", web::get().to(foods::routes::food::get_marked_foods))
+            .route(
+                "/marks",
+                web::get().to(foods::routes::food::get_marked_foods),
+            )
             .route(
                 "/blind_box/draw",
                 web::post().to(foods::routes::food::draw_blind_box),
@@ -144,7 +149,10 @@ fn tag_routes(cfg: &mut web::ServiceConfig) {
         web::scope("/food_tags")
             .route("", web::post().to(foods::routes::tag::create_tag))
             .route("", web::get().to(foods::routes::tag::get_tags))
-            .route("/sort", web::post().to(foods::routes::tag::update_tags_sort))
+            .route(
+                "/sort",
+                web::post().to(foods::routes::tag::update_tags_sort),
+            )
             .route("/{id}", web::put().to(foods::routes::tag::update_tag))
             .route("/{id}", web::delete().to(foods::routes::tag::delete_tag)),
     );
@@ -154,13 +162,22 @@ fn tag_routes(cfg: &mut web::ServiceConfig) {
 fn ingredient_routes(cfg: &mut web::ServiceConfig) {
     cfg.service(
         web::scope("/ingredients")
-            .route("", web::get().to(foods::routes::ingredient::list_ingredients))
-            .route("", web::post().to(foods::routes::ingredient::create_ingredient))
+            .route(
+                "",
+                web::get().to(foods::routes::ingredient::list_ingredients),
+            )
+            .route(
+                "",
+                web::post().to(foods::routes::ingredient::create_ingredient),
+            )
             .route(
                 "/sort",
                 web::post().to(foods::routes::ingredient::update_ingredients_sort),
             )
-            .route("/{id}", web::get().to(foods::routes::ingredient::get_ingredient))
+            .route(
+                "/{id}",
+                web::get().to(foods::routes::ingredient::get_ingredient),
+            )
             .route(
                 "/{id}",
                 web::put().to(foods::routes::ingredient::update_ingredient),
@@ -176,18 +193,18 @@ fn ingredient_routes(cfg: &mut web::ServiceConfig) {
 fn order_routes(cfg: &mut web::ServiceConfig) {
     cfg.service(
         web::scope("/orders")
-            .route("", web::post().to(orders::new::create_order))
-            .route("", web::get().to(orders::view::get_orders))
+            .route("", web::post().to(orders::routes::create_order))
+            .route("", web::get().to(orders::routes::get_orders))
             .route(
                 "/status",
-                web::put().to(orders::update::update_order_status),
+                web::put().to(orders::routes::update_order_status),
             )
-            .route("/{id}", web::get().to(orders::view::get_order_detail))
-            .route("/{id}", web::delete().to(orders::delete::delete_order)),
+            .route("/{id}", web::get().to(orders::routes::get_order_detail))
+            .route("/{id}", web::delete().to(orders::routes::delete_order)),
     )
     .service(
         web::scope("/orders-incomplete")
-            .route("/{id}", web::get().to(orders::view::get_incomplete_order)),
+            .route("/{id}", web::get().to(orders::routes::get_incomplete_order)),
     );
 }
 
@@ -197,11 +214,11 @@ fn rating_routes(cfg: &mut web::ServiceConfig) {
         web::scope("/orders-rating")
             .route(
                 "/{order_id}",
-                web::post().to(orders::rating::create_order_rating),
+                web::post().to(orders::routes::create_order_rating),
             )
             .route(
                 "/{order_id}",
-                web::get().to(orders::rating::get_order_rating),
+                web::get().to(orders::routes::get_order_rating),
             ),
     );
 }

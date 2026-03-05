@@ -50,7 +50,7 @@ src/
 │   ├── service.rs
 │   └── models.rs
 │
-├── foods/               # 【业务模块：菜谱/食物】
+├── foods/               # 【业务模块：菜谱/食物】√
 │   ├── mod.rs                  # 对外暴露组合后的完整 Router
 │   ├── models/                 # [数据模型层]
 │   │   ├── mod.rs

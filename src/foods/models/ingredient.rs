@@ -71,3 +71,10 @@ pub struct IngredientSortItem {
 pub struct BatchIngredientSortInput {
     pub items: Vec<IngredientSortItem>,
 }
+
+#[derive(Debug, Deserialize, Serialize)]
+pub struct IngredientCursor {
+    pub sort: Option<i32>,
+    pub name: String,
+    pub ingredient_id: i64,
+}

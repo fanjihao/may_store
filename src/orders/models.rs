@@ -92,6 +92,12 @@ pub struct OrderQuery {
     pub expired_only: Option<bool>,
 }
 
+#[derive(Debug, Deserialize, Serialize)]
+pub struct OrderCursor {
+    pub created_at: DateTime<Utc>,
+    pub order_id: i64,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct OrderItemOut {

@@ -1,3 +1,4 @@
+use crate::foods::service::food::FoodService;
 use crate::{
     config::AppState,
     errors::CustomError,
@@ -12,7 +13,6 @@ use ntex::web::{
     HttpResponse, Responder,
 };
 use std::sync::Arc;
-use crate::foods::service::food as food_service;
 
 #[utoipa::path(
     post,
@@ -27,7 +27,7 @@ pub async fn create_food(
     data: Json<FoodCreateInput>,
     state: State<Arc<AppState>>,
 ) -> Result<impl Responder, CustomError> {
-    let out = food_service::create_food(&state.db_pool, &token, &data).await?;
+    let out = FoodService::create_food(&state.db_pool, &token, &data).await?;
     Ok(HttpResponse::Created().json(&out))
 }
 
@@ -44,7 +44,7 @@ pub async fn get_foods(
     token: UserToken,
     q: Query<FoodFilterQuery>,
 ) -> Result<impl Responder, CustomError> {
-    let out = food_service::get_foods(&state.db_pool, &token, &q).await?;
+    let out = FoodService::get_foods(&state.db_pool, &token, &q).await?;
     Ok(HttpResponse::Ok().json(&out))
 }
 
@@ -60,7 +60,7 @@ pub async fn get_food_detail(
     token: Option<UserToken>,
     id: Path<i64>,
 ) -> Result<impl Responder, CustomError> {
-    let out = food_service::get_food_detail(&state.db_pool, token.as_ref(), *id).await?;
+    let out = FoodService::get_food_detail(&state.db_pool, token.as_ref(), *id).await?;
     Ok(HttpResponse::Ok().json(&out))
 }
 
@@ -79,7 +79,7 @@ pub async fn update_food(
     id: Path<i64>,
     data: Json<FoodUpdateInput>,
 ) -> Result<impl Responder, CustomError> {
-    let out = food_service::update_food(&state.db_pool, &token, *id, &data).await?;
+    let out = FoodService::update_food(&state.db_pool, &token, *id, &data).await?;
     Ok(HttpResponse::Ok().json(&out))
 }
 
@@ -96,7 +96,7 @@ pub async fn delete_food(
     state: State<Arc<AppState>>,
     id: Path<i64>,
 ) -> Result<impl Responder, CustomError> {
-    food_service::delete_food(&state.db_pool, &token, *id).await?;
+    FoodService::delete_food(&state.db_pool, &token, *id).await?;
     Ok(HttpResponse::NoContent())
 }
 
@@ -113,7 +113,13 @@ pub async fn mark_food(
     state: State<Arc<AppState>>,
     data: Json<FoodMarkActionInput>,
 ) -> Result<impl Responder, CustomError> {
-    food_service::mark_food(&state.db_pool, token.user_id as i64, data.food_id, data.mark_type.clone()).await?;
+    FoodService::mark_food(
+        &state.db_pool,
+        token.user_id as i64,
+        data.food_id,
+        data.mark_type.clone(),
+    )
+    .await?;
     Ok(HttpResponse::Ok().body("ok"))
 }
 
@@ -131,7 +137,7 @@ pub async fn unmark_food(
     path: Path<(i64, MarkTypeEnum)>,
 ) -> Result<impl Responder, CustomError> {
     let (food_id, mark_type) = path.into_inner();
-    food_service::unmark_food(&state.db_pool, token.user_id as i64, food_id, mark_type).await?;
+    FoodService::unmark_food(&state.db_pool, token.user_id as i64, food_id, mark_type).await?;
     Ok(HttpResponse::Ok().body("ok"))
 }
 
@@ -148,7 +154,7 @@ pub async fn get_marked_foods(
     state: State<Arc<AppState>>,
     q: Query<FoodFilterQuery>,
 ) -> Result<impl Responder, CustomError> {
-    let out = food_service::get_marked_foods(&state.db_pool, &token, &q).await?;
+    let out = FoodService::get_marked_foods(&state.db_pool, &token, &q).await?;
     Ok(HttpResponse::Ok().json(&out))
 }
 
@@ -165,6 +171,6 @@ pub async fn draw_blind_box(
     state: State<Arc<AppState>>,
     data: Json<BlindBoxDrawInput>,
 ) -> Result<impl Responder, CustomError> {
-    let out = food_service::draw_blind_box(&state.db_pool, &token, &data).await?;
+    let out = FoodService::draw_blind_box(&state.db_pool, &token, &data).await?;
     Ok(HttpResponse::Ok().json(&out))
 }

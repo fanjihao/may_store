@@ -7,9 +7,9 @@ use ntex::web::ws::{Frame, Message, WsSink};
 use ntex::web::{self, HttpRequest, HttpResponse};
 use serde_json::json;
 
-use crate::{config::AppState, errors::CustomError};
 use crate::game_ws::models::WsInboundEnvelope;
 use crate::game_ws::service::{handle_frame, spawn_outbound_forwarder, ConnContext, ConnState};
+use crate::{config::AppState, errors::CustomError};
 
 pub async fn ws_game(
     req: HttpRequest,

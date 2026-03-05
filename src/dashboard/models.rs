@@ -1,7 +1,8 @@
 use chrono::{DateTime, NaiveDate, Utc};
 use serde::{Deserialize, Serialize};
 
-use crate::foods::models::ingredient::IngredientRecord; use crate::models::orders::OrderStatusEnum;
+use crate::foods::models::ingredient::IngredientRecord;
+use crate::orders::models::OrderStatusEnum;
 
 /// 组活动查询参数
 #[derive(Debug, Deserialize, utoipa::IntoParams)]

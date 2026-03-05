@@ -10,12 +10,12 @@ use rand::Rng;
 use serde_json::json;
 use tokio::sync::Mutex;
 
+use crate::errors::CustomError;
 use crate::game_ws::models::{
     BroadcastIn, GameOut, JoinRoomIn, LeaveRoomIn, Role, RoleRevealIn, RoleRevealOut,
     RoomMemberOut, RoomStateOut, RoomStatus, SetReadyIn, StartGameIn, WsInboundEnvelope,
     WsOutboundEnvelope,
 };
-use crate::errors::CustomError;
 
 #[derive(Debug, Clone)]
 pub struct GameHub {

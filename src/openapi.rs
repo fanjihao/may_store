@@ -65,16 +65,16 @@ use crate::{dashboard, foods, game_im, models, orders, upload, users};
         foods::routes::ingredient::delete_ingredient,
 
         // 订单 (Order)
-        orders::new::create_order,
-        orders::view::get_orders,
-        orders::update::update_order_status,
-        orders::view::get_order_detail,
-        orders::delete::delete_order,
-        orders::view::get_incomplete_order,
+        orders::routes::create_order,
+        orders::routes::get_orders,
+        orders::routes::update_order_status,
+        orders::routes::get_order_detail,
+        orders::routes::delete_order,
+        orders::routes::get_incomplete_order,
 
         // 评分 (Rating)
-        orders::rating::create_order_rating,
-        orders::rating::get_order_rating,
+        orders::routes::create_order_rating,
+        orders::routes::get_order_rating,
 
         // 心愿 (Wish)
         crate::wishes::routes::create_wish,
@@ -157,15 +157,15 @@ use crate::{dashboard, foods, game_im, models, orders, upload, users};
         ),
         // 订单新模型
         schemas(
-            models::orders::OrderCreateInput,
-            models::orders::OrderStatusUpdateInput,
-            models::orders::OrderItemOut,
-            models::orders::OrderStatusHistoryOut,
-            models::orders::OrderOutNew,
-            models::orders::OrderStatusUpdateInput,
-            models::orders::OrderQuery,
-            models::orders::OrderRatingCreateInput,
-            models::orders::OrderRatingOut,
+            orders::models::OrderCreateInput,
+            orders::models::OrderStatusUpdateInput,
+            orders::models::OrderItemOut,
+            orders::models::OrderStatusHistoryOut,
+            orders::models::OrderOutNew,
+            orders::models::OrderStatusUpdateInput,
+            orders::models::OrderQuery,
+            orders::models::OrderRatingCreateInput,
+            orders::models::OrderRatingOut,
         ),
         // 心愿模型
         schemas(

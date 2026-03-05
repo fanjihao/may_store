@@ -1,3 +1,4 @@
+use crate::foods::service::ingredient::IngredientService;
 use crate::{
     config::AppState,
     errors::CustomError,
@@ -11,7 +12,6 @@ use ntex::web::{
     HttpResponse, Responder,
 };
 use std::sync::Arc;
-use crate::foods::service::ingredient as ingredient_service;
 
 #[derive(Debug, serde::Deserialize, utoipa::IntoParams, utoipa::ToSchema)]
 #[serde(rename_all = "camelCase")]
@@ -36,11 +36,20 @@ pub async fn list_ingredients(
     state: State<Arc<AppState>>,
     query: Query<IngredientQuery>,
 ) -> Result<impl Responder, CustomError> {
-    let group_id = query.group_id.or(user_token.user.as_ref().and_then(|u| u.group_id));
+    let group_id = query
+        .group_id
+        .or(user_token.user.as_ref().and_then(|u| u.group_id));
     let keyword = query.keyword.as_deref().unwrap_or("");
     let limit = query.limit.unwrap_or(50).clamp(1, 200);
 
-    let out = ingredient_service::list_ingredients(&state.db_pool, group_id, keyword, limit, query.cursor.as_ref()).await?;
+    let out = IngredientService::list_ingredients(
+        &state.db_pool,
+        group_id,
+        keyword,
+        limit,
+        query.cursor.as_ref(),
+    )
+    .await?;
     Ok(HttpResponse::Ok().json(&out))
 }
 
@@ -57,7 +66,7 @@ pub async fn get_ingredient(
     state: State<Arc<AppState>>,
     id: Path<i64>,
 ) -> Result<impl Responder, CustomError> {
-    let out = ingredient_service::get_ingredient(&state.db_pool, *id).await?;
+    let out = IngredientService::get_ingredient(&state.db_pool, *id).await?;
     Ok(HttpResponse::Ok().json(&out))
 }
 
@@ -74,7 +83,7 @@ pub async fn create_ingredient(
     state: State<Arc<AppState>>,
     data: Json<IngredientCreateInput>,
 ) -> Result<impl Responder, CustomError> {
-    let out = ingredient_service::create_ingredient(
+    let out = IngredientService::create_ingredient(
         &state.db_pool,
         &data,
         user_token.user.as_ref().and_then(|u| u.group_id),
@@ -98,7 +107,7 @@ pub async fn update_ingredient(
     id: Path<i64>,
     data: Json<IngredientUpdateInput>,
 ) -> Result<impl Responder, CustomError> {
-    let out = ingredient_service::update_ingredient(&state.db_pool, *id, &data).await?;
+    let out = IngredientService::update_ingredient(&state.db_pool, *id, &data).await?;
     Ok(HttpResponse::Ok().json(&out))
 }
 
@@ -115,7 +124,7 @@ pub async fn delete_ingredient(
     state: State<Arc<AppState>>,
     id: Path<i64>,
 ) -> Result<impl Responder, CustomError> {
-    ingredient_service::delete_ingredient(&state.db_pool, *id).await?;
+    IngredientService::delete_ingredient(&state.db_pool, *id).await?;
     Ok(HttpResponse::NoContent())
 }
 
@@ -132,6 +141,6 @@ pub async fn update_ingredients_sort(
     state: State<Arc<AppState>>,
     data: Json<BatchIngredientSortInput>,
 ) -> Result<impl Responder, CustomError> {
-    ingredient_service::update_ingredients_sort(&state.db_pool, &data).await?;
+    IngredientService::update_ingredients_sort(&state.db_pool, &data).await?;
     Ok(HttpResponse::Ok().body("ok"))
 }

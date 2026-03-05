@@ -3,10 +3,8 @@ use reqwest::Client;
 use sqlx::postgres::PgPool;
 use sqlx::Row;
 
-use crate::wx::service::{
-    fetch_set_access_token, fetch_set_mp_token, get_access_token, get_mp_token,
-};
-use crate::{errors::CustomError, models::orders::OrderStatusEnum};
+use crate::wx::service::WxService;
+use crate::{errors::CustomError, orders::models::OrderStatusEnum};
 
 // 订单推送类型枚举
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -158,8 +156,8 @@ pub async fn push_order_with_type(
 
         if let Some(r) = template_row {
             let template_id: String = r.get("wx_template_id");
-            fetch_set_mp_token().await?;
-            if let Some(access_token) = get_mp_token().await {
+            WxService::fetch_set_mp_token().await?;
+            if let Some(access_token) = WxService::get_mp_token().await {
                 for tg in mp_targets {
                     let json_data = match push_type {
                         OrderPushType::Created => {
@@ -222,8 +220,8 @@ pub async fn push_order_with_type(
 
         if let Some(r) = template_row {
             let template_id: String = r.get("wx_template_id");
-            fetch_set_access_token().await?;
-            if let Some(access_token) = get_access_token().await {
+            WxService::fetch_set_access_token().await?;
+            if let Some(access_token) = WxService::get_access_token().await {
                 for tg in official_targets {
                     let json_data = match push_type {
                         OrderPushType::Created => {

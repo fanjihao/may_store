@@ -13,7 +13,7 @@ use crate::{
     config::AppState,
     errors::CustomError,
     wx::models::{Offical, WxSubscriptionTemplateOut, Xml},
-    wx::service::{fetch_set_access_token, get_access_token},
+    wx::service::WxService,
 };
 
 #[utoipa::path(
@@ -96,7 +96,7 @@ pub async fn wx_offical_received(
 ) -> Result<String, CustomError> {
     let db_pool = &state.clone().db_pool;
 
-    fetch_set_access_token().await?;
+    WxService::fetch_set_access_token().await?;
     let xml: Xml =
         from_str(&data).map_err(|e| CustomError::BadRequest(format!("XML解析失败: {}", e)))?;
     let mut already_reply = false;
@@ -128,7 +128,7 @@ pub async fn wx_offical_received(
         };
 
         let client = Client::new();
-        let token = get_access_token().await.unwrap();
+        let token = WxService::get_access_token().await.unwrap();
         let res = client
             .post(format!(
                 "https://api.weixin.qq.com/cgi-bin/message/custom/send?access_token={}",

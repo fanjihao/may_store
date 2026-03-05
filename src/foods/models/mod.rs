@@ -1,3 +1,3 @@
 pub mod food;
-pub mod tag;
 pub mod ingredient;
+pub mod tag;
