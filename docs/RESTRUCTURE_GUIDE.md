@@ -51,10 +51,22 @@ src/
 │   └── models.rs
 │
 ├── foods/               # 【业务模块：菜谱/食物】
-│   ├── mod.rs
-│   ├── routes.rs
-│   ├── service.rs
-│   └── models.rs
+│   ├── mod.rs                  # 对外暴露组合后的完整 Router
+│   ├── models/                 # [数据模型层]
+│   │   ├── mod.rs
+│   │   ├── food.rs             # FoodRecord, FoodOut 等
+│   │   ├── ingredient.rs       # IngredientRecord, IngredientOut 等
+│   │   └── tag.rs              # TagRecord 等
+│   ├── routes/                 # [HTTP 路由控制器层]
+│   │   ├── mod.rs              # Router 合并点
+│   │   ├── food.rs             # 纯负责 HTTP 参数解析 & 结果返回
+│   │   ├── ingredient.rs
+│   │   └── tag.rs
+│   └── service/                # [核心业务/数据库逻辑层]
+│       ├── mod.rs
+│       ├── food.rs             # sqlx 数据库增删改查
+│       ├── ingredient.rs
+│       └── tag.rs
 │
 ├── game_im/             # 【业务模块：即时通讯游戏】√
 │   ├── mod.rs

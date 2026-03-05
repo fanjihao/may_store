@@ -7,6 +7,7 @@ mod models;
 mod openapi;
 mod routes;
 mod utils;
+mod private;
 
 mod game_im;
 mod game_ws;

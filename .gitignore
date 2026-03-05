@@ -1,5 +1,6 @@
 /target
 utils.rs
+private.rs
 
 # dir 不需要提交的目录
 #/node_modules

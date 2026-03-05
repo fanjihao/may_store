@@ -4,7 +4,7 @@ use std::time::Duration;
 
 use crate::{
     errors::CustomError,
-    utils::{ACCESS_KEY, BUCKET_NAME, SECRET_KEY},
+    private::{ACCESS_KEY, BUCKET_NAME, SECRET_KEY},
 };
 
 pub struct UploadService;

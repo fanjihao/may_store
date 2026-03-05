@@ -8,8 +8,7 @@ use tokio::{
 };
 
 use crate::{
-    errors::CustomError,
-    utils::{APP_ID, APP_SECRET, OFFCIAL_APP_ID, OFFCIAL_APP_SECRET},
+    errors::CustomError, private::{APP_ID, APP_SECRET, OFFCIAL_APP_ID, OFFCIAL_APP_SECRET},
 };
 
 struct Token {

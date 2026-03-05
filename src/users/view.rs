@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use crate::models::users::IsRegisterResponse;
+use crate::private::TOKEN_SECRET_KEY;
 use crate::users::{verify_password, weixin_login};
 use crate::{
     config::AppState,
@@ -9,7 +10,6 @@ use crate::{
         LoginInput, LoginMethodEnum, LoginResponse, UserPublic, UserRecord, UserToken,
         UserTokenClaims,
     },
-    utils::TOKEN_SECRET_KEY,
 };
 use chrono::Utc;
 use jsonwebtoken::{encode, EncodingKey, Header};

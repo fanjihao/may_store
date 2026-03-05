@@ -13,8 +13,7 @@ use password_hash::SaltString;
 use rand::thread_rng;
 
 use crate::{
-    errors::CustomError,
-    utils::{APP_ID, APP_SECRET},
+    errors::CustomError, private::{APP_ID, APP_SECRET},
 };
 
 pub fn hash_password(plain: &str) -> Result<(String, String), String> {

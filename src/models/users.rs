@@ -1,4 +1,4 @@
-use crate::{config::AppState, errors::CustomError, utils::TOKEN_SECRET_KEY};
+use crate::{config::AppState, errors::CustomError, private::TOKEN_SECRET_KEY};
 use jsonwebtoken::{decode, Algorithm, DecodingKey, Validation};
 use ntex::{
     http::Payload,
