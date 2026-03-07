@@ -4,33 +4,32 @@ use utoipa::openapi::security::{ApiKey, ApiKeyValue, SecurityScheme};
 use utoipa::{Modify, OpenApi};
 
 // Re-export model modules for macro path resolution
-use crate::{dashboard, foods, game_im, models, orders, upload, users};
-// 注意：不要导入 crate::wishes::models 为 wishes 避免遮蔽根模块 wishes
+use crate::{dashboard, foods, game_im, orders, upload, users};
 
 #[derive(OpenApi)]
 #[openapi(
     paths(
         // 用户 (User)
-        users::new::register,
-        users::view::login,
-        users::view::get_current_info,
-        users::update::change_info,
-        users::view::is_register,
-        users::role::switch_role,
-        users::view::get_user_info,
-        users::sweet_talk::add_sweet_talk,
-        users::sweet_talk::update_sweet_talk,
-        users::sweet_talk::get_sweet_talks,
+        users::routes::user::register,
+        users::routes::user::login,
+        users::routes::user::get_current_info,
+        users::routes::user::change_info,
+        users::routes::user::is_register,
+        users::routes::user::switch_role,
+        users::routes::user::get_user_info,
+        users::routes::sweet_talk::add_sweet_talk,
+        users::routes::sweet_talk::update_sweet_talk,
+        users::routes::sweet_talk::get_sweet_talks,
 
         // 团队 (Team)
-        users::invitation::get_invitation,
-        users::invitation::new_invitation,
-        users::invitation::confirm_invitation,
-        users::invitation::cancel_invitation,
-        users::invitation::unbind_request,
-        users::invitation::bind_user_directly,
-        users::invitation::get_group_info,
-        users::group_update::update_group,
+        users::routes::group::get_invitation,
+        users::routes::group::new_invitation,
+        users::routes::group::confirm_invitation,
+        users::routes::group::cancel_invitation,
+        users::routes::group::unbind_request,
+        users::routes::group::bind_user_directly,
+        users::routes::group::get_group_info,
+        users::routes::group::update_group,
 
         // 游戏 (Game)
         game_im::routes::get_user_sig,
@@ -99,9 +98,9 @@ use crate::{dashboard, foods, game_im, models, orders, upload, users};
         crate::dashboard::routes::get_date_foods,
 
         // 签到 (Check-in)
-        users::checkin::daily_checkin,
-        users::sign::sign_in,
-        users::sign::get_sign_info,
+        users::routes::sign::daily_checkin,
+        users::routes::sign::sign_in,
+        users::routes::sign::get_sign_info,
 
         // 上传
         upload::routes::get_qiniu_token,
@@ -109,31 +108,35 @@ use crate::{dashboard, foods, game_im, models, orders, upload, users};
     components(
         // 用户
         schemas(
-            models::users::LoginInput,
-            models::users::LoginResponse,
-            models::users::UserPublic,
-            models::users::IsRegisterResponse,
-            models::users::DailyCheckinOut,
-            users::role::RoleSwitchResult,
-            users::role::RoleSwitchInput,
+            users::models::user::RegisterInput,
+            users::models::user::ProfileUpdateInput,
+            users::models::user::LoginInput,
+            users::models::user::LoginResponse,
+            users::models::user::UserPublic,
+            users::models::user::IsRegisterResponse,
+            users::models::user::DailyCheckinOut,
+            users::models::user::RoleSwitchResult,
+            users::models::user::RoleSwitchInput,
             // 签到
-            models::sign::SignInResponse,
-            models::sign::SignRecordOut,
-            models::sign::SignInfoResponse,
+            users::models::sign::SignInResponse,
+            users::models::sign::SignRecordOut,
+            users::models::sign::SignInfoResponse,
             // 情话
-            models::sweet_talk::SweetTalkRequest,
-            models::sweet_talk::SweetTalkOut,
-            models::sweet_talk::SweetTalkQuery,
+            users::models::sweet_talk::SweetTalkRequest,
+            users::models::sweet_talk::SweetTalkOut,
+            users::models::sweet_talk::SweetTalkQuery,
         ),
         // 邀请
         schemas(
-            models::invitation::NewInvitationInput,
-            models::invitation::ConfirmInvitationInput,
-            models::invitation::InvitationRequestOut,
-            models::invitation::InvitationListOut,
-            models::invitation::GroupMemberOut,
-            models::invitation::GroupInfoOut,
-            models::invitation::UnbindRequestInput,
+            users::models::group::NewInvitationInput,
+            users::models::group::ConfirmInvitationInput,
+            users::models::group::InvitationRequestOut,
+            users::models::group::InvitationListOut,
+            users::models::group::GroupMemberOut,
+            users::models::group::GroupInfoOut,
+            users::models::group::UnbindRequestInput,
+            users::models::group::GroupUpdateInput,
+            users::models::group::BindUserDirectlyInput,
         ),
         // 菜品
         schemas(

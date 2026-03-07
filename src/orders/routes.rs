@@ -3,7 +3,7 @@ use crate::orders::service::OrderService;
 use crate::{
     config::AppState,
     errors::CustomError,
-    models::users::UserToken,
+    users::models::user::UserToken,
     orders::models::{
         OrderCreateInput, OrderOutNew, OrderQuery, OrderRatingCreateInput, OrderRatingOut,
         OrderStatusUpdateInput,

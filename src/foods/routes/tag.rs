@@ -6,7 +6,7 @@ use crate::{
         food::FoodFilterQuery,
         tag::{BatchTagSortInput, FoodTagOut, TagCreateInput, TagUpdateInput},
     },
-    models::users::UserToken,
+    users::models::user::UserToken,
 };
 use ntex::web::{
     types::{Json, Path, Query, State},

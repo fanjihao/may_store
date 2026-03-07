@@ -7,7 +7,7 @@ use ntex::{
 use serde::{Deserialize, Serialize};
 use sqlx::{FromRow, Type};
 use std::{future::Future, sync::Arc};
-use utoipa::ToSchema;
+use utoipa::{IntoParams, ToSchema};
 
 // ========== 枚举类型 ==========
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, ToSchema, Type)]
@@ -265,4 +265,24 @@ impl<E: ErrorRenderer> FromRequest<E> for UserToken {
             })
         }
     }
+}
+
+#[derive(Debug, Deserialize, IntoParams)]
+pub struct IsRegisterQuery {
+    pub username: String,
+}
+
+#[derive(Debug, Deserialize, ToSchema)]
+pub struct RoleSwitchInput {
+    pub group_id: Option<i64>,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+pub struct RoleSwitchResult {
+    pub group_id: i64,
+    pub switched_at: chrono::DateTime<chrono::Utc>,
+    pub user_id: i64,
+    pub new_role: UserRoleEnum,
+    pub counterpart_user_id: i64,
+    pub counterpart_new_role: UserRoleEnum,
 }

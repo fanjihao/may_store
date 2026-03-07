@@ -6,7 +6,8 @@ use crate::{
         BlindBoxDrawInput, BlindBoxDrawResultOut, FoodCreateInput, FoodFilterQuery,
         FoodMarkActionInput, FoodOut, FoodUpdateInput, MarkTypeEnum,
     },
-    models::{pagination::CursorPage, users::UserToken},
+    models::pagination::CursorPage,
+    users::models::user::UserToken,
 };
 use ntex::web::{
     types::{Json, Path, Query, State},

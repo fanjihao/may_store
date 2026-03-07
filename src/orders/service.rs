@@ -1,5 +1,5 @@
 use crate::models::pagination::{decode_cursor, encode_cursor, CursorPage};
-use crate::models::users::UserToken;
+use crate::users::models::user::UserToken;
 use crate::orders::models::{GroupInfoSimple, OrderItemRecord};
 use chrono::{DateTime, Duration, Utc};
 use sqlx::{Acquire, PgPool, Row};

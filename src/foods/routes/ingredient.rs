@@ -5,7 +5,7 @@ use crate::{
     foods::models::ingredient::{
         BatchIngredientSortInput, IngredientCreateInput, IngredientOut, IngredientUpdateInput,
     },
-    models::{pagination::CursorPage, users::UserToken},
+    models::pagination::CursorPage, users::models::user::UserToken,
 };
 use ntex::web::{
     types::{Json, Path, Query, State},

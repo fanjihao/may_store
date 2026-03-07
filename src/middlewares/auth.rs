@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::config::{AppState, TOKEN_SECRET_KEY};
 use crate::errors::CustomError;
-use crate::models::users::{UserPublic, UserRecord};
+use crate::users::models::user::{UserPublic, UserRecord};
 
 // ========== Token Claims ==========
 #[derive(Debug, Clone, Serialize, Deserialize)]

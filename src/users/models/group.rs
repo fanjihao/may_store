@@ -74,3 +74,29 @@ pub struct GroupInfoOut {
 pub struct BindUserDirectlyInput {
     pub target_user_id: i64,
 }
+
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct GroupUpdateInput {
+    pub group_name: String,
+}
+
+#[derive(sqlx::FromRow)]
+pub struct RequestRow {
+    pub request_id: i64,
+    pub requester_id: i64,
+    pub target_user_id: i64,
+    pub status: i16,
+}
+
+#[derive(sqlx::FromRow)]
+pub struct RoleRow {
+    pub user_id: i64,
+    pub role: crate::users::models::user::UserRoleEnum,
+}
+
+#[derive(sqlx::FromRow)]
+pub struct CancelRow {
+    pub request_id: i64,
+    pub status: i16,
+}

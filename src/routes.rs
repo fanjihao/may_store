@@ -55,34 +55,34 @@ fn game_routes(cfg: &mut web::ServiceConfig) {
 fn user_routes(cfg: &mut web::ServiceConfig) {
     cfg.service(
         // 注册
-        web::scope("/register").route("", web::post().to(users::new::register)),
+        web::scope("/register").route("", web::post().to(users::routes::user::register)),
     )
     .service(
         // 登录
-        web::scope("/login").route("", web::post().to(users::view::login)),
+        web::scope("/login").route("", web::post().to(users::routes::user::login)),
     )
     .service(
         // 用户
         web::scope("/users")
-            .route("", web::get().to(users::view::get_current_info))
-            .route("", web::post().to(users::update::change_info))
-            .route("/is-register", web::get().to(users::view::is_register))
-            .route("/role-switch", web::post().to(users::role::switch_role))
+            .route("", web::get().to(users::routes::user::get_current_info))
+            .route("", web::post().to(users::routes::user::change_info))
+            .route("/is-register", web::get().to(users::routes::user::is_register))
+            .route("/role-switch", web::post().to(users::routes::user::switch_role))
             .route(
                 "/getInfoByUsername",
-                web::get().to(users::view::get_user_info),
+                web::get().to(users::routes::user::get_user_info),
             )
             .route(
                 "/sweet-talk",
-                web::post().to(users::sweet_talk::add_sweet_talk),
+                web::post().to(users::routes::sweet_talk::add_sweet_talk),
             )
             .route(
                 "/sweet-talk/{id}",
-                web::put().to(users::sweet_talk::update_sweet_talk),
+                web::put().to(users::routes::sweet_talk::update_sweet_talk),
             )
             .route(
                 "/sweet-talks",
-                web::get().to(users::sweet_talk::get_sweet_talks),
+                web::get().to(users::routes::sweet_talk::get_sweet_talks),
             ),
     );
 }
@@ -92,28 +92,28 @@ fn team_routes(cfg: &mut web::ServiceConfig) {
     cfg.service(
         // 关联
         web::scope("/invitation")
-            .route("", web::get().to(users::invitation::get_invitation))
-            .route("", web::post().to(users::invitation::new_invitation))
+            .route("", web::get().to(users::routes::group::get_invitation))
+            .route("", web::post().to(users::routes::group::new_invitation))
             .route(
                 "/{id}",
-                web::put().to(users::invitation::confirm_invitation),
+                web::put().to(users::routes::group::confirm_invitation),
             )
             .route(
                 "/{id}",
-                web::delete().to(users::invitation::cancel_invitation),
+                web::delete().to(users::routes::group::cancel_invitation),
             )
-            .route("/unbind", web::post().to(users::invitation::unbind_request))
+            .route("/unbind", web::post().to(users::routes::group::unbind_request))
             .route(
                 "/bind",
-                web::post().to(users::invitation::bind_user_directly),
+                web::post().to(users::routes::group::bind_user_directly),
             )
             .route(
                 "/group/{id}",
-                web::get().to(users::invitation::get_group_info),
+                web::get().to(users::routes::group::get_group_info),
             )
             .route(
                 "/groups/{group_id}",
-                web::put().to(users::group_update::update_group),
+                web::put().to(users::routes::group::update_group),
             ),
     );
 }
@@ -245,12 +245,12 @@ fn wish_routes(cfg: &mut web::ServiceConfig) {
 /// 签到 (Check-in)
 fn checkin_routes(cfg: &mut web::ServiceConfig) {
     cfg.service(
-        web::scope("/users").route("/checkin", web::post().to(users::checkin::daily_checkin)),
+        web::scope("/users").route("/checkin", web::post().to(users::routes::sign::daily_checkin)),
     )
     .service(
         web::scope("/sign")
-            .route("", web::post().to(users::sign::sign_in))
-            .route("/info", web::get().to(users::sign::get_sign_info)),
+            .route("", web::post().to(users::routes::sign::sign_in))
+            .route("/info", web::get().to(users::routes::sign::get_sign_info)),
     );
 }
 

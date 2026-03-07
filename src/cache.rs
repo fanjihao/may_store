@@ -1,5 +1,5 @@
 // src/cache.rs
-use crate::models::users::UserPublic; // 兼容旧命名，实际等价于 UserPublic
+use crate::users::models::user::UserPublic; // 兼容旧命名，实际等价于 UserPublic
 use redis::{AsyncCommands, Client};
 use serde_json;
 

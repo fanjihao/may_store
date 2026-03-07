@@ -7,7 +7,7 @@ use crate::foods::models::food::{
 };
 use crate::foods::models::tag::TagRecord;
 use crate::models::pagination::{decode_cursor, encode_cursor, CursorPage};
-use crate::models::users::UserToken;
+use crate::users::models::user::UserToken;
 use sqlx::{PgPool, QueryBuilder, Row};
 use std::collections::HashMap;
 
