@@ -1,5 +1,6 @@
 use super::models::{WishCreateInput, WishFeedbackInput, WishOut, WishQuery, WishUpdateInput};
 use super::service::WishService;
+use crate::wishes::models::WishCursor;
 use crate::{
     config::AppState,
     errors::CustomError,
@@ -10,14 +11,7 @@ use ntex::web::{
     types::{Json, Path, Query, State},
     HttpResponse, Responder,
 };
-use serde::{Deserialize, Serialize};
 use std::sync::Arc;
-
-#[derive(Debug, Deserialize, Serialize)]
-pub struct WishCursor {
-    pub created_at: chrono::DateTime<chrono::Utc>,
-    pub wish_id: i64,
-}
 
 #[utoipa::path(
     get,

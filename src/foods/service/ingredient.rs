@@ -5,7 +5,6 @@ use crate::foods::models::ingredient::{
     IngredientUpdateInput,
 };
 use crate::models::pagination::{decode_cursor, encode_cursor, CursorPage};
-use serde::{Deserialize, Serialize};
 use sqlx::PgPool;
 
 pub struct IngredientService;

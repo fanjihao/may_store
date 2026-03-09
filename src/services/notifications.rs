@@ -39,12 +39,6 @@ struct PushTarget {
     is_official: bool,
 }
 
-// 推送订单状态变更（根据 order_id 查询订单、菜品、用户 push_id 并发送模板消息）
-// 失败时只记录日志，不影响主流程。
-pub async fn push_order_status(order_id: i64, db_pool: PgPool) -> Result<(), CustomError> {
-    push_order_with_type(order_id, OrderPushType::StatusUpdated, db_pool).await
-}
-
 /// 根据指定的推送类型发送订单通知
 pub async fn push_order_with_type(
     order_id: i64,

@@ -139,3 +139,9 @@ pub struct WishFeedbackInput {
     pub content: Option<String>,
     pub images: Option<Vec<String>>,
 }
+
+#[derive(Debug, Deserialize, Serialize)]
+pub struct WishCursor {
+    pub created_at: chrono::DateTime<chrono::Utc>,
+    pub wish_id: i64,
+}

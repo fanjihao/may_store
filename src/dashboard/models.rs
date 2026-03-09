@@ -146,3 +146,9 @@ pub struct DateQuery {
     pub date: Option<NaiveDate>,
     pub group_id: Option<i64>,
 }
+
+#[derive(Debug, Deserialize, Serialize)]
+pub struct ActivityCursor {
+    pub occurred_at: DateTime<Utc>,
+    pub ref_id: i64,
+}

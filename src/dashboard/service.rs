@@ -1,22 +1,13 @@
 use crate::{
     dashboard::models::{
-        DateFoodOut, DateFoodsResponse, DateQuery, GroupActivityEventOut, GroupActivityQuery,
-        JourneyOrderOut, OrderStatsOut, PointsJourneyOut, TodayOrderEntryOut, TodayOrdersResponse,
-        TopFoodOrderOut, TopFoodRankingResponse, WeekDateInfo, WeekOrderDatesOut,
+        ActivityCursor, DateFoodOut, DateFoodsResponse, DateQuery, GroupActivityEventOut, GroupActivityQuery, JourneyOrderOut, OrderStatsOut, PointsJourneyOut, TodayOrderEntryOut, TodayOrdersResponse, TopFoodOrderOut, TopFoodRankingResponse, WeekDateInfo, WeekOrderDatesOut
     },
     errors::CustomError,
-    models::pagination::{decode_cursor, encode_cursor, CursorPage},
+    models::pagination::{CursorPage, decode_cursor, encode_cursor},
 };
 use chrono::{DateTime, Datelike, Local, NaiveDate, Utc};
-use serde::{Deserialize, Serialize};
 use sqlx::{PgPool, Row};
 use std::collections::{HashMap, HashSet};
-
-#[derive(Debug, Deserialize, Serialize)]
-pub struct ActivityCursor {
-    pub occurred_at: DateTime<Utc>,
-    pub ref_id: i64,
-}
 
 pub struct DashboardService;
 
@@ -40,7 +31,6 @@ impl DashboardService {
             .cursor
             .as_deref()
             .and_then(decode_cursor::<ActivityCursor>);
-
         let sql = r#"
             SELECT * FROM (
                 -- 订单创建

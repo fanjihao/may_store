@@ -78,3 +78,13 @@ pub struct IngredientCursor {
     pub name: String,
     pub ingredient_id: i64,
 }
+
+#[derive(Debug, serde::Deserialize, utoipa::IntoParams, utoipa::ToSchema)]
+#[serde(rename_all = "camelCase")]
+#[into_params(parameter_in = Query)]
+pub struct IngredientQuery {
+    pub group_id: Option<i64>,
+    pub keyword: Option<String>,
+    pub limit: Option<i64>,
+    pub cursor: Option<String>,
+}

@@ -156,7 +156,7 @@ use crate::{dashboard, foods, game_im, orders, upload, users};
             foods::models::ingredient::IngredientCreateInput,
             foods::models::ingredient::IngredientUpdateInput,
             foods::models::ingredient::IngredientOut,
-            foods::routes::ingredient::IngredientQuery,
+            foods::models::ingredient::IngredientQuery,
         ),
         // 订单新模型
         schemas(
