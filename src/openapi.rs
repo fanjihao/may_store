@@ -113,6 +113,7 @@ use crate::{dashboard, foods, game_im, orders, upload, users};
             users::models::user::LoginInput,
             users::models::user::LoginResponse,
             users::models::user::UserPublic,
+            users::models::user::UserInfoResponse,
             users::models::user::IsRegisterResponse,
             users::models::user::DailyCheckinOut,
             users::models::user::RoleSwitchResult,

@@ -57,6 +57,7 @@ pub struct TodayOrderEntryOut {
     pub order_id: i64,
     pub category: String,
     pub foods_text: String,
+    pub foods_photo: Option<String>,
     pub status: String,
 }
 

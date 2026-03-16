@@ -7,11 +7,9 @@ use ntex::web::{
 use crate::{
     config::AppState,
     errors::CustomError,
-    users::models::user::{
-        IsRegisterQuery, LoginInput, ProfileUpdateInput, RegisterInput, RoleSwitchInput, UserToken,
-        LoginResponse, UserPublic, IsRegisterResponse, RoleSwitchResult
-    },
-    users::service::UserService,
+    users::{models::user::{
+        IsRegisterQuery, IsRegisterResponse, LoginInput, LoginResponse, ProfileUpdateInput, RegisterInput, RoleSwitchInput, RoleSwitchResult, UserInfoResponse, UserPublic, UserToken
+    }, service::UserService},
 };
 
 #[utoipa::path(
@@ -78,7 +76,7 @@ pub async fn get_current_info(
     tag = "用户",
     summary = "根据用户名获取用户信息",
     params(IsRegisterQuery),
-    responses((status = 200, body = UserPublic), (status = 401, body = CustomError))
+    responses((status = 200, body = UserInfoResponse), (status = 401, body = CustomError))
 )]
 pub async fn get_user_info(
     q: Query<IsRegisterQuery>,

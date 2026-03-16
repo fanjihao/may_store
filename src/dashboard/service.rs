@@ -1,9 +1,12 @@
 use crate::{
     dashboard::models::{
-        ActivityCursor, DateFoodOut, DateFoodsResponse, DateQuery, GroupActivityEventOut, GroupActivityQuery, JourneyOrderOut, OrderStatsOut, PointsJourneyOut, TodayOrderEntryOut, TodayOrdersResponse, TopFoodOrderOut, TopFoodRankingResponse, WeekDateInfo, WeekOrderDatesOut
+        ActivityCursor, DateFoodOut, DateFoodsResponse, DateQuery, GroupActivityEventOut,
+        GroupActivityQuery, JourneyOrderOut, OrderStatsOut, PointsJourneyOut, TodayOrderEntryOut,
+        TodayOrdersResponse, TopFoodOrderOut, TopFoodRankingResponse, WeekDateInfo,
+        WeekOrderDatesOut,
     },
     errors::CustomError,
-    models::pagination::{CursorPage, decode_cursor, encode_cursor},
+    models::pagination::{decode_cursor, encode_cursor, CursorPage},
 };
 use chrono::{DateTime, Datelike, Local, NaiveDate, Utc};
 use sqlx::{PgPool, Row};
@@ -263,10 +266,10 @@ impl DashboardService {
 
     pub async fn get_my_today_orders(
         db: &PgPool,
-        user_id: i64,
+        group_id: i64,
     ) -> Result<TodayOrdersResponse, CustomError> {
-        let rows = sqlx::query("SELECT o.order_id, o.status AS status, ARRAY_AGG(f.food_name) AS names, MIN(t.tag_name) AS tag_name FROM orders o JOIN order_items oi ON o.order_id=oi.order_id JOIN foods f ON oi.food_id=f.food_id LEFT JOIN tags t ON f.tag_id=t.tag_id WHERE o.user_id=$1 AND o.goal_time IS NOT NULL AND o.goal_time::date=CURRENT_DATE AND o.status IN ('PENDING','ACCEPTED','FINISHED') GROUP BY o.order_id, o.status")
-            .bind(user_id)
+        let rows = sqlx::query("SELECT o.order_id, f.food_photo, o.status AS status, ARRAY_AGG(f.food_name) AS names, MIN(t.tag_name) AS tag_name FROM orders o JOIN order_items oi ON o.order_id=oi.order_id JOIN foods f ON oi.food_id=f.food_id LEFT JOIN tags t ON f.tag_id=t.tag_id WHERE (o.group_id=$1) AND o.goal_time IS NOT NULL AND (o.goal_time AT TIME ZONE 'Asia/Shanghai')::date=CURRENT_DATE AND o.status IN ('PENDING','ACCEPTED','FINISHED') GROUP BY o.order_id, o.status, f.food_photo ")
+            .bind(group_id)
             .fetch_all(db).await?;
         if rows.is_empty() {
             return Ok(TodayOrdersResponse {
@@ -280,21 +283,17 @@ impl DashboardService {
                 let category: String = r
                     .get::<Option<String>, _>("tag_name")
                     .unwrap_or("其他".to_string());
-                let names_val: serde_json::Value = r.get("names");
-                let foods_text = names_val
-                    .as_array()
-                    .map(|arr| {
-                        arr.iter()
-                            .filter_map(|v| v.as_str())
-                            .collect::<Vec<_>>()
-                            .join("+")
-                    })
-                    .unwrap_or_default();
+                let names: Vec<String> = r.get("names");
+                let foods_text = names.join("+");
                 TodayOrderEntryOut {
                     order_id: r.get("order_id"),
                     category,
                     foods_text,
-                    status: r.get("status"),
+                    foods_photo: r.get("food_photo"),
+                    status: format!(
+                        "{:?}",
+                        r.get::<crate::orders::models::OrderStatusEnum, _>("status")
+                    ),
                 }
             })
             .collect();
@@ -343,29 +342,24 @@ impl DashboardService {
         db: &PgPool,
         user_id: i64,
     ) -> Result<PointsJourneyOut, CustomError> {
-        let order_rows = sqlx::query("SELECT o.order_id, o.status AS status, ARRAY_AGG(f.food_name) AS names FROM orders o JOIN order_items oi ON o.order_id=oi.order_id JOIN foods f ON oi.food_id=f.food_id WHERE o.user_id=$1 AND o.goal_time IS NOT NULL AND o.goal_time::date=CURRENT_DATE AND o.status IN ('PENDING','ACCEPTED') GROUP BY o.order_id, o.status")
+        let order_rows = sqlx::query("SELECT o.order_id, o.status AS status, ARRAY_AGG(f.food_name) AS names FROM orders o JOIN order_items oi ON o.order_id=oi.order_id JOIN foods f ON oi.food_id=f.food_id WHERE o.user_id=$1 AND o.goal_time IS NOT NULL AND (o.goal_time AT TIME ZONE 'Asia/Shanghai')::date=CURRENT_DATE AND o.status IN ('PENDING','ACCEPTED') GROUP BY o.order_id, o.status")
             .bind(user_id).fetch_all(db).await?;
         let journey_orders: Vec<JourneyOrderOut> = order_rows
             .into_iter()
             .map(|r| {
-                let names_val: serde_json::Value = r.get("names");
-                let foods_text = names_val
-                    .as_array()
-                    .map(|arr| {
-                        arr.iter()
-                            .filter_map(|v| v.as_str())
-                            .collect::<Vec<_>>()
-                            .join("+")
-                    })
-                    .unwrap_or_default();
+                let names: Vec<String> = r.get("names");
+                let foods_text = names.join("+");
                 JourneyOrderOut {
                     order_id: r.get("order_id"),
                     foods_text,
-                    status: r.get("status"),
+                    status: format!(
+                        "{:?}",
+                        r.get::<crate::orders::models::OrderStatusEnum, _>("status")
+                    ),
                 }
             })
             .collect();
-        let today_points_row = sqlx::query("SELECT COALESCE(SUM(amount),0)::bigint AS s FROM point_transactions WHERE user_id=$1 AND amount>0 AND created_at::date=CURRENT_DATE")
+        let today_points_row = sqlx::query("SELECT COALESCE(SUM(amount),0)::bigint AS s FROM point_transactions WHERE user_id=$1 AND amount>0 AND (created_at AT TIME ZONE 'Asia/Shanghai')::date=CURRENT_DATE")
             .bind(user_id).fetch_one(db).await?;
         let total_gain_row = sqlx::query("SELECT COALESCE(SUM(amount),0)::bigint AS s FROM point_transactions WHERE user_id=$1 AND amount>0")
             .bind(user_id).fetch_one(db).await?;

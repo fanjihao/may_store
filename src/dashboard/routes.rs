@@ -57,16 +57,20 @@ pub async fn get_top_food_orders(
 
 #[utoipa::path(
     get,
-    path="/dashboard/my/orders-today",
+    path="/dashboard/my/orders-today/{group_id}",
     tag="看板",
+    params(
+        ("group_id"=i64, Path, description="组ID"),
+    ),
     responses((status=200, body=TodayOrdersResponse)),
     security(("cookie_auth"=[]))
 )]
 pub async fn get_my_today_orders(
     state: State<Arc<AppState>>,
-    user: UserToken,
+    _: UserToken,
+    group_id: Path<i64>,
 ) -> Result<impl Responder, CustomError> {
-    let result = DashboardService::get_my_today_orders(&state.db_pool, user.user_id).await?;
+    let result = DashboardService::get_my_today_orders(&state.db_pool, *group_id).await?;
     Ok(HttpResponse::Ok().json(&result))
 }
 

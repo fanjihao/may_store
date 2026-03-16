@@ -103,6 +103,14 @@ pub struct UserPublic {
     pub group_id: Option<i64>,
 }
 
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct UserInfoResponse {
+    pub exists: bool,
+    pub user: Option<UserPublic>,
+}
+
+
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct LoginResponse {

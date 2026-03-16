@@ -428,10 +428,10 @@ impl OrderService {
         Ok(out)
     }
 
-    pub async fn get_incomplete_order(db: &PgPool, user_id: i64) -> Result<i32, CustomError> {
+    pub async fn get_incomplete_order(db: &PgPool, group_id: i64) -> Result<i32, CustomError> {
         let count =
-            sqlx::query("SELECT COUNT(*) as c FROM orders WHERE user_id=$1 AND status='PENDING'")
-                .bind(user_id)
+            sqlx::query("SELECT COUNT(*) as c FROM orders WHERE group_id=$1 AND status='PENDING'")
+                .bind(group_id)
                 .fetch_one(db)
                 .await?;
         let c: i64 = count.get("c");

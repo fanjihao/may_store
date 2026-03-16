@@ -62,16 +62,16 @@ fn user_routes(cfg: &mut web::ServiceConfig) {
         web::scope("/login").route("", web::post().to(users::routes::user::login)),
     )
     .service(
+        // 根据用户名获取用户信息
+        web::scope("/getInfoByUsername").route("", web::get().to(users::routes::user::get_user_info)),
+    )
+    .service(
         // 用户
         web::scope("/users")
             .route("", web::get().to(users::routes::user::get_current_info))
             .route("", web::post().to(users::routes::user::change_info))
             .route("/is-register", web::get().to(users::routes::user::is_register))
             .route("/role-switch", web::post().to(users::routes::user::switch_role))
-            .route(
-                "/getInfoByUsername",
-                web::get().to(users::routes::user::get_user_info),
-            )
             .route(
                 "/sweet-talk",
                 web::post().to(users::routes::sweet_talk::add_sweet_talk),
@@ -280,7 +280,7 @@ fn dashboard_routes(cfg: &mut web::ServiceConfig) {
                 web::get().to(dashboard::routes::get_top_food_orders),
             )
             .route(
-                "/my/orders-today",
+                "/my/orders-today/{group_id}",
                 web::get().to(dashboard::routes::get_my_today_orders),
             )
             .route(

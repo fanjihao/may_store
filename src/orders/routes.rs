@@ -65,16 +65,16 @@ pub async fn get_order_detail(
 
 #[utoipa::path(
     get,
-    path = "/orders-incomplete/{user_id}",
+    path = "/orders-incomplete/{group_id}",
     tag = "订单",
-    params(("user_id" = i64, Path, description = "用户ID")),
+    params(("group_id" = i64, Path, description = "组ID")),
     responses((status = 200, body = i32))
 )]
 pub async fn get_incomplete_order(
     state: State<Arc<AppState>>,
-    user_id: Path<i64>,
+    group_id: Path<i64>,
 ) -> Result<impl Responder, CustomError> {
-    let count = OrderService::get_incomplete_order(&state.db_pool, *user_id).await?;
+    let count = OrderService::get_incomplete_order(&state.db_pool, *group_id).await?;
     Ok(HttpResponse::Ok().json(&count))
 }
 
