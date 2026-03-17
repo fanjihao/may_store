@@ -30,6 +30,8 @@ use crate::{dashboard, foods, game_im, orders, upload, users};
         users::routes::group::bind_user_directly,
         users::routes::group::get_group_info,
         users::routes::group::update_group,
+        users::routes::group::get_group_point_config,
+        users::routes::group::update_group_point_config,
 
         // 游戏 (Game)
         game_im::routes::get_user_sig,
@@ -138,6 +140,8 @@ use crate::{dashboard, foods, game_im, orders, upload, users};
             users::models::group::UnbindRequestInput,
             users::models::group::GroupUpdateInput,
             users::models::group::BindUserDirectlyInput,
+            users::models::group::GroupPointConfig,
+            users::models::group::GroupPointConfigUpdateInput,
         ),
         // 菜品
         schemas(

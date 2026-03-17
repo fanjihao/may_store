@@ -1,15 +1,20 @@
-use std::sync::Arc;
 use ntex::web::{
     types::{Json, Query, State},
     HttpResponse, Responder,
 };
+use std::sync::Arc;
 
 use crate::{
     config::AppState,
     errors::CustomError,
-    users::{models::user::{
-        IsRegisterQuery, IsRegisterResponse, LoginInput, LoginResponse, ProfileUpdateInput, RegisterInput, RoleSwitchInput, RoleSwitchResult, UserInfoResponse, UserPublic, UserToken
-    }, service::UserService},
+    users::{
+        models::user::{
+            IsRegisterQuery, IsRegisterResponse, LoginInput, LoginResponse, ProfileUpdateInput,
+            RegisterInput, RoleSwitchInput, RoleSwitchResult, UserInfoResponse, UserPublic,
+            UserToken,
+        },
+        service::UserService,
+    },
 };
 
 #[utoipa::path(

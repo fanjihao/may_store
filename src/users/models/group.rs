@@ -100,3 +100,34 @@ pub struct CancelRow {
     pub request_id: i64,
     pub status: i16,
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema, FromRow)]
+#[serde(rename_all = "camelCase")]
+pub struct GroupPointConfig {
+    pub group_id: i64,
+    pub breeder_closed_points: i32,
+    pub confirmed_finished_points: i32,
+    pub confirmed_unfinished_points: i32,
+    pub timeout_points: i32,
+}
+
+impl Default for GroupPointConfig {
+    fn default() -> Self {
+        Self {
+            group_id: 0,
+            breeder_closed_points: -8,
+            confirmed_finished_points: 10,
+            confirmed_unfinished_points: -5,
+            timeout_points: -3,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct GroupPointConfigUpdateInput {
+    pub breeder_closed_points: Option<i32>,
+    pub confirmed_finished_points: Option<i32>,
+    pub confirmed_unfinished_points: Option<i32>,
+    pub timeout_points: Option<i32>,
+}

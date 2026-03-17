@@ -58,7 +58,7 @@ pub struct TodayOrderEntryOut {
     pub category: String,
     pub foods_text: String,
     pub foods_photo: Option<String>,
-    pub status: String,
+    pub status: OrderStatusEnum,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]

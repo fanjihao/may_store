@@ -58,8 +58,8 @@ impl DashboardService {
                     osh.order_id AS ref_id,
                     osh.changed_by AS actor_user_id,
                     CASE
-                        WHEN osh.to_status='ACCEPTED' THEN 'ORDER_ACCEPTED'
-                        WHEN osh.to_status='FINISHED' THEN 'ORDER_FINISHED'
+                        WHEN osh.to_status='IN_PROGRESS' THEN 'ORDER_ACCEPTED'
+                        WHEN osh.to_status='CONFIRMED_FINISHED' THEN 'ORDER_FINISHED'
                         WHEN osh.to_status='CANCELLED' THEN 'ORDER_CANCELED'
                         ELSE 'ORDER_OTHER'
                     END AS event_type,
@@ -71,7 +71,7 @@ impl DashboardService {
                 FROM order_status_history osh
                 JOIN orders o ON osh.order_id=o.order_id
                 WHERE o.group_id=$1
-                  AND osh.to_status IN ('ACCEPTED','FINISHED','CANCELLED')
+                  AND osh.to_status IN ('IN_PROGRESS','CONFIRMED_FINISHED','CANCELLED')
 
                 UNION ALL
                 -- 菜品申请 & 创建
@@ -268,7 +268,7 @@ impl DashboardService {
         db: &PgPool,
         group_id: i64,
     ) -> Result<TodayOrdersResponse, CustomError> {
-        let rows = sqlx::query("SELECT o.order_id, f.food_photo, o.status AS status, ARRAY_AGG(f.food_name) AS names, MIN(t.tag_name) AS tag_name FROM orders o JOIN order_items oi ON o.order_id=oi.order_id JOIN foods f ON oi.food_id=f.food_id LEFT JOIN tags t ON f.tag_id=t.tag_id WHERE (o.group_id=$1) AND o.goal_time IS NOT NULL AND (o.goal_time AT TIME ZONE 'Asia/Shanghai')::date=CURRENT_DATE AND o.status IN ('PENDING','ACCEPTED','FINISHED') GROUP BY o.order_id, o.status, f.food_photo ")
+        let rows = sqlx::query("SELECT o.order_id, f.food_photo, o.status AS status, ARRAY_AGG(f.food_name) AS names, MIN(t.tag_name) AS tag_name FROM orders o JOIN order_items oi ON o.order_id=oi.order_id JOIN foods f ON oi.food_id=f.food_id LEFT JOIN tags t ON f.tag_id=t.tag_id WHERE (o.group_id=$1) AND o.goal_time IS NOT NULL AND (o.goal_time AT TIME ZONE 'Asia/Shanghai')::date=CURRENT_DATE AND o.status IN ('PENDING_ACCEPT','IN_PROGRESS','BREEDER_FINISHED','CONFIRMED_UNFINISHED','CONFIRMED_FINISHED') GROUP BY o.order_id, o.status, f.food_photo ")
             .bind(group_id)
             .fetch_all(db).await?;
         if rows.is_empty() {
@@ -290,10 +290,7 @@ impl DashboardService {
                     category,
                     foods_text,
                     foods_photo: r.get("food_photo"),
-                    status: format!(
-                        "{:?}",
-                        r.get::<crate::orders::models::OrderStatusEnum, _>("status")
-                    ),
+                    status: r.get("status"),
                 }
             })
             .collect();
@@ -320,7 +317,7 @@ impl DashboardService {
             .fetch_one(db)
             .await?;
         let finished_row = sqlx::query(
-            "SELECT COUNT(*)::bigint AS c FROM orders WHERE user_id=$1 AND status='FINISHED'",
+            "SELECT COUNT(*)::bigint AS c FROM orders WHERE user_id=$1 AND status='CONFIRMED_FINISHED'",
         )
         .bind(user_id)
         .fetch_one(db)
@@ -342,7 +339,7 @@ impl DashboardService {
         db: &PgPool,
         user_id: i64,
     ) -> Result<PointsJourneyOut, CustomError> {
-        let order_rows = sqlx::query("SELECT o.order_id, o.status AS status, ARRAY_AGG(f.food_name) AS names FROM orders o JOIN order_items oi ON o.order_id=oi.order_id JOIN foods f ON oi.food_id=f.food_id WHERE o.user_id=$1 AND o.goal_time IS NOT NULL AND (o.goal_time AT TIME ZONE 'Asia/Shanghai')::date=CURRENT_DATE AND o.status IN ('PENDING','ACCEPTED') GROUP BY o.order_id, o.status")
+        let order_rows = sqlx::query("SELECT o.order_id, o.status AS status, ARRAY_AGG(f.food_name) AS names FROM orders o JOIN order_items oi ON o.order_id=oi.order_id JOIN foods f ON oi.food_id=f.food_id WHERE o.user_id=$1 AND o.goal_time IS NOT NULL AND (o.goal_time AT TIME ZONE 'Asia/Shanghai')::date=CURRENT_DATE AND o.status IN ('PENDING_ACCEPT','IN_PROGRESS','BREEDER_FINISHED','CONFIRMED_UNFINISHED') GROUP BY o.order_id, o.status")
             .bind(user_id).fetch_all(db).await?;
         let journey_orders: Vec<JourneyOrderOut> = order_rows
             .into_iter()
@@ -409,7 +406,7 @@ impl DashboardService {
             WHERE (user_id = $1 OR ($3::bigint IS NOT NULL AND group_id = $3))
                 AND goal_time >= $2
                 AND goal_time <  $2 + INTERVAL '7 days'
-                AND status NOT IN ('CANCELLED', 'EXPIRED')
+                AND status NOT IN ('CANCELLED', 'TIMEOUT', 'REJECTED', 'BREEDER_CLOSED', 'SYSTEM_CLOSED')
                 GROUP BY DATE(goal_time AT TIME ZONE 'Asia/Shanghai');
             "#,
             user_id as i64,
@@ -474,7 +471,7 @@ impl DashboardService {
             WHERE (o.user_id = $1 OR ($3::bigint IS NOT NULL AND o.group_id = $3))
               AND o.goal_time >= $2
               AND o.goal_time < $2 + INTERVAL '1 day'
-              AND o.status NOT IN ('CANCELLED', 'EXPIRED')
+              AND o.status NOT IN ('CANCELLED', 'TIMEOUT', 'REJECTED', 'BREEDER_CLOSED', 'SYSTEM_CLOSED')
             GROUP BY f.food_id, f.food_name, f.food_photo, f.ingredients, f.steps, t.tag_name, o.goal_time, o.status
             ORDER BY o.goal_time, f.food_id
             "#;

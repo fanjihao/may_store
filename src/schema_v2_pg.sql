@@ -13,12 +13,15 @@ CREATE TYPE food_status_enum AS ENUM ('NORMAL', 'OFF', 'AUDITING', 'REJECTED');
 CREATE TYPE submit_role_enum AS ENUM ('ORDERING_APPLY', 'RECEIVING_CREATE');
 CREATE TYPE apply_status_enum AS ENUM ('PENDING', 'APPROVED', 'REJECTED');
 CREATE TYPE order_status_enum AS ENUM (
-    'PENDING',
-    'ACCEPTED',
-    'FINISHED',
-    'CANCELLED',
-    'EXPIRED',
+    'PENDING_ACCEPT',
+    'IN_PROGRESS',
     'REJECTED',
+    'BREEDER_FINISHED',
+    'BREEDER_CLOSED',
+    'CONFIRMED_FINISHED',
+    'CONFIRMED_UNFINISHED',
+    'TIMEOUT',
+    'CANCELLED',
     'SYSTEM_CLOSED'
 );
 CREATE TYPE point_tx_type_enum AS ENUM (
@@ -286,7 +289,7 @@ CREATE TABLE orders (
     SET NULL,
         group_id BIGINT REFERENCES association_groups(group_id) ON DELETE
     SET NULL,
-        status order_status_enum NOT NULL DEFAULT 'PENDING',
+        status order_status_enum NOT NULL DEFAULT 'PENDING_ACCEPT',
         goal_time TIMESTAMPTZ,
         remark VARCHAR(255),
         points_reward INT NOT NULL DEFAULT 0,
@@ -686,3 +689,19 @@ CREATE INDEX idx_wst_active ON wx_subscription_templates(is_active);
 --     NOW()
 -- );
 -- ============================================
+-- ================= GROUP POINT CONFIGS =================
+CREATE TABLE group_point_configs (
+    group_id BIGINT PRIMARY KEY REFERENCES association_groups(group_id) ON DELETE CASCADE,
+    breeder_closed_points INT NOT NULL DEFAULT -8,
+    confirmed_finished_points INT NOT NULL DEFAULT 10,
+    confirmed_unfinished_points INT NOT NULL DEFAULT -5,
+    timeout_points INT NOT NULL DEFAULT -3,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+COMMENT ON TABLE group_point_configs IS '组积分奖惩配置';
+COMMENT ON COLUMN group_point_configs.group_id IS '关联组ID';
+COMMENT ON COLUMN group_point_configs.breeder_closed_points IS '接单方主动关闭扣分(通常为负数)';
+COMMENT ON COLUMN group_point_configs.confirmed_finished_points IS '下单方确认完成默认奖励(通常为正数)';
+COMMENT ON COLUMN group_point_configs.confirmed_unfinished_points IS '下单方确认未完成扣分(通常为负数)';
+COMMENT ON COLUMN group_point_configs.timeout_points IS '接单超时未接单扣分(通常为负数)';

@@ -58,7 +58,7 @@ pub async fn push_order_with_type(
     let status: OrderStatusEnum = row
         .try_get("status")
         .ok()
-        .unwrap_or(OrderStatusEnum::PENDING);
+        .unwrap_or(OrderStatusEnum::PendingAccept);
     let created_at: chrono::DateTime<Utc> = row.get("created_at");
     let goal_time: Option<chrono::DateTime<Utc>> = row.try_get("goal_time").ok();
 
@@ -95,24 +95,27 @@ pub async fn push_order_with_type(
         }
         OrderPushType::StatusUpdated => {
             match status {
-                OrderStatusEnum::ACCEPTED | OrderStatusEnum::REJECTED => {
-                    // 接单/拒绝 -> 发送给 ordering 用户 (下单人)
+                OrderStatusEnum::InProgress
+                | OrderStatusEnum::Rejected
+                | OrderStatusEnum::BreederFinished
+                | OrderStatusEnum::BreederClosed
+                | OrderStatusEnum::Timeout => {
+                    // B 触发或系统触发 -> 通知 A
                     if let Some(tg) = fetch_user_openid(user_id, &db_pool).await? {
                         targets.push(tg);
                     }
                 }
-                OrderStatusEnum::CANCELLED
-                | OrderStatusEnum::FINISHED
-                | OrderStatusEnum::EXPIRED
+                OrderStatusEnum::Cancelled
+                | OrderStatusEnum::ConfirmedFinished
+                | OrderStatusEnum::ConfirmedUnfinished
                 | OrderStatusEnum::SystemClosed => {
-                    // 取消/完成/过期/关闭 -> 发送给 receiving 用户
+                    // A 触发或系统触发 -> 通知 B
                     if let Some(gid) = group_id {
                         let tgs = fetch_group_receiving_openids(gid, &db_pool).await?;
                         targets.extend(tgs);
                     }
                 }
-                OrderStatusEnum::PENDING => {
-                    // 理论上不会走到这里，但如果发生，视为创建 -> receiving
+                OrderStatusEnum::PendingAccept => {
                     if let Some(gid) = group_id {
                         let tgs = fetch_group_receiving_openids(gid, &db_pool).await?;
                         targets.extend(tgs);
@@ -343,12 +346,15 @@ async fn fetch_group_receiving_openids(
 
 fn status_to_cn(s: OrderStatusEnum) -> &'static str {
     match s {
-        OrderStatusEnum::PENDING => "待处理",
-        OrderStatusEnum::ACCEPTED => "已接单",
-        OrderStatusEnum::FINISHED => "已完成",
-        OrderStatusEnum::CANCELLED => "已取消",
-        OrderStatusEnum::EXPIRED => "已过期",
-        OrderStatusEnum::REJECTED => "已拒绝",
+        OrderStatusEnum::PendingAccept => "待接单",
+        OrderStatusEnum::InProgress => "进行中",
+        OrderStatusEnum::Rejected => "已拒绝",
+        OrderStatusEnum::BreederFinished => "已完成(待确认)",
+        OrderStatusEnum::BreederClosed => "主动关闭",
+        OrderStatusEnum::ConfirmedFinished => "确认完成",
+        OrderStatusEnum::ConfirmedUnfinished => "确认未完成",
+        OrderStatusEnum::Timeout => "已超时",
+        OrderStatusEnum::Cancelled => "已取消",
         OrderStatusEnum::SystemClosed => "系统关闭",
     }
 }

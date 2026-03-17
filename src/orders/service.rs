@@ -1,6 +1,6 @@
 use crate::models::pagination::{decode_cursor, encode_cursor, CursorPage};
-use crate::users::models::user::UserToken;
 use crate::orders::models::{GroupInfoSimple, OrderItemRecord};
+use crate::users::models::user::UserToken;
 use chrono::{DateTime, Duration, Utc};
 use sqlx::{Acquire, PgPool, Row};
 use std::sync::Arc;
@@ -33,6 +33,27 @@ pub fn map_item_record_to_out<'a>(
 
 pub struct OrderService;
 impl OrderService {
+    async fn get_group_point_config<'a, E>(
+        executor: E,
+        group_id: Option<i64>,
+    ) -> crate::users::models::group::GroupPointConfig
+    where
+        E: sqlx::Executor<'a, Database = sqlx::Postgres>,
+    {
+        let mut cfg = crate::users::models::group::GroupPointConfig::default();
+        if let Some(gid) = group_id {
+            if let Ok(Some(r)) = sqlx::query_as::<_, crate::users::models::group::GroupPointConfig>(
+                "SELECT group_id, breeder_closed_points, confirmed_finished_points, confirmed_unfinished_points, timeout_points FROM group_point_configs WHERE group_id=$1"
+            )
+            .bind(gid)
+            .fetch_optional(executor)
+            .await {
+                cfg = r;
+            }
+        }
+        cfg
+    }
+
     pub fn map_history_row(row: sqlx::postgres::PgRow) -> OrderStatusHistoryOut {
         OrderStatusHistoryOut {
             from_status: row.get("from_status"),
@@ -122,7 +143,7 @@ impl OrderService {
         )
         .bind(rec.order_id)
         .bind::<Option<OrderStatusEnum>>(None)
-        .bind(OrderStatusEnum::PENDING)
+        .bind(OrderStatusEnum::PendingAccept)
         .bind(user_id)
         .execute(&mut *tx)
         .await?;
@@ -224,7 +245,7 @@ impl OrderService {
             qb.push(" AND o.status = ");
             qb.push_bind(st);
         } else if query.expired_only.unwrap_or(false) {
-            qb.push(" AND o.status IN ('EXPIRED', 'CANCELLED', 'REJECTED', 'SYSTEM_CLOSED') ");
+            qb.push(" AND o.status IN ('TIMEOUT', 'CANCELLED', 'REJECTED', 'SYSTEM_CLOSED', 'BREEDER_CLOSED', 'CONFIRMED_UNFINISHED') ");
         }
 
         if let Some(cursor_str) = &query.cursor {
@@ -429,11 +450,12 @@ impl OrderService {
     }
 
     pub async fn get_incomplete_order(db: &PgPool, group_id: i64) -> Result<i32, CustomError> {
-        let count =
-            sqlx::query("SELECT COUNT(*) as c FROM orders WHERE group_id=$1 AND status='PENDING'")
-                .bind(group_id)
-                .fetch_one(db)
-                .await?;
+        let count = sqlx::query(
+            "SELECT COUNT(*) as c FROM orders WHERE group_id=$1 AND status='PENDING_ACCEPT'",
+        )
+        .bind(group_id)
+        .fetch_one(db)
+        .await?;
         let c: i64 = count.get("c");
         Ok(c as i32)
     }
@@ -471,7 +493,7 @@ impl OrderService {
         }
 
         match data.to_status {
-            OrderStatusEnum::REJECTED => {
+            OrderStatusEnum::Rejected => {
                 sqlx::query(
                     "UPDATE orders SET status=$2, reject_reason=$3, last_status_change_at=NOW(), updated_at=NOW() WHERE order_id=$1"
                 )
@@ -482,7 +504,7 @@ impl OrderService {
                 .await?;
                 order.reject_reason = data.remark.clone();
             }
-            OrderStatusEnum::CANCELLED => {
+            OrderStatusEnum::Cancelled => {
                 sqlx::query(
                     "UPDATE orders SET status=$2, cancel_reason=$3, last_status_change_at=NOW(), updated_at=NOW() WHERE order_id=$1"
                 )
@@ -506,12 +528,21 @@ impl OrderService {
         order.status = data.to_status;
         order.last_status_change_at = Some(Utc::now());
 
-        if data.to_status == OrderStatusEnum::FINISHED {
-            if let Some(points) = data
-                .points_reward
-                .or(Some(order.points_reward))
-                .filter(|p| *p > 0)
-            {
+        let pt_cfg = Self::get_group_point_config(&mut *tx, order.group_id).await;
+
+        let points_delta = match data.to_status {
+            OrderStatusEnum::BreederClosed => Some(pt_cfg.breeder_closed_points),
+            OrderStatusEnum::ConfirmedFinished => Some(
+                data.points_reward
+                    .unwrap_or(order.points_reward.max(pt_cfg.confirmed_finished_points)),
+            ),
+            OrderStatusEnum::ConfirmedUnfinished => Some(pt_cfg.confirmed_unfinished_points),
+            OrderStatusEnum::Timeout => Some(pt_cfg.timeout_points),
+            _ => None,
+        };
+
+        if let Some(delta) = points_delta {
+            if delta != 0 {
                 let group_id = match order.group_id {
                     Some(id) => id,
                     None => return Err(CustomError::BadRequest("订单缺少group_id".into())),
@@ -527,16 +558,17 @@ impl OrderService {
                     _ => return Err(CustomError::BadRequest("未找到接单用户".into())),
                 };
 
-                if let Ok(user_row) = sqlx::query("SELECT love_point FROM users WHERE user_id=$1")
-                    .bind(receiver_user_id)
-                    .fetch_one(&mut *tx)
-                    .await
+                if let Ok(user_row) =
+                    sqlx::query("SELECT love_point FROM users WHERE user_id=$1 FOR UPDATE")
+                        .bind(receiver_user_id)
+                        .fetch_one(&mut *tx)
+                        .await
                 {
                     let current_lp: i32 = user_row.get("love_point");
-                    let balance_after = current_lp + points;
+                    let balance_after = current_lp + delta;
                     sqlx::query("INSERT INTO point_transactions (user_id, amount, type, ref_type, ref_id, balance_after) VALUES ($1,$2,'FINISH_REWARD',1,$3,$4)")
                         .bind(receiver_user_id)
-                        .bind(points)
+                        .bind(delta)
                         .bind(order.order_id)
                         .bind(balance_after)
                         .execute(&mut *tx)
@@ -546,7 +578,9 @@ impl OrderService {
                         .bind(balance_after)
                         .execute(&mut *tx)
                         .await?;
-                    order.points_reward = points;
+                    if delta > 0 {
+                        order.points_reward = delta;
+                    }
                 }
             }
         }
@@ -685,7 +719,7 @@ impl OrderService {
             return Err(CustomError::BadRequest("订单不存在".into()));
         };
         let status: OrderStatusEnum = or.get("status");
-        if status != OrderStatusEnum::FINISHED {
+        if status != OrderStatusEnum::ConfirmedFinished {
             return Err(CustomError::BadRequest("仅完成的订单可评分".into()));
         }
         let o_user_id: i64 = or.get("user_id");
@@ -802,7 +836,7 @@ impl OrderService {
         let mut conn = db.acquire().await?;
 
         let rows =
-            sqlx::query("SELECT order_id FROM orders WHERE status='PENDING' AND created_at < $1")
+            sqlx::query("SELECT order_id, group_id FROM orders WHERE status='PENDING_ACCEPT' AND created_at < $1")
                 .bind(threshold)
                 .fetch_all(&mut *conn)
                 .await?;
@@ -813,20 +847,62 @@ impl OrderService {
         for r in rows {
             let id: i64 = r.try_get("order_id").unwrap_or_default();
             ids.push(id);
+
+            // Deduct points for timeout
+            let group_id: Option<i64> = r.try_get("group_id").unwrap_or(None);
+            if let Some(gid) = group_id {
+                let pt_cfg = Self::get_group_point_config(&mut *conn, Some(gid)).await;
+                let timeout_pts = pt_cfg.timeout_points;
+
+                let receiver_user_id = match sqlx::query(
+                    "SELECT user_id FROM association_group_members WHERE group_id=$1 AND role_in_group='RECEIVING'::group_member_role_enum LIMIT 1"
+                )
+                .bind(gid)
+                .fetch_optional(&mut *conn)
+                .await
+                {
+                    Ok(Some(r)) => r.get::<i64, _>("user_id"),
+                    _ => continue,
+                };
+
+                let mut tx = conn.begin().await?;
+                if let Ok(user_row) =
+                    sqlx::query("SELECT love_point FROM users WHERE user_id=$1 FOR UPDATE")
+                        .bind(receiver_user_id)
+                        .fetch_one(&mut *tx)
+                        .await
+                {
+                    let current_lp: i32 = user_row.get("love_point");
+                    let balance_after = current_lp + timeout_pts;
+                    sqlx::query("INSERT INTO point_transactions (user_id, amount, type, ref_type, ref_id, balance_after) VALUES ($1,$2,'FINISH_REWARD',1,$3,$4)")
+                        .bind(receiver_user_id)
+                        .bind(timeout_pts)
+                        .bind(id)
+                        .bind(balance_after)
+                        .execute(&mut *tx)
+                        .await?;
+                    sqlx::query("UPDATE users SET love_point=$2 WHERE user_id=$1")
+                        .bind(receiver_user_id)
+                        .bind(balance_after)
+                        .execute(&mut *tx)
+                        .await?;
+                }
+                tx.commit().await?;
+            }
         }
 
         let mut tx = conn.begin().await?;
         for oid in &ids {
-            sqlx::query("UPDATE orders SET status='EXPIRED', last_status_change_at=NOW(), updated_at=NOW() WHERE order_id=$1")
+            sqlx::query("UPDATE orders SET status='TIMEOUT', last_status_change_at=NOW(), updated_at=NOW() WHERE order_id=$1")
                 .bind(oid)
                 .execute(&mut *tx)
                 .await?;
             sqlx::query("INSERT INTO order_status_history (order_id, from_status, to_status, changed_by, remark) VALUES ($1,$2,$3,$4,$5)")
                 .bind(oid)
-                .bind(OrderStatusEnum::PENDING)
-                .bind(OrderStatusEnum::EXPIRED)
+                .bind(OrderStatusEnum::PendingAccept)
+                .bind(OrderStatusEnum::Timeout)
                 .bind(None::<Option<i64>>)
-                .bind(Some("自动过期".to_string()))
+                .bind(Some("超时未接单".to_string()))
                 .execute(&mut *tx)
                 .await?;
         }

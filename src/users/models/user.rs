@@ -110,7 +110,6 @@ pub struct UserInfoResponse {
     pub user: Option<UserPublic>,
 }
 
-
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct LoginResponse {

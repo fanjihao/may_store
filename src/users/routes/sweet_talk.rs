@@ -1,8 +1,8 @@
-use std::sync::Arc;
 use ntex::web::{
     types::{Json, Path, Query, State},
     HttpResponse, Responder,
 };
+use std::sync::Arc;
 
 use crate::{
     config::AppState,
@@ -31,7 +31,8 @@ pub async fn add_sweet_talk(
     data: Json<SweetTalkRequest>,
     state: State<Arc<AppState>>,
 ) -> Result<impl Responder, CustomError> {
-    let talk_id = SweetTalkService::add_sweet_talk(token.user_id, data.into_inner(), &state).await?;
+    let talk_id =
+        SweetTalkService::add_sweet_talk(token.user_id, data.into_inner(), &state).await?;
     Ok(HttpResponse::Ok().json(&serde_json::json!({
         "talkId": talk_id,
         "message": "发表成功"
@@ -62,7 +63,8 @@ pub async fn update_sweet_talk(
     data: Json<SweetTalkRequest>,
     state: State<Arc<AppState>>,
 ) -> Result<impl Responder, CustomError> {
-    SweetTalkService::update_sweet_talk(token.user_id, id.into_inner(), data.into_inner(), &state).await?;
+    SweetTalkService::update_sweet_talk(token.user_id, id.into_inner(), data.into_inner(), &state)
+        .await?;
     Ok(HttpResponse::Ok().json(&serde_json::json!({
         "message": "修改成功"
     })))

@@ -63,15 +63,22 @@ fn user_routes(cfg: &mut web::ServiceConfig) {
     )
     .service(
         // 根据用户名获取用户信息
-        web::scope("/getInfoByUsername").route("", web::get().to(users::routes::user::get_user_info)),
+        web::scope("/getInfoByUsername")
+            .route("", web::get().to(users::routes::user::get_user_info)),
     )
     .service(
         // 用户
         web::scope("/users")
             .route("", web::get().to(users::routes::user::get_current_info))
             .route("", web::post().to(users::routes::user::change_info))
-            .route("/is-register", web::get().to(users::routes::user::is_register))
-            .route("/role-switch", web::post().to(users::routes::user::switch_role))
+            .route(
+                "/is-register",
+                web::get().to(users::routes::user::is_register),
+            )
+            .route(
+                "/role-switch",
+                web::post().to(users::routes::user::switch_role),
+            )
             .route(
                 "/sweet-talk",
                 web::post().to(users::routes::sweet_talk::add_sweet_talk),
@@ -102,7 +109,10 @@ fn team_routes(cfg: &mut web::ServiceConfig) {
                 "/{id}",
                 web::delete().to(users::routes::group::cancel_invitation),
             )
-            .route("/unbind", web::post().to(users::routes::group::unbind_request))
+            .route(
+                "/unbind",
+                web::post().to(users::routes::group::unbind_request),
+            )
             .route(
                 "/bind",
                 web::post().to(users::routes::group::bind_user_directly),
@@ -114,6 +124,14 @@ fn team_routes(cfg: &mut web::ServiceConfig) {
             .route(
                 "/groups/{group_id}",
                 web::put().to(users::routes::group::update_group),
+            )
+            .route(
+                "/groups/{group_id}/point-config",
+                web::get().to(users::routes::group::get_group_point_config),
+            )
+            .route(
+                "/groups/{group_id}/point-config",
+                web::put().to(users::routes::group::update_group_point_config),
             ),
     );
 }
@@ -244,9 +262,10 @@ fn wish_routes(cfg: &mut web::ServiceConfig) {
 
 /// 签到 (Check-in)
 fn checkin_routes(cfg: &mut web::ServiceConfig) {
-    cfg.service(
-        web::scope("/users").route("/checkin", web::post().to(users::routes::sign::daily_checkin)),
-    )
+    cfg.service(web::scope("/users").route(
+        "/checkin",
+        web::post().to(users::routes::sign::daily_checkin),
+    ))
     .service(
         web::scope("/sign")
             .route("", web::post().to(users::routes::sign::sign_in))

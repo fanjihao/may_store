@@ -7,12 +7,24 @@ use utoipa::ToSchema;
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, ToSchema, sqlx::Type, PartialEq, Eq)]
 #[sqlx(type_name = "order_status_enum", rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum OrderStatusEnum {
-    PENDING,
-    ACCEPTED,
-    FINISHED,
-    CANCELLED,
-    EXPIRED,
-    REJECTED,
+    #[serde(rename = "PENDING_ACCEPT")]
+    PendingAccept,
+    #[serde(rename = "IN_PROGRESS")]
+    InProgress,
+    #[serde(rename = "REJECTED")]
+    Rejected,
+    #[serde(rename = "BREEDER_FINISHED")]
+    BreederFinished,
+    #[serde(rename = "BREEDER_CLOSED")]
+    BreederClosed,
+    #[serde(rename = "CONFIRMED_FINISHED")]
+    ConfirmedFinished,
+    #[serde(rename = "CONFIRMED_UNFINISHED")]
+    ConfirmedUnfinished,
+    #[serde(rename = "TIMEOUT")]
+    Timeout,
+    #[serde(rename = "CANCELLED")]
+    Cancelled,
     #[serde(rename = "SYSTEM_CLOSED")]
     SystemClosed,
 }
@@ -88,7 +100,7 @@ pub struct OrderQuery {
     pub status: Option<OrderStatusEnum>,
     pub limit: Option<i64>,
     pub cursor: Option<String>,
-    /// 仅返回已经失效(状态=EXPIRED， CANCELLED， REJECTED， SYSTEM_CLOSED)的订单；与 status 同时出现时优先 status
+    /// 仅返回已经失效(状态=TIMEOUT, CANCELLED, REJECTED, SYSTEM_CLOSED, BREEDER_CLOSED, CONFIRMED_FINISHED)的订单；与 status 同时出现时优先 status
     pub expired_only: Option<bool>,
 }
 
@@ -206,12 +218,15 @@ impl OrderStatusEnum {
     pub fn can_transition(self, to: OrderStatusEnum) -> bool {
         use OrderStatusEnum::*;
         match (self, to) {
-            (PENDING, ACCEPTED | REJECTED | CANCELLED | EXPIRED) => true,
-            (ACCEPTED, FINISHED | CANCELLED | REJECTED) => true,
-            (REJECTED, _) => false,
-            (FINISHED, _) => false,
-            (CANCELLED, _) => false,
-            (EXPIRED, _) => false,
+            (PendingAccept, InProgress | Rejected | Cancelled | Timeout | SystemClosed) => true,
+            (InProgress, BreederFinished | BreederClosed | SystemClosed) => true,
+            (BreederFinished, ConfirmedFinished | ConfirmedUnfinished | SystemClosed) => true,
+            (Rejected, _) => false,
+            (BreederClosed, _) => false,
+            (ConfirmedFinished, _) => false,
+            (ConfirmedUnfinished, BreederFinished | SystemClosed) => true, // allow b to finish again if a confirmed unfinished, or system close
+            (Timeout, _) => false,
+            (Cancelled, _) => false,
             (SystemClosed, _) => false,
             _ => false,
         }

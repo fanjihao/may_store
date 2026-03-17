@@ -1,15 +1,16 @@
-use std::sync::Arc;
 use ntex::web::{
     types::{Json, Path, State},
     HttpResponse, Responder,
 };
+use std::sync::Arc;
 
 use crate::{
     config::AppState,
     errors::CustomError,
     users::models::group::{
-        BindUserDirectlyInput, ConfirmInvitationInput, GroupInfoOut, GroupUpdateInput,
-        InvitationListOut, InvitationRequestOut, NewInvitationInput, UnbindRequestInput,
+        BindUserDirectlyInput, ConfirmInvitationInput, GroupInfoOut, GroupPointConfig,
+        GroupPointConfigUpdateInput, GroupUpdateInput, InvitationListOut, InvitationRequestOut,
+        NewInvitationInput, UnbindRequestInput,
     },
     users::models::user::UserToken,
     users::service::GroupService,
@@ -170,7 +171,7 @@ pub async fn bind_user_directly(
 
 #[utoipa::path(
     put,
-    path = "/groups/{group_id}",
+    path = "/invitation/groups/{group_id}",
     tag = "团队",
     summary = "修改关联组名称",
     request_body = GroupUpdateInput,
@@ -190,5 +191,60 @@ pub async fn update_group(
     body: Json<GroupUpdateInput>,
 ) -> Result<impl Responder, CustomError> {
     GroupService::update_group(token.user_id, path.into_inner(), body.into_inner(), &state).await?;
+    Ok(HttpResponse::Ok().json(&serde_json::json!({ "status": "ok" })))
+}
+
+#[utoipa::path(
+    get,
+    path = "/invitation/groups/{group_id}/point-config",
+    tag = "团队",
+    summary = "获取关联组积分奖惩配置",
+    params(
+        ("group_id" = i64, Path, description = "关联组ID")
+    ),
+    responses(
+        (status = 200, body = GroupPointConfig),
+        (status = 400, body = CustomError)
+    ),
+    security(("cookie_auth" = []))
+)]
+pub async fn get_group_point_config(
+    token: UserToken,
+    state: State<Arc<AppState>>,
+    path: Path<i64>,
+) -> Result<impl Responder, CustomError> {
+    let cfg =
+        GroupService::get_group_point_config(token.user_id, path.into_inner(), &state).await?;
+    Ok(HttpResponse::Ok().json(&cfg))
+}
+
+#[utoipa::path(
+    put,
+    path = "/invitation/groups/{group_id}/point-config",
+    tag = "团队",
+    summary = "修改关联组积分奖惩配置",
+    request_body = GroupPointConfigUpdateInput,
+    params(
+        ("group_id" = i64, Path, description = "关联组ID")
+    ),
+    responses(
+        (status = 200, description = "修改成功"),
+        (status = 400, body = CustomError)
+    ),
+    security(("cookie_auth" = []))
+)]
+pub async fn update_group_point_config(
+    token: UserToken,
+    state: State<Arc<AppState>>,
+    path: Path<i64>,
+    body: Json<crate::users::models::group::GroupPointConfigUpdateInput>,
+) -> Result<impl Responder, CustomError> {
+    GroupService::update_group_point_config(
+        token.user_id,
+        path.into_inner(),
+        body.into_inner(),
+        &state,
+    )
+    .await?;
     Ok(HttpResponse::Ok().json(&serde_json::json!({ "status": "ok" })))
 }

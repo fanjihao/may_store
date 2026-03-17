@@ -2,9 +2,9 @@ use crate::{
     config::AppState,
     errors::CustomError,
     users::models::group::{
-        BindUserDirectlyInput, ConfirmInvitationInput, GroupInfoOut, GroupMemberOut,
-        GroupUpdateInput, InvitationListOut, InvitationRequestOut, NewInvitationInput,
-        UnbindRequestInput, RequestRow, RoleRow, CancelRow
+        BindUserDirectlyInput, CancelRow, ConfirmInvitationInput, GroupInfoOut, GroupMemberOut,
+        GroupUpdateInput, InvitationListOut, InvitationRequestOut, NewInvitationInput, RequestRow,
+        RoleRow, UnbindRequestInput,
     },
     users::models::user::UserRoleEnum,
 };
@@ -15,10 +15,13 @@ use sqlx::Row;
 pub struct GroupService;
 
 impl GroupService {
-    pub async fn get_invitation(uid: i64, state: &AppState) -> Result<InvitationListOut, CustomError> {
-    let db = &state.db_pool;
-    let outgoing = sqlx::query_as::<_, InvitationRequestOut>(
-        "SELECT 
+    pub async fn get_invitation(
+        uid: i64,
+        state: &AppState,
+    ) -> Result<InvitationListOut, CustomError> {
+        let db = &state.db_pool;
+        let outgoing = sqlx::query_as::<_, InvitationRequestOut>(
+            "SELECT 
             request_id, 
             requester_id, 
             u.username as requester_username,
@@ -35,13 +38,13 @@ impl GroupService {
             requester_id = $1 AND agr.status IN (0, 4)
         ORDER BY 
             request_id DESC",
-    )
-    .bind(uid)
-    .fetch_all(db)
-    .await?;
+        )
+        .bind(uid)
+        .fetch_all(db)
+        .await?;
 
-    let incoming = sqlx::query_as::<_, InvitationRequestOut>(
-        "SELECT
+        let incoming = sqlx::query_as::<_, InvitationRequestOut>(
+            "SELECT
             request_id,
             requester_id,
             u.username as requester_username,
@@ -58,53 +61,58 @@ impl GroupService {
             target_user_id = $1 AND agr.status IN (0, 4)
         ORDER BY
             target_user_id DESC",
-    )
-    .bind(uid)
-    .fetch_all(db)
-    .await?;
+        )
+        .bind(uid)
+        .fetch_all(db)
+        .await?;
 
-    Ok(InvitationListOut { incoming, outgoing })
-}
-
-    pub async fn new_invitation(uid: i64, data: NewInvitationInput, state: &AppState) -> Result<(), CustomError> {
-    let db = &state.db_pool;
-    let target = data.target_user_id;
-    if uid == target {
-        return Err(CustomError::BadRequest("不能邀请自己".into()));
+        Ok(InvitationListOut { incoming, outgoing })
     }
 
-    let target_exists =
-        sqlx::query_scalar::<_, i64>("SELECT user_id FROM users WHERE user_id = $1 AND status = 1")
-            .bind(target)
-            .fetch_optional(db)
-            .await?;
-    if target_exists.is_none() {
-        return Err(CustomError::BadRequest("目标用户不存在或被禁用".into()));
-    }
+    pub async fn new_invitation(
+        uid: i64,
+        data: NewInvitationInput,
+        state: &AppState,
+    ) -> Result<(), CustomError> {
+        let db = &state.db_pool;
+        let target = data.target_user_id;
+        if uid == target {
+            return Err(CustomError::BadRequest("不能邀请自己".into()));
+        }
 
-    let exists_pending = sqlx::query_scalar::<_, i64>(
+        let target_exists = sqlx::query_scalar::<_, i64>(
+            "SELECT user_id FROM users WHERE user_id = $1 AND status = 1",
+        )
+        .bind(target)
+        .fetch_optional(db)
+        .await?;
+        if target_exists.is_none() {
+            return Err(CustomError::BadRequest("目标用户不存在或被禁用".into()));
+        }
+
+        let exists_pending = sqlx::query_scalar::<_, i64>(
         "SELECT request_id FROM association_group_requests WHERE ((requester_id=$1 AND target_user_id=$2) OR (requester_id=$2 AND target_user_id=$1)) AND status = 0"
     )
     .bind(uid)
     .bind(target)
     .fetch_optional(db)
     .await?;
-    if exists_pending.is_some() {
-        return Err(CustomError::BadRequest("已存在待处理邀请".into()));
-    }
+        if exists_pending.is_some() {
+            return Err(CustomError::BadRequest("已存在待处理邀请".into()));
+        }
 
-    let paired = sqlx::query_scalar::<_, i64>(
+        let paired = sqlx::query_scalar::<_, i64>(
         "SELECT ag.group_id FROM association_groups ag JOIN association_group_members m1 ON ag.group_id = m1.group_id JOIN association_group_members m2 ON ag.group_id = m2.group_id WHERE ag.group_type='PAIR' AND m1.user_id=$1 AND m2.user_id=$2 LIMIT 1"
     )
     .bind(uid)
     .bind(target)
     .fetch_optional(db)
     .await?;
-    if paired.is_some() {
-        return Err(CustomError::BadRequest("已绑定，不能重复邀请".into()));
-    }
+        if paired.is_some() {
+            return Err(CustomError::BadRequest("已绑定，不能重复邀请".into()));
+        }
 
-    sqlx::query(
+        sqlx::query(
         r#"INSERT INTO association_group_requests (requester_id, target_user_id, remark) VALUES ($1,$2,$3)"#
     )
     .bind(uid)
@@ -113,39 +121,44 @@ impl GroupService {
     .execute(db)
     .await?;
 
-    Ok(())
-}
+        Ok(())
+    }
 
-    pub async fn confirm_invitation(uid: i64, request_id: i64, data: ConfirmInvitationInput, state: &AppState) -> Result<(), CustomError> {
-    let db = &state.db_pool;
-    let mut tx = db.begin().await?;
-    
-    let req_opt = sqlx::query_as::<_, RequestRow>(
+    pub async fn confirm_invitation(
+        uid: i64,
+        request_id: i64,
+        data: ConfirmInvitationInput,
+        state: &AppState,
+    ) -> Result<(), CustomError> {
+        let db = &state.db_pool;
+        let mut tx = db.begin().await?;
+
+        let req_opt = sqlx::query_as::<_, RequestRow>(
         "SELECT request_id, requester_id, target_user_id, status FROM association_group_requests WHERE request_id=$1 FOR UPDATE"
     )
     .bind(request_id)
     .fetch_optional(&mut *tx)
     .await?;
-    let req = match req_opt {
-        Some(r) => r,
-        None => {
+        let req = match req_opt {
+            Some(r) => r,
+            None => {
+                tx.rollback().await.ok();
+                return Err(CustomError::BadRequest("邀请不存在".into()));
+            }
+        };
+        if req.target_user_id != uid {
             tx.rollback().await.ok();
-            return Err(CustomError::BadRequest("邀请不存在".into()));
+            return Err(CustomError::BadRequest("无权限操作该邀请".into()));
         }
-    };
-    if req.target_user_id != uid {
-        tx.rollback().await.ok();
-        return Err(CustomError::BadRequest("无权限操作该邀请".into()));
-    }
-    if req.status != 0 && req.status != 4 {
-        tx.rollback().await.ok();
-        return Err(CustomError::BadRequest("邀请已处理".into()));
-    }
+        if req.status != 0 && req.status != 4 {
+            tx.rollback().await.ok();
+            return Err(CustomError::BadRequest("邀请已处理".into()));
+        }
 
-    if data.accept {
-        if req.status == 4 {
-            let now = Utc::now();
-            sqlx::query(
+        if data.accept {
+            if req.status == 4 {
+                let now = Utc::now();
+                sqlx::query(
                 "UPDATE association_group_requests SET status=5, handled_at=$1 WHERE request_id=$2",
             )
             .bind(now)
@@ -153,7 +166,7 @@ impl GroupService {
             .execute(&mut *tx)
             .await?;
 
-            let pair_id = sqlx::query_scalar::<_, Option<i64>>(
+                let pair_id = sqlx::query_scalar::<_, Option<i64>>(
                 "SELECT ag.group_id FROM association_groups ag \
                  JOIN association_group_members m1 ON ag.group_id = m1.group_id \
                  JOIN association_group_members m2 ON ag.group_id = m2.group_id \
@@ -164,64 +177,372 @@ impl GroupService {
             .fetch_optional(&mut *tx)
             .await?.flatten();
 
-            if let Some(gid) = pair_id {
-                sqlx::query("DELETE FROM association_group_members WHERE group_id=$1")
-                    .bind(gid)
-                    .execute(&mut *tx)
-                    .await?;
-                sqlx::query(
+                if let Some(gid) = pair_id {
+                    sqlx::query("DELETE FROM association_group_members WHERE group_id=$1")
+                        .bind(gid)
+                        .execute(&mut *tx)
+                        .await?;
+                    sqlx::query(
                     "UPDATE association_groups SET status=0, updated_at=NOW() WHERE group_id=$1",
                 )
                 .bind(gid)
                 .execute(&mut *tx)
                 .await?;
+                }
+
+                tx.commit().await?;
+                return Ok(());
             }
 
-            tx.commit().await?;
-            return Ok(());
-        }
-        
-        let now = Utc::now();
-        sqlx::query(
-            "UPDATE association_group_requests SET status=1, handled_at=$1 WHERE request_id=$2",
-        )
-        .bind(now)
-        .bind(req.request_id)
-        .execute(&mut *tx)
-        .await?;
-        
-        let existing_pair = sqlx::query_scalar::<_, i64>(
+            let now = Utc::now();
+            sqlx::query(
+                "UPDATE association_group_requests SET status=1, handled_at=$1 WHERE request_id=$2",
+            )
+            .bind(now)
+            .bind(req.request_id)
+            .execute(&mut *tx)
+            .await?;
+
+            let existing_pair = sqlx::query_scalar::<_, i64>(
             "SELECT ag.group_id FROM association_groups ag JOIN association_group_members m1 ON ag.group_id = m1.group_id JOIN association_group_members m2 ON ag.group_id = m2.group_id WHERE ag.group_type='PAIR' AND m1.user_id=$1 AND m2.user_id=$2 LIMIT 1"
         )
         .bind(req.requester_id)
         .bind(req.target_user_id)
         .fetch_optional(&mut *tx)
         .await?;
-        
-        let group_id = if let Some(gid) = existing_pair {
-            gid
-        } else {
-            let group_name = format!("pair-{}-{}", req.requester_id, req.target_user_id);
-            let invite_code = Self::generate_invite_code();
-            sqlx::query_scalar::<_, i64>(
+
+            let group_id = if let Some(gid) = existing_pair {
+                gid
+            } else {
+                let group_name = format!("pair-{}-{}", req.requester_id, req.target_user_id);
+                let invite_code = Self::generate_invite_code();
+                sqlx::query_scalar::<_, i64>(
                 "INSERT INTO association_groups (group_name, group_type, invite_code) VALUES ($1,'PAIR', $2) RETURNING group_id"
             )
             .bind(group_name)
             .bind(invite_code)
             .fetch_one(&mut *tx)
             .await?
+            };
+
+            let role_req =
+                sqlx::query_as::<_, RoleRow>("SELECT user_id, role FROM users WHERE user_id=$1")
+                    .bind(req.requester_id)
+                    .fetch_optional(&mut *tx)
+                    .await?;
+            let role_tgt =
+                sqlx::query_as::<_, RoleRow>("SELECT user_id, role FROM users WHERE user_id=$1")
+                    .bind(req.target_user_id)
+                    .fetch_optional(&mut *tx)
+                    .await?;
+            let mut role_rows: Vec<RoleRow> = Vec::new();
+            if let Some(r) = role_req {
+                role_rows.push(r);
+            }
+            if let Some(r) = role_tgt {
+                role_rows.push(r);
+            }
+            if role_rows.len() != 2 {
+                tx.rollback().await.ok();
+                return Err(CustomError::BadRequest("用户角色读取失败".into()));
+            }
+
+            let req_role_enum = role_rows
+                .iter()
+                .find(|r| r.user_id == req.requester_id)
+                .unwrap()
+                .role;
+            let tgt_role_enum = role_rows
+                .iter()
+                .find(|r| r.user_id == req.target_user_id)
+                .unwrap()
+                .role;
+            let mut adjusted_target_role: Option<UserRoleEnum> = None;
+            if matches!(req_role_enum, UserRoleEnum::ORDERING)
+                && matches!(tgt_role_enum, UserRoleEnum::ORDERING)
+            {
+                adjusted_target_role = Some(UserRoleEnum::RECEIVING);
+            } else if matches!(req_role_enum, UserRoleEnum::RECEIVING)
+                && matches!(tgt_role_enum, UserRoleEnum::RECEIVING)
+            {
+                adjusted_target_role = Some(UserRoleEnum::ORDERING);
+            }
+            if let Some(new_role) = adjusted_target_role {
+                sqlx::query(
+                    "UPDATE users SET role=$2::user_role_enum, updated_at=NOW() WHERE user_id=$1",
+                )
+                .bind(req.target_user_id)
+                .bind(match new_role {
+                    UserRoleEnum::ORDERING => "ORDERING",
+                    UserRoleEnum::RECEIVING => "RECEIVING",
+                    UserRoleEnum::ADMIN => "ADMIN",
+                })
+                .execute(&mut *tx)
+                .await?;
+            }
+
+            let final_req_role =
+                sqlx::query_scalar::<_, String>("SELECT role::text FROM users WHERE user_id=$1")
+                    .bind(req.requester_id)
+                    .fetch_one(&mut *tx)
+                    .await?;
+            let final_tgt_role =
+                sqlx::query_scalar::<_, String>("SELECT role::text FROM users WHERE user_id=$1")
+                    .bind(req.target_user_id)
+                    .fetch_one(&mut *tx)
+                    .await?;
+            for (uid, role_txt) in [
+                (req.requester_id, final_req_role),
+                (req.target_user_id, final_tgt_role),
+            ] {
+                sqlx::query(
+                "INSERT INTO association_group_members (group_id, user_id, role_in_group, is_primary) VALUES ($1,$2,$3::group_member_role_enum,$4) ON CONFLICT (group_id, user_id) DO UPDATE SET role_in_group=EXCLUDED.role_in_group"
+            )
+            .bind(group_id)
+            .bind(uid)
+            .bind(role_txt)
+            .bind(if uid == req.requester_id { 1 } else { 0 })
+            .execute(&mut *tx)
+            .await?;
+            }
+        } else {
+            let now = Utc::now();
+            if req.status == 4 {
+                sqlx::query(
+                "UPDATE association_group_requests SET status=1, handled_at=$1 WHERE request_id=$2",
+            )
+            .bind(now)
+            .bind(req.request_id)
+            .execute(&mut *tx)
+            .await?;
+            } else {
+                sqlx::query(
+                "UPDATE association_group_requests SET status=2, handled_at=$1 WHERE request_id=$2",
+            )
+            .bind(now)
+            .bind(req.request_id)
+            .execute(&mut *tx)
+            .await?;
+            }
+        }
+        tx.commit().await?;
+        Ok(())
+    }
+
+    pub async fn cancel_invitation(request_id: i64, state: &AppState) -> Result<(), CustomError> {
+        let db = &state.db_pool;
+        let mut tx = db.begin().await?;
+        let req: CancelRow = sqlx::query_as::<_, CancelRow>(
+        "SELECT request_id, status FROM association_group_requests WHERE request_id=$1 FOR UPDATE"
+    )
+    .bind(request_id)
+    .fetch_optional(&mut *tx)
+    .await?
+    .ok_or_else(|| CustomError::BadRequest("邀请不存在".into()))?;
+
+        if req.status != 0 && req.status != 4 {
+            return Err(CustomError::BadRequest("该邀请已处理".into()));
+        }
+        let now = Utc::now();
+        sqlx::query(
+            "UPDATE association_group_requests SET status=3, handled_at=$2 WHERE request_id=$1",
+        )
+        .bind(req.request_id)
+        .bind(now)
+        .execute(&mut *tx)
+        .await?;
+        tx.commit().await?;
+        Ok(())
+    }
+
+    pub async fn unbind_request(
+        uid: i64,
+        data: UnbindRequestInput,
+        state: &AppState,
+    ) -> Result<(), CustomError> {
+        let db = &state.db_pool;
+        let target = data.target_user_id;
+        if uid == target {
+            return Err(CustomError::BadRequest("不能对自己发起解绑".into()));
+        }
+        let existing = sqlx::query(
+        "SELECT request_id FROM association_group_requests \
+         WHERE ((requester_id=$1 AND target_user_id=$2) OR (requester_id=$2 AND target_user_id=$1)) \
+         AND status=1 LIMIT 1"
+    )
+    .bind(uid)
+    .bind(target)
+    .fetch_optional(db)
+    .await?;
+
+        if existing.is_none() {
+            return Err(CustomError::BadRequest("未找到绑定关系".into()));
+        }
+
+        let request_id: i64 = existing.unwrap().get("request_id");
+
+        sqlx::query(
+            "UPDATE association_group_requests \
+         SET status=4, requester_id=$1, target_user_id=$2, remark=$3, created_at=NOW() \
+         WHERE request_id=$4",
+        )
+        .bind(uid)
+        .bind(target)
+        .bind(data.remark.clone())
+        .bind(request_id)
+        .execute(db)
+        .await?;
+
+        Ok(())
+    }
+
+    pub async fn get_group_info(
+        group_id: i64,
+        state: &AppState,
+    ) -> Result<GroupInfoOut, CustomError> {
+        let db = &state.db_pool;
+        let base = sqlx::query(
+        "SELECT group_id, invite_code, group_name, group_type::text, status, created_at, updated_at FROM association_groups WHERE group_id=$1"
+    )
+    .bind(group_id)
+    .fetch_optional(db)
+    .await?;
+        let g = match base {
+            Some(r) => r,
+            None => return Err(CustomError::BadRequest("群组不存在".into())),
         };
-        
+        let member_rows = sqlx::query(
+        "SELECT agm.user_id, u.nick_name, u.avatar, agm.role_in_group::text, agm.is_primary FROM association_group_members agm LEFT JOIN users u ON u.user_id=agm.user_id WHERE agm.group_id=$1 ORDER BY agm.is_primary DESC, agm.user_id"
+    )
+    .bind(group_id)
+    .fetch_all(db)
+    .await?;
+        let mut members = Vec::with_capacity(member_rows.len());
+        for r in member_rows {
+            members.push(GroupMemberOut {
+                user_id: r.get("user_id"),
+                nick_name: r.try_get("nick_name").ok(),
+                avatar: r.try_get("avatar").ok(),
+                role_in_group: r
+                    .try_get::<Option<String>, _>("role_in_group")
+                    .ok()
+                    .flatten(),
+                is_primary: r.get("is_primary"),
+            });
+        }
+        let member_ids: Vec<i64> = members.iter().map(|m| m.user_id).collect();
+        let stats = if member_ids.is_empty() {
+            (0i64, 0i64)
+        } else {
+            let total: i64 =
+                sqlx::query_scalar("SELECT COUNT(*) FROM orders WHERE user_id = ANY($1)")
+                    .bind(&member_ids)
+                    .fetch_one(db)
+                    .await
+                    .unwrap_or(0);
+            let completed: i64 = sqlx::query_scalar(
+                "SELECT COUNT(*) FROM orders WHERE user_id = ANY($1) AND status = 'FINISHED'",
+            )
+            .bind(&member_ids)
+            .fetch_one(db)
+            .await
+            .unwrap_or(0);
+            (total, completed)
+        };
+        Ok(GroupInfoOut {
+            group_id: g.get("group_id"),
+            group_name: g.try_get("group_name").ok(),
+            group_type: g.get("group_type"),
+            invite_code: g.get("invite_code"),
+            status: g.get("status"),
+            created_at: g.get("created_at"),
+            updated_at: g.get("updated_at"),
+            members,
+            total_orders: stats.0,
+            completed_orders: stats.1,
+        })
+    }
+
+    pub async fn bind_user_directly(
+        uid: i64,
+        data: BindUserDirectlyInput,
+        state: &AppState,
+    ) -> Result<(), CustomError> {
+        let db = &state.db_pool;
+        let target = data.target_user_id;
+
+        if uid == target {
+            return Err(CustomError::BadRequest("不能绑定自己".into()));
+        }
+
+        let mut tx = db.begin().await?;
+
+        let target_exists = sqlx::query_scalar::<_, i64>(
+            "SELECT user_id FROM users WHERE user_id = $1 AND status = 1",
+        )
+        .bind(target)
+        .fetch_optional(&mut *tx)
+        .await?;
+        if target_exists.is_none() {
+            tx.rollback().await.ok();
+            return Err(CustomError::BadRequest("目标用户不存在或被禁用".into()));
+        }
+
+        let existing_pair = sqlx::query_scalar::<_, i64>(
+        "SELECT ag.group_id FROM association_groups ag JOIN association_group_members m1 ON ag.group_id = m1.group_id JOIN association_group_members m2 ON ag.group_id = m2.group_id WHERE ag.group_type='PAIR' AND m1.user_id=$1 AND m2.user_id=$2 AND ag.status = 1 LIMIT 1"
+    )
+    .bind(uid)
+    .bind(target)
+    .fetch_optional(&mut *tx)
+    .await?;
+
+        if existing_pair.is_some() {
+            tx.rollback().await.ok();
+            return Err(CustomError::BadRequest("已绑定".into()));
+        }
+
+        let in_team = sqlx::query_scalar::<_, i64>(
+            "SELECT m.user_id FROM association_group_members m \
+         JOIN association_groups g ON m.group_id = g.group_id \
+         WHERE m.user_id IN ($1, $2) AND g.group_type = 'PAIR' AND g.status = 1 LIMIT 1",
+        )
+        .bind(uid)
+        .bind(target)
+        .fetch_optional(&mut *tx)
+        .await?;
+
+        if let Some(user_id) = in_team {
+            tx.rollback().await.ok();
+            let msg = if user_id == uid {
+                "你已经绑定了另一半了"
+            } else {
+                "对方已经绑定了另一半了"
+            };
+            return Err(CustomError::BadRequest(msg.into()));
+        }
+
+        let group_name = format!("pair-{}-{}", uid, target);
+        let invite_code = Self::generate_invite_code();
+
+        let group_id = sqlx::query_scalar::<_, i64>(
+        "INSERT INTO association_groups (group_name, group_type, invite_code) VALUES ($1, 'PAIR', $2) RETURNING group_id"
+    )
+    .bind(group_name)
+    .bind(invite_code)
+    .fetch_one(&mut *tx)
+    .await?;
+
         let role_req =
             sqlx::query_as::<_, RoleRow>("SELECT user_id, role FROM users WHERE user_id=$1")
-                .bind(req.requester_id)
+                .bind(uid)
                 .fetch_optional(&mut *tx)
                 .await?;
         let role_tgt =
             sqlx::query_as::<_, RoleRow>("SELECT user_id, role FROM users WHERE user_id=$1")
-                .bind(req.target_user_id)
+                .bind(target)
                 .fetch_optional(&mut *tx)
                 .await?;
+
         let mut role_rows: Vec<RoleRow> = Vec::new();
         if let Some(r) = role_req {
             role_rows.push(r);
@@ -229,21 +550,14 @@ impl GroupService {
         if let Some(r) = role_tgt {
             role_rows.push(r);
         }
+
         if role_rows.len() != 2 {
             tx.rollback().await.ok();
             return Err(CustomError::BadRequest("用户角色读取失败".into()));
         }
-        
-        let req_role_enum = role_rows
-            .iter()
-            .find(|r| r.user_id == req.requester_id)
-            .unwrap()
-            .role;
-        let tgt_role_enum = role_rows
-            .iter()
-            .find(|r| r.user_id == req.target_user_id)
-            .unwrap()
-            .role;
+
+        let req_role_enum = role_rows.iter().find(|r| r.user_id == uid).unwrap().role;
+        let tgt_role_enum = role_rows.iter().find(|r| r.user_id == target).unwrap().role;
         let mut adjusted_target_role: Option<UserRoleEnum> = None;
         if matches!(req_role_enum, UserRoleEnum::ORDERING)
             && matches!(tgt_role_enum, UserRoleEnum::ORDERING)
@@ -254,295 +568,11 @@ impl GroupService {
         {
             adjusted_target_role = Some(UserRoleEnum::ORDERING);
         }
+
         if let Some(new_role) = adjusted_target_role {
             sqlx::query(
                 "UPDATE users SET role=$2::user_role_enum, updated_at=NOW() WHERE user_id=$1",
             )
-            .bind(req.target_user_id)
-            .bind(match new_role {
-                UserRoleEnum::ORDERING => "ORDERING",
-                UserRoleEnum::RECEIVING => "RECEIVING",
-                UserRoleEnum::ADMIN => "ADMIN",
-            })
-            .execute(&mut *tx)
-            .await?;
-        }
-        
-        let final_req_role =
-            sqlx::query_scalar::<_, String>("SELECT role::text FROM users WHERE user_id=$1")
-                .bind(req.requester_id)
-                .fetch_one(&mut *tx)
-                .await?;
-        let final_tgt_role =
-            sqlx::query_scalar::<_, String>("SELECT role::text FROM users WHERE user_id=$1")
-                .bind(req.target_user_id)
-                .fetch_one(&mut *tx)
-                .await?;
-        for (uid, role_txt) in [
-            (req.requester_id, final_req_role),
-            (req.target_user_id, final_tgt_role),
-        ] {
-            sqlx::query(
-                "INSERT INTO association_group_members (group_id, user_id, role_in_group, is_primary) VALUES ($1,$2,$3::group_member_role_enum,$4) ON CONFLICT (group_id, user_id) DO UPDATE SET role_in_group=EXCLUDED.role_in_group"
-            )
-            .bind(group_id)
-            .bind(uid)
-            .bind(role_txt)
-            .bind(if uid == req.requester_id { 1 } else { 0 })
-            .execute(&mut *tx)
-            .await?;
-        }
-    } else {
-        let now = Utc::now();
-        if req.status == 4 {
-            sqlx::query(
-                "UPDATE association_group_requests SET status=1, handled_at=$1 WHERE request_id=$2",
-            )
-            .bind(now)
-            .bind(req.request_id)
-            .execute(&mut *tx)
-            .await?;
-        } else {
-            sqlx::query(
-                "UPDATE association_group_requests SET status=2, handled_at=$1 WHERE request_id=$2",
-            )
-            .bind(now)
-            .bind(req.request_id)
-            .execute(&mut *tx)
-            .await?;
-        }
-    }
-    tx.commit().await?;
-    Ok(())
-}
-
-    pub async fn cancel_invitation(request_id: i64, state: &AppState) -> Result<(), CustomError> {
-    let db = &state.db_pool;
-    let mut tx = db.begin().await?;
-    let req: CancelRow = sqlx::query_as::<_, CancelRow>(
-        "SELECT request_id, status FROM association_group_requests WHERE request_id=$1 FOR UPDATE"
-    )
-    .bind(request_id)
-    .fetch_optional(&mut *tx)
-    .await?
-    .ok_or_else(|| CustomError::BadRequest("邀请不存在".into()))?;
-    
-    if req.status != 0 && req.status != 4 {
-        return Err(CustomError::BadRequest("该邀请已处理".into()));
-    }
-    let now = Utc::now();
-    sqlx::query(
-        "UPDATE association_group_requests SET status=3, handled_at=$2 WHERE request_id=$1",
-    )
-    .bind(req.request_id)
-    .bind(now)
-    .execute(&mut *tx)
-    .await?;
-    tx.commit().await?;
-    Ok(())
-}
-
-    pub async fn unbind_request(uid: i64, data: UnbindRequestInput, state: &AppState) -> Result<(), CustomError> {
-    let db = &state.db_pool;
-    let target = data.target_user_id;
-    if uid == target {
-        return Err(CustomError::BadRequest("不能对自己发起解绑".into()));
-    }
-    let existing = sqlx::query(
-        "SELECT request_id FROM association_group_requests \
-         WHERE ((requester_id=$1 AND target_user_id=$2) OR (requester_id=$2 AND target_user_id=$1)) \
-         AND status=1 LIMIT 1"
-    )
-    .bind(uid)
-    .bind(target)
-    .fetch_optional(db)
-    .await?;
-
-    if existing.is_none() {
-        return Err(CustomError::BadRequest("未找到绑定关系".into()));
-    }
-
-    let request_id: i64 = existing.unwrap().get("request_id");
-
-    sqlx::query(
-        "UPDATE association_group_requests \
-         SET status=4, requester_id=$1, target_user_id=$2, remark=$3, created_at=NOW() \
-         WHERE request_id=$4",
-    )
-    .bind(uid)
-    .bind(target)
-    .bind(data.remark.clone())
-    .bind(request_id)
-    .execute(db)
-    .await?;
-
-    Ok(())
-}
-
-    pub async fn get_group_info(group_id: i64, state: &AppState) -> Result<GroupInfoOut, CustomError> {
-    let db = &state.db_pool;
-    let base = sqlx::query(
-        "SELECT group_id, invite_code, group_name, group_type::text, status, created_at, updated_at FROM association_groups WHERE group_id=$1"
-    )
-    .bind(group_id)
-    .fetch_optional(db)
-    .await?;
-    let g = match base {
-        Some(r) => r,
-        None => return Err(CustomError::BadRequest("群组不存在".into())),
-    };
-    let member_rows = sqlx::query(
-        "SELECT agm.user_id, u.nick_name, u.avatar, agm.role_in_group::text, agm.is_primary FROM association_group_members agm LEFT JOIN users u ON u.user_id=agm.user_id WHERE agm.group_id=$1 ORDER BY agm.is_primary DESC, agm.user_id"
-    )
-    .bind(group_id)
-    .fetch_all(db)
-    .await?;
-    let mut members = Vec::with_capacity(member_rows.len());
-    for r in member_rows {
-        members.push(GroupMemberOut {
-            user_id: r.get("user_id"),
-            nick_name: r.try_get("nick_name").ok(),
-            avatar: r.try_get("avatar").ok(),
-            role_in_group: r
-                .try_get::<Option<String>, _>("role_in_group")
-                .ok()
-                .flatten(),
-            is_primary: r.get("is_primary"),
-        });
-    }
-    let member_ids: Vec<i64> = members.iter().map(|m| m.user_id).collect();
-    let stats = if member_ids.is_empty() {
-        (0i64, 0i64)
-    } else {
-        let total: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM orders WHERE user_id = ANY($1)")
-            .bind(&member_ids)
-            .fetch_one(db)
-            .await
-            .unwrap_or(0);
-        let completed: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM orders WHERE user_id = ANY($1) AND status = 'FINISHED'",
-        )
-        .bind(&member_ids)
-        .fetch_one(db)
-        .await
-        .unwrap_or(0);
-        (total, completed)
-    };
-    Ok(GroupInfoOut {
-        group_id: g.get("group_id"),
-        group_name: g.try_get("group_name").ok(),
-        group_type: g.get("group_type"),
-        invite_code: g.get("invite_code"),
-        status: g.get("status"),
-        created_at: g.get("created_at"),
-        updated_at: g.get("updated_at"),
-        members,
-        total_orders: stats.0,
-        completed_orders: stats.1,
-    })
-}
-
-    pub async fn bind_user_directly(uid: i64, data: BindUserDirectlyInput, state: &AppState) -> Result<(), CustomError> {
-    let db = &state.db_pool;
-    let target = data.target_user_id;
-
-    if uid == target {
-        return Err(CustomError::BadRequest("不能绑定自己".into()));
-    }
-
-    let mut tx = db.begin().await?;
-
-    let target_exists =
-        sqlx::query_scalar::<_, i64>("SELECT user_id FROM users WHERE user_id = $1 AND status = 1")
-            .bind(target)
-            .fetch_optional(&mut *tx)
-            .await?;
-    if target_exists.is_none() {
-        tx.rollback().await.ok();
-        return Err(CustomError::BadRequest("目标用户不存在或被禁用".into()));
-    }
-
-    let existing_pair = sqlx::query_scalar::<_, i64>(
-        "SELECT ag.group_id FROM association_groups ag JOIN association_group_members m1 ON ag.group_id = m1.group_id JOIN association_group_members m2 ON ag.group_id = m2.group_id WHERE ag.group_type='PAIR' AND m1.user_id=$1 AND m2.user_id=$2 AND ag.status = 1 LIMIT 1"
-    )
-    .bind(uid)
-    .bind(target)
-    .fetch_optional(&mut *tx)
-    .await?;
-
-    if existing_pair.is_some() {
-        tx.rollback().await.ok();
-        return Err(CustomError::BadRequest("已绑定".into()));
-    }
-
-    let in_team = sqlx::query_scalar::<_, i64>(
-        "SELECT m.user_id FROM association_group_members m \
-         JOIN association_groups g ON m.group_id = g.group_id \
-         WHERE m.user_id IN ($1, $2) AND g.group_type = 'PAIR' AND g.status = 1 LIMIT 1",
-    )
-    .bind(uid)
-    .bind(target)
-    .fetch_optional(&mut *tx)
-    .await?;
-
-    if let Some(user_id) = in_team {
-        tx.rollback().await.ok();
-        let msg = if user_id == uid {
-            "你已经绑定了另一半了"
-        } else {
-            "对方已经绑定了另一半了"
-        };
-        return Err(CustomError::BadRequest(msg.into()));
-    }
-
-    let group_name = format!("pair-{}-{}", uid, target);
-    let invite_code = Self::generate_invite_code();
-
-    let group_id = sqlx::query_scalar::<_, i64>(
-        "INSERT INTO association_groups (group_name, group_type, invite_code) VALUES ($1, 'PAIR', $2) RETURNING group_id"
-    )
-    .bind(group_name)
-    .bind(invite_code)
-    .fetch_one(&mut *tx)
-    .await?;
-
-    let role_req = sqlx::query_as::<_, RoleRow>("SELECT user_id, role FROM users WHERE user_id=$1")
-        .bind(uid)
-        .fetch_optional(&mut *tx)
-        .await?;
-    let role_tgt = sqlx::query_as::<_, RoleRow>("SELECT user_id, role FROM users WHERE user_id=$1")
-        .bind(target)
-        .fetch_optional(&mut *tx)
-        .await?;
-
-    let mut role_rows: Vec<RoleRow> = Vec::new();
-    if let Some(r) = role_req {
-        role_rows.push(r);
-    }
-    if let Some(r) = role_tgt {
-        role_rows.push(r);
-    }
-
-    if role_rows.len() != 2 {
-        tx.rollback().await.ok();
-        return Err(CustomError::BadRequest("用户角色读取失败".into()));
-    }
-
-    let req_role_enum = role_rows.iter().find(|r| r.user_id == uid).unwrap().role;
-    let tgt_role_enum = role_rows.iter().find(|r| r.user_id == target).unwrap().role;
-    let mut adjusted_target_role: Option<UserRoleEnum> = None;
-    if matches!(req_role_enum, UserRoleEnum::ORDERING)
-        && matches!(tgt_role_enum, UserRoleEnum::ORDERING)
-    {
-        adjusted_target_role = Some(UserRoleEnum::RECEIVING);
-    } else if matches!(req_role_enum, UserRoleEnum::RECEIVING)
-        && matches!(tgt_role_enum, UserRoleEnum::RECEIVING)
-    {
-        adjusted_target_role = Some(UserRoleEnum::ORDERING);
-    }
-
-    if let Some(new_role) = adjusted_target_role {
-        sqlx::query("UPDATE users SET role=$2::user_role_enum, updated_at=NOW() WHERE user_id=$1")
             .bind(target)
             .bind(match new_role {
                 UserRoleEnum::ORDERING => "ORDERING",
@@ -552,18 +582,18 @@ impl GroupService {
             .execute(&mut *tx)
             .await?;
 
-        if let Some(r) = role_rows.iter_mut().find(|r| r.user_id == target) {
-            r.role = new_role;
+            if let Some(r) = role_rows.iter_mut().find(|r| r.user_id == target) {
+                r.role = new_role;
+            }
         }
-    }
 
-    for r in role_rows {
-        let g_role = match r.role {
-            UserRoleEnum::ORDERING => "ORDERING",
-            UserRoleEnum::RECEIVING => "RECEIVING",
-            UserRoleEnum::ADMIN => "ADMIN",
-        };
-        sqlx::query(
+        for r in role_rows {
+            let g_role = match r.role {
+                UserRoleEnum::ORDERING => "ORDERING",
+                UserRoleEnum::RECEIVING => "RECEIVING",
+                UserRoleEnum::ADMIN => "ADMIN",
+            };
+            sqlx::query(
             "INSERT INTO association_group_members (group_id, user_id, role_in_group, is_primary) VALUES ($1, $2, $3::group_member_role_enum, 0)"
         )
         .bind(group_id)
@@ -571,28 +601,33 @@ impl GroupService {
         .bind(g_role)
         .execute(&mut *tx)
         .await?;
+        }
+
+        tx.commit().await?;
+        Ok(())
     }
 
-    tx.commit().await?;
-    Ok(())
-}
+    fn generate_invite_code() -> String {
+        const CHARSET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+        let mut rng = rand::thread_rng();
+        let code: String = (0..8)
+            .map(|_| {
+                let idx = rng.gen_range(0..CHARSET.len());
+                CHARSET[idx] as char
+            })
+            .collect();
+        code
+    }
 
-fn generate_invite_code() -> String {
-    const CHARSET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
-    let mut rng = rand::thread_rng();
-    let code: String = (0..8)
-        .map(|_| {
-            let idx = rng.gen_range(0..CHARSET.len());
-            CHARSET[idx] as char
-        })
-        .collect();
-    code
-}
+    pub async fn update_group(
+        uid: i64,
+        group_id: i64,
+        body: GroupUpdateInput,
+        state: &AppState,
+    ) -> Result<(), CustomError> {
+        let db = &state.db_pool;
 
-    pub async fn update_group(uid: i64, group_id: i64, body: GroupUpdateInput, state: &AppState) -> Result<(), CustomError> {
-    let db = &state.db_pool;
-
-    let is_member = sqlx::query_scalar::<_, bool>(
+        let is_member = sqlx::query_scalar::<_, bool>(
         "SELECT EXISTS(SELECT 1 FROM association_group_members WHERE group_id=$1 AND user_id=$2)",
     )
     .bind(group_id)
@@ -600,16 +635,142 @@ fn generate_invite_code() -> String {
     .fetch_one(db)
     .await?;
 
-    if !is_member {
-        return Err(CustomError::BadRequest("你不是该组成员，无法修改".into()));
-    }
+        if !is_member {
+            return Err(CustomError::BadRequest("你不是该组成员，无法修改".into()));
+        }
 
-    sqlx::query("UPDATE association_groups SET group_name=$1, updated_at=NOW() WHERE group_id=$2")
+        sqlx::query(
+            "UPDATE association_groups SET group_name=$1, updated_at=NOW() WHERE group_id=$2",
+        )
         .bind(&body.group_name)
         .bind(group_id)
         .execute(db)
         .await?;
 
-    Ok(())
-}
+        Ok(())
+    }
+
+    pub async fn get_group_point_config(
+        uid: i64,
+        group_id: i64,
+        state: &AppState,
+    ) -> Result<crate::users::models::group::GroupPointConfig, CustomError> {
+        let db = &state.db_pool;
+
+        let is_member = sqlx::query_scalar::<_, bool>(
+            "SELECT EXISTS(SELECT 1 FROM association_group_members WHERE group_id=$1 AND user_id=$2)",
+        )
+        .bind(group_id)
+        .bind(uid)
+        .fetch_one(db)
+        .await?;
+
+        if !is_member {
+            return Err(CustomError::BadRequest(
+                "你不是该组成员，无法查看配置".into(),
+            ));
+        }
+
+        let mut cfg = crate::users::models::group::GroupPointConfig::default();
+        cfg.group_id = group_id;
+
+        let row = sqlx::query_as::<_, crate::users::models::group::GroupPointConfig>(
+            "SELECT group_id, breeder_closed_points, confirmed_finished_points, confirmed_unfinished_points, timeout_points FROM group_point_configs WHERE group_id=$1"
+        )
+        .bind(group_id)
+        .fetch_optional(db)
+        .await?;
+
+        if let Some(r) = row {
+            cfg = r;
+        }
+
+        Ok(cfg)
+    }
+
+    pub async fn update_group_point_config(
+        uid: i64,
+        group_id: i64,
+        body: crate::users::models::group::GroupPointConfigUpdateInput,
+        state: &AppState,
+    ) -> Result<(), CustomError> {
+        let db = &state.db_pool;
+
+        let is_member = sqlx::query_scalar::<_, bool>(
+            "SELECT EXISTS(SELECT 1 FROM association_group_members WHERE group_id=$1 AND user_id=$2)",
+        )
+        .bind(group_id)
+        .bind(uid)
+        .fetch_one(db)
+        .await?;
+
+        if !is_member {
+            return Err(CustomError::BadRequest(
+                "你不是该组成员，无法修改配置".into(),
+            ));
+        }
+
+        let mut tx = db.begin().await?;
+
+        let existing = sqlx::query("SELECT 1 FROM group_point_configs WHERE group_id=$1")
+            .bind(group_id)
+            .fetch_optional(&mut *tx)
+            .await?;
+
+        if existing.is_none() {
+            let def = crate::users::models::group::GroupPointConfig::default();
+            sqlx::query(
+                "INSERT INTO group_point_configs (group_id, breeder_closed_points, confirmed_finished_points, confirmed_unfinished_points, timeout_points) VALUES ($1, $2, $3, $4, $5)"
+            )
+            .bind(group_id)
+            .bind(body.breeder_closed_points.unwrap_or(def.breeder_closed_points))
+            .bind(body.confirmed_finished_points.unwrap_or(def.confirmed_finished_points))
+            .bind(body.confirmed_unfinished_points.unwrap_or(def.confirmed_unfinished_points))
+            .bind(body.timeout_points.unwrap_or(def.timeout_points))
+            .execute(&mut *tx)
+            .await?;
+        } else {
+            let mut update_query = String::from("UPDATE group_point_configs SET updated_at=NOW()");
+            if body.breeder_closed_points.is_some() {
+                update_query.push_str(", breeder_closed_points=$2");
+            }
+            if body.confirmed_finished_points.is_some() {
+                update_query.push_str(", confirmed_finished_points=$3");
+            }
+            if body.confirmed_unfinished_points.is_some() {
+                update_query.push_str(", confirmed_unfinished_points=$4");
+            }
+            if body.timeout_points.is_some() {
+                update_query.push_str(", timeout_points=$5");
+            }
+            update_query.push_str(" WHERE group_id=$1");
+
+            let mut q = sqlx::query(&update_query).bind(group_id);
+            if let Some(v) = body.breeder_closed_points {
+                q = q.bind(v);
+            } else {
+                q = q.bind(0);
+            }
+            if let Some(v) = body.confirmed_finished_points {
+                q = q.bind(v);
+            } else {
+                q = q.bind(0);
+            }
+            if let Some(v) = body.confirmed_unfinished_points {
+                q = q.bind(v);
+            } else {
+                q = q.bind(0);
+            }
+            if let Some(v) = body.timeout_points {
+                q = q.bind(v);
+            } else {
+                q = q.bind(0);
+            }
+
+            q.execute(&mut *tx).await?;
+        }
+
+        tx.commit().await?;
+        Ok(())
+    }
 }

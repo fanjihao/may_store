@@ -3,11 +3,11 @@ use crate::orders::service::OrderService;
 use crate::{
     config::AppState,
     errors::CustomError,
-    users::models::user::UserToken,
     orders::models::{
         OrderCreateInput, OrderOutNew, OrderQuery, OrderRatingCreateInput, OrderRatingOut,
         OrderStatusUpdateInput,
     },
+    users::models::user::UserToken,
 };
 use ntex::web::{
     types::{Json, Path, Query, State},

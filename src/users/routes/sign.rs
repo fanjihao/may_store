@@ -1,14 +1,11 @@
+use ntex::web::{types::State, HttpResponse, Responder};
 use std::sync::Arc;
-use ntex::web::{
-    types::State,
-    HttpResponse, Responder,
-};
 
 use crate::{
     config::AppState,
     errors::CustomError,
-    users::models::user::{DailyCheckinOut, UserToken},
     users::models::sign::{SignInResponse, SignInfoResponse},
+    users::models::user::{DailyCheckinOut, UserToken},
     users::service::SignService,
 };
 

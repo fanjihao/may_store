@@ -10,7 +10,9 @@ use crate::{
     errors::CustomError,
     private::{APP_ID, APP_SECRET, TOKEN_SECRET_KEY},
     users::models::user::{
-        GenderEnum, IsRegisterResponse, LoginInput, LoginMethodEnum, LoginResponse, ProfileUpdateInput, RegisterInput, RoleSwitchInput, RoleSwitchResult, UserInfoResponse, UserPublic, UserRecord, UserRoleEnum, UserTokenClaims
+        GenderEnum, IsRegisterResponse, LoginInput, LoginMethodEnum, LoginResponse,
+        ProfileUpdateInput, RegisterInput, RoleSwitchInput, RoleSwitchResult, UserInfoResponse,
+        UserPublic, UserRecord, UserRoleEnum, UserTokenClaims,
     },
     utils::{validate_nickname, validate_username},
 };
@@ -378,7 +380,7 @@ impl UserService {
         }
 
         let incomplete_count: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM orders WHERE group_id=$1 AND status IN ('PENDING', 'ACCEPTED')",
+            "SELECT COUNT(*) FROM orders WHERE group_id=$1 AND status IN ('PENDING_ACCEPT', 'IN_PROGRESS', 'BREEDER_FINISHED', 'CONFIRMED_UNFINISHED')",
         )
         .bind(group_id)
         .fetch_one(db)
