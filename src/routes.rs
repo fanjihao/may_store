@@ -221,8 +221,8 @@ fn order_routes(cfg: &mut web::ServiceConfig) {
             .route("/{id}", web::delete().to(orders::routes::delete_order)),
     )
     .service(
-        web::scope("/orders-incomplete")
-            .route("/{id}", web::get().to(orders::routes::get_incomplete_order)),
+        web::scope("/orders-statistics")
+            .route("/{id}", web::get().to(orders::routes::get_order_statistics)),
     );
 }
 

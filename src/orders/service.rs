@@ -8,7 +8,7 @@ use std::sync::Arc;
 use crate::{
     errors::CustomError,
     orders::models::{
-        OrderCreateInput, OrderCursor, OrderItemOut, OrderOutNew, OrderQuery,
+        OrderStatistics, OrderCreateInput, OrderCursor, OrderItemOut, OrderOutNew, OrderQuery,
         OrderRatingCreateInput, OrderRatingOut, OrderRecord, OrderStatusEnum,
         OrderStatusHistoryOut, OrderStatusUpdateInput,
     },
@@ -136,6 +136,19 @@ impl OrderService {
                 .bind(qty)
                 .execute(&mut *tx)
                 .await?;
+
+            sqlx::query(
+                "INSERT INTO food_stats (food_id, total_order_count, last_order_time, updated_at) \
+                 VALUES ($1, $2, NOW(), NOW()) \
+                 ON CONFLICT (food_id) DO UPDATE \
+                 SET total_order_count = food_stats.total_order_count + $2, \
+                     last_order_time = NOW(), \
+                     updated_at = NOW()",
+            )
+            .bind(item.food_id)
+            .bind(qty)
+            .execute(&mut *tx)
+            .await?;
         }
 
         sqlx::query(
@@ -449,15 +462,31 @@ impl OrderService {
         Ok(out)
     }
 
-    pub async fn get_incomplete_order(db: &PgPool, group_id: i64) -> Result<i32, CustomError> {
+    pub async fn get_order_statistics(db: &PgPool, group_id: i64) -> Result<OrderStatistics, CustomError> {
         let count = sqlx::query(
-            "SELECT COUNT(*) as c FROM orders WHERE group_id=$1 AND status='PENDING_ACCEPT'",
+            "SELECT
+                COALESCE(SUM(CASE WHEN status = 'PENDING_ACCEPT' THEN 1 ELSE 0 END), 0) as pending_accept,
+                COALESCE(SUM(CASE WHEN status = 'IN_PROGRESS' THEN 1 ELSE 0 END), 0) as in_progress,
+                COALESCE(SUM(CASE WHEN status = 'BREEDER_FINISHED' THEN 1 ELSE 0 END), 0) as pending_confirm
+            FROM
+                orders
+            WHERE
+                group_id = $1
+                AND status IN ('PENDING_ACCEPT', 'IN_PROGRESS', 'BREEDER_FINISHED')",
         )
         .bind(group_id)
         .fetch_one(db)
         .await?;
-        let c: i64 = count.get("c");
-        Ok(c as i32)
+
+        let pending_accept: i64 = count.get("pending_accept");
+        let in_progress: i64 = count.get("in_progress");
+        let pending_confirm: i64 = count.get("pending_confirm");
+
+        Ok(OrderStatistics {
+            pending_accept: pending_accept as i32,
+            in_progress: in_progress as i32,
+            pending_confirm: pending_confirm as i32,
+        })
     }
 
     pub async fn update_order_status(
@@ -527,6 +556,30 @@ impl OrderService {
         }
         order.status = data.to_status;
         order.last_status_change_at = Some(Utc::now());
+
+        if matches!(data.to_status, OrderStatusEnum::ConfirmedFinished)
+            && !matches!(from_status, OrderStatusEnum::ConfirmedFinished)
+        {
+            let items: Vec<(i64, i32)> =
+                sqlx::query_as("SELECT food_id, quantity FROM order_items WHERE order_id=$1")
+                    .bind(order.order_id)
+                    .fetch_all(&mut *tx)
+                    .await?;
+            for (fid, qty) in items {
+                sqlx::query(
+                    "INSERT INTO food_stats (food_id, total_order_count, completed_order_count, last_complete_time, updated_at) \
+                     VALUES ($1, 0, $2, NOW(), NOW()) \
+                     ON CONFLICT (food_id) DO UPDATE \
+                     SET completed_order_count = food_stats.completed_order_count + $2, \
+                         last_complete_time = NOW(), \
+                         updated_at = NOW()"
+                )
+                .bind(fid)
+                .bind(qty)
+                .execute(&mut *tx)
+                .await?;
+            }
+        }
 
         let pt_cfg = Self::get_group_point_config(&mut *tx, order.group_id).await;
 

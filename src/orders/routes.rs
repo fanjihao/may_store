@@ -4,7 +4,7 @@ use crate::{
     config::AppState,
     errors::CustomError,
     orders::models::{
-        OrderCreateInput, OrderOutNew, OrderQuery, OrderRatingCreateInput, OrderRatingOut,
+        OrderStatistics, OrderCreateInput, OrderOutNew, OrderQuery, OrderRatingCreateInput, OrderRatingOut,
         OrderStatusUpdateInput,
     },
     users::models::user::UserToken,
@@ -65,16 +65,16 @@ pub async fn get_order_detail(
 
 #[utoipa::path(
     get,
-    path = "/orders-incomplete/{group_id}",
+    path = "/orders-statistics/{group_id}",
     tag = "订单",
     params(("group_id" = i64, Path, description = "组ID")),
-    responses((status = 200, body = i32))
+    responses((status = 200, body = OrderStatistics))
 )]
-pub async fn get_incomplete_order(
+pub async fn get_order_statistics(
     state: State<Arc<AppState>>,
     group_id: Path<i64>,
 ) -> Result<impl Responder, CustomError> {
-    let count = OrderService::get_incomplete_order(&state.db_pool, *group_id).await?;
+    let count = OrderService::get_order_statistics(&state.db_pool, *group_id).await?;
     Ok(HttpResponse::Ok().json(&count))
 }
 

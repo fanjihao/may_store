@@ -163,6 +163,14 @@ pub struct GroupInfoSimple {
     pub group_name: Option<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct OrderStatistics {
+    pub pending_accept: i32,
+    pub in_progress: i32,
+    pub pending_confirm: i32,
+}
+
 impl From<(OrderRecord, Vec<OrderItemOut>, Vec<OrderStatusHistoryOut>)> for OrderOutNew {
     fn from(value: (OrderRecord, Vec<OrderItemOut>, Vec<OrderStatusHistoryOut>)) -> Self {
         let (r, items, history) = value;
