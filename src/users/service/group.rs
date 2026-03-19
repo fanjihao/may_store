@@ -675,7 +675,7 @@ impl GroupService {
         cfg.group_id = group_id;
 
         let row = sqlx::query_as::<_, crate::users::models::group::GroupPointConfig>(
-            "SELECT group_id, breeder_closed_points, confirmed_finished_points, confirmed_unfinished_points, timeout_points, overdue_unfinished_points FROM group_point_configs WHERE group_id=$1"
+            "SELECT group_id, breeder_closed_points, confirmed_finished_points, confirmed_unfinished_points, timeout_points, overdue_unfinished_points, daily_checkin_rewards FROM group_point_configs WHERE group_id=$1"
         )
         .bind(group_id)
         .fetch_optional(db)
@@ -720,7 +720,7 @@ impl GroupService {
         if existing.is_none() {
             let def = crate::users::models::group::GroupPointConfig::default();
             sqlx::query(
-                "INSERT INTO group_point_configs (group_id, breeder_closed_points, confirmed_finished_points, confirmed_unfinished_points, timeout_points, overdue_unfinished_points) VALUES ($1, $2, $3, $4, $5, $6)"
+                "INSERT INTO group_point_configs (group_id, breeder_closed_points, confirmed_finished_points, confirmed_unfinished_points, timeout_points, overdue_unfinished_points, daily_checkin_rewards) VALUES ($1, $2, $3, $4, $5, $6, $7)"
             )
             .bind(group_id)
             .bind(body.breeder_closed_points.unwrap_or(def.breeder_closed_points))
@@ -728,6 +728,7 @@ impl GroupService {
             .bind(body.confirmed_unfinished_points.unwrap_or(def.confirmed_unfinished_points))
             .bind(body.timeout_points.unwrap_or(def.timeout_points))
             .bind(body.overdue_unfinished_points.unwrap_or(def.overdue_unfinished_points))
+            .bind(body.daily_checkin_rewards.unwrap_or(def.daily_checkin_rewards))
             .execute(&mut *tx)
             .await?;
         } else {
@@ -750,6 +751,10 @@ impl GroupService {
             }
             if let Some(v) = body.overdue_unfinished_points {
                 qb.push(", overdue_unfinished_points = ");
+                qb.push_bind(v);
+            }
+            if let Some(v) = body.daily_checkin_rewards {
+                qb.push(", daily_checkin_rewards = ");
                 qb.push_bind(v);
             }
             qb.push(" WHERE group_id = ");

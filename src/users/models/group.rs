@@ -110,6 +110,7 @@ pub struct GroupPointConfig {
     pub confirmed_unfinished_points: i32,
     pub timeout_points: i32,
     pub overdue_unfinished_points: i32,
+    pub daily_checkin_rewards: Vec<i32>,
 }
 
 impl Default for GroupPointConfig {
@@ -121,6 +122,7 @@ impl Default for GroupPointConfig {
             confirmed_unfinished_points: -5,
             timeout_points: -3,
             overdue_unfinished_points: -10,
+            daily_checkin_rewards: vec![5, 6, 7, 8, 9, 10, 20],
         }
     }
 }
@@ -133,4 +135,5 @@ pub struct GroupPointConfigUpdateInput {
     pub confirmed_unfinished_points: Option<i32>,
     pub timeout_points: Option<i32>,
     pub overdue_unfinished_points: Option<i32>,
+    pub daily_checkin_rewards: Option<Vec<i32>>,
 }

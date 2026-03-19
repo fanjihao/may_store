@@ -13,7 +13,7 @@ use crate::{
     post,
     path = "/users/checkin",
     tag = "签到",
-    summary = "每日签到获取爱心积分",
+    summary = "每日签到获取钻石",
     responses(
         (status = 201, body = DailyCheckinOut),
         (status = 400, body = CustomError),

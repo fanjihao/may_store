@@ -153,20 +153,6 @@ impl DashboardService {
                 FROM point_transactions pt
                 JOIN association_group_members agm ON agm.user_id=pt.user_id AND agm.group_id=$1
                 WHERE pt.type != 'SIGN_IN_REWARD'
-
-                UNION ALL
-                -- 签到记录（组内成员）
-                SELECT
-                    sr.sign_id AS ref_id,
-                    sr.user_id AS actor_user_id,
-                    'SIGN_IN' AS event_type,
-                    sr.created_at AS occurred_at,
-                    NULL::text AS ref_name,
-                    sr.points_earned AS point_amount,
-                    'SIGN_IN_REWARD'::text AS point_tx_type,
-                    NULL::int AS point_balance_after
-                FROM sign_records sr
-                JOIN association_group_members agm ON agm.user_id=sr.user_id AND agm.group_id=$1
             ) all_events
             WHERE ($2::timestamptz IS NULL OR (occurred_at, ref_id) < ($2, $3))
             ORDER BY occurred_at DESC, ref_id DESC

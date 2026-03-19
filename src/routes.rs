@@ -90,6 +90,10 @@ fn user_routes(cfg: &mut web::ServiceConfig) {
             .route(
                 "/sweet-talks",
                 web::get().to(users::routes::sweet_talk::get_sweet_talks),
+            )
+            .route(
+                "/checkin",
+                web::post().to(users::routes::sign::daily_checkin),
             ),
     );
 }
@@ -262,11 +266,7 @@ fn wish_routes(cfg: &mut web::ServiceConfig) {
 
 /// 签到 (Check-in)
 fn checkin_routes(cfg: &mut web::ServiceConfig) {
-    cfg.service(web::scope("/users").route(
-        "/checkin",
-        web::post().to(users::routes::sign::daily_checkin),
-    ))
-    .service(
+    cfg.service(
         web::scope("/sign")
             .route("", web::post().to(users::routes::sign::sign_in))
             .route("/info", web::get().to(users::routes::sign::get_sign_info)),

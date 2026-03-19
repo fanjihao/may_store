@@ -51,6 +51,7 @@ CREATE TABLE users (
     email VARCHAR(128),
     role user_role_enum NOT NULL DEFAULT 'ORDERING',
     love_point INT NOT NULL DEFAULT 0,
+    diamond INT NOT NULL DEFAULT 0,
     avatar VARCHAR(256) NOT NULL DEFAULT 'https://store.impeter.fun/default-avatar.png',
     phone VARCHAR(32),
     open_id VARCHAR(128),
@@ -77,7 +78,8 @@ COMMENT ON COLUMN users.username IS '用户名（唯一）';
 COMMENT ON COLUMN users.nick_name IS '昵称';
 COMMENT ON COLUMN users.email IS '邮箱地址';
 COMMENT ON COLUMN users.role IS '角色：ORDERING下单/RECEIVING接单/ADMIN管理';
-COMMENT ON COLUMN users.love_point IS '爱心积分(可奖励与兑换心愿)';
+COMMENT ON COLUMN users.love_point IS '爱心积分(仅通过订单获取)';
+COMMENT ON COLUMN users.diamond IS '钻石(通过签到获取)';
 COMMENT ON COLUMN users.avatar IS '头像URL';
 COMMENT ON COLUMN users.phone IS '手机号';
 COMMENT ON COLUMN users.open_id IS '微信绑定openid';
@@ -387,7 +389,7 @@ CREATE TABLE sign_records (
     user_id BIGINT NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
     sign_date DATE NOT NULL,
     consecutive_days INT NOT NULL DEFAULT 1,
-    points_earned INT NOT NULL DEFAULT 0,
+    diamonds_earned INT NOT NULL DEFAULT 0,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     UNIQUE(user_id, sign_date)
 );
@@ -396,7 +398,7 @@ COMMENT ON COLUMN sign_records.sign_id IS '签到记录主键ID';
 COMMENT ON COLUMN sign_records.user_id IS '用户ID';
 COMMENT ON COLUMN sign_records.sign_date IS '签到日期';
 COMMENT ON COLUMN sign_records.consecutive_days IS '连续签到天数';
-COMMENT ON COLUMN sign_records.points_earned IS '本次签到获得积分';
+COMMENT ON COLUMN sign_records.diamonds_earned IS '本次签到获得钻石';
 COMMENT ON COLUMN sign_records.created_at IS '签到时间';
 CREATE INDEX idx_sr_user_date ON sign_records(user_id, sign_date DESC);
 -- ================= SWEET TALKS =================
@@ -697,6 +699,7 @@ CREATE TABLE group_point_configs (
     confirmed_unfinished_points INT NOT NULL DEFAULT -5,
     timeout_points INT NOT NULL DEFAULT -3,
     overdue_unfinished_points INT NOT NULL DEFAULT -10,
+    daily_checkin_rewards INT[] NOT NULL DEFAULT '{5,6,7,8,9,10,20}',
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
@@ -707,3 +710,4 @@ COMMENT ON COLUMN group_point_configs.confirmed_finished_points IS '下单方确
 COMMENT ON COLUMN group_point_configs.confirmed_unfinished_points IS '下单方确认未完成扣分(通常为负数)';
 COMMENT ON COLUMN group_point_configs.timeout_points IS '接单超时未接单扣分(通常为负数)';
 COMMENT ON COLUMN group_point_configs.overdue_unfinished_points IS '逾期未完成扣分(通常为负数)';
+COMMENT ON COLUMN group_point_configs.daily_checkin_rewards IS '每日签到奖励配置(仅管理员)';

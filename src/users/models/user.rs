@@ -84,6 +84,7 @@ pub struct UserPublic {
     pub nick_name: Option<String>,
     pub role: UserRoleEnum,
     pub love_point: i32,
+    pub diamond: i32,
     pub avatar: Option<String>,
     pub phone: Option<String>,
     pub open_id: Option<String>,
@@ -140,6 +141,7 @@ pub struct UserRecord {
     pub nick_name: Option<String>,
     pub role: UserRoleEnum,
     pub love_point: i32,
+    pub diamond: i32,
     pub avatar: Option<String>,
     pub phone: Option<String>,
     pub open_id: Option<String>,
@@ -170,6 +172,7 @@ impl From<UserRecord> for UserPublic {
             nick_name: record.nick_name,
             role: record.role,
             love_point: record.love_point,
+            diamond: record.diamond,
             avatar: record.avatar,
             phone: record.phone,
             open_id: record.open_id,
@@ -241,7 +244,7 @@ impl<E: ErrorRenderer> FromRequest<E> for UserToken {
                 let db = &state.db_pool;
                 if let Ok(record) = sqlx::query_as::<_, UserRecord>(
                     r#"
-                    SELECT u.user_id, u.username, u.email, u.nick_name, u.role, u.love_point, u.avatar, u.phone,
+                    SELECT u.user_id, u.username, u.email, u.nick_name, u.role, u.love_point, u.diamond, u.avatar, u.phone,
                            u.open_id, u.status, u.created_at, u.updated_at, u.password_hash,
                            u.password_algo, u.gender, u.birthday, u.username_change, u.login_method,
                            u.last_login_at, u.password_updated_at, u.is_temp_password, u.push_id, u.last_role_switch_at,
