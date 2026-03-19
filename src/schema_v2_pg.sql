@@ -696,6 +696,7 @@ CREATE TABLE group_point_configs (
     confirmed_finished_points INT NOT NULL DEFAULT 10,
     confirmed_unfinished_points INT NOT NULL DEFAULT -5,
     timeout_points INT NOT NULL DEFAULT -3,
+    overdue_unfinished_points INT NOT NULL DEFAULT -10,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
@@ -705,3 +706,4 @@ COMMENT ON COLUMN group_point_configs.breeder_closed_points IS '接单方主动�
 COMMENT ON COLUMN group_point_configs.confirmed_finished_points IS '下单方确认完成默认奖励(通常为正数)';
 COMMENT ON COLUMN group_point_configs.confirmed_unfinished_points IS '下单方确认未完成扣分(通常为负数)';
 COMMENT ON COLUMN group_point_configs.timeout_points IS '接单超时未接单扣分(通常为负数)';
+COMMENT ON COLUMN group_point_configs.overdue_unfinished_points IS '逾期未完成扣分(通常为负数)';

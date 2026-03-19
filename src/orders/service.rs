@@ -1,18 +1,17 @@
-use crate::models::pagination::{decode_cursor, encode_cursor, CursorPage};
-use crate::orders::models::{GroupInfoSimple, OrderItemRecord};
-use crate::users::models::user::UserToken;
 use chrono::{DateTime, Duration, Utc};
 use sqlx::{Acquire, PgPool, Row};
 use std::sync::Arc;
 
 use crate::{
     errors::CustomError,
+    models::pagination::{decode_cursor, encode_cursor, CursorPage},
     orders::models::{
-        OrderStatistics, OrderCreateInput, OrderCursor, OrderItemOut, OrderOutNew, OrderQuery,
-        OrderRatingCreateInput, OrderRatingOut, OrderRecord, OrderStatusEnum,
-        OrderStatusHistoryOut, OrderStatusUpdateInput,
+        GroupInfoSimple, OrderCreateInput, OrderCursor, OrderItemOut, OrderItemRecord, OrderOutNew,
+        OrderQuery, OrderRatingCreateInput, OrderRatingOut, OrderRecord, OrderStatistics,
+        OrderStatusEnum, OrderStatusHistoryOut, OrderStatusUpdateInput,
     },
     services::notifications::{push_order_with_type, OrderPushType},
+    users::models::{group::GroupPointConfig, user::UserToken},
 };
 
 pub fn map_item_record_to_out<'a>(
@@ -33,17 +32,14 @@ pub fn map_item_record_to_out<'a>(
 
 pub struct OrderService;
 impl OrderService {
-    async fn get_group_point_config<'a, E>(
-        executor: E,
-        group_id: Option<i64>,
-    ) -> crate::users::models::group::GroupPointConfig
+    async fn get_group_point_config<'a, E>(executor: E, group_id: Option<i64>) -> GroupPointConfig
     where
         E: sqlx::Executor<'a, Database = sqlx::Postgres>,
     {
-        let mut cfg = crate::users::models::group::GroupPointConfig::default();
+        let mut cfg = GroupPointConfig::default();
         if let Some(gid) = group_id {
-            if let Ok(Some(r)) = sqlx::query_as::<_, crate::users::models::group::GroupPointConfig>(
-                "SELECT group_id, breeder_closed_points, confirmed_finished_points, confirmed_unfinished_points, timeout_points FROM group_point_configs WHERE group_id=$1"
+            if let Ok(Some(r)) = sqlx::query_as::<_, GroupPointConfig>(
+                "SELECT group_id, breeder_closed_points, confirmed_finished_points, confirmed_unfinished_points, timeout_points, overdue_unfinished_points FROM group_point_configs WHERE group_id=$1"
             )
             .bind(gid)
             .fetch_optional(executor)
@@ -462,7 +458,10 @@ impl OrderService {
         Ok(out)
     }
 
-    pub async fn get_order_statistics(db: &PgPool, group_id: i64) -> Result<OrderStatistics, CustomError> {
+    pub async fn get_order_statistics(
+        db: &PgPool,
+        group_id: i64,
+    ) -> Result<OrderStatistics, CustomError> {
         let count = sqlx::query(
             "SELECT
                 COALESCE(SUM(CASE WHEN status = 'PENDING_ACCEPT' THEN 1 ELSE 0 END), 0) as pending_accept,
@@ -880,6 +879,9 @@ impl OrderService {
             if let Err(e) = Self::expire_pending(db).await {
                 log::warn!("order expiration task error: {}", e);
             }
+            if let Err(e) = Self::expire_in_progress(db).await {
+                log::warn!("order in_progress expiration task error: {}", e);
+            }
             tokio::time::sleep(std::time::Duration::from_secs(60)).await;
         }
     }
@@ -967,6 +969,99 @@ impl OrderService {
                     push_order_with_type(oid, OrderPushType::StatusUpdated, pool_clone).await
                 {
                     log::warn!("order expire push error: {}", e);
+                }
+            });
+        }
+        Ok(())
+    }
+
+    async fn expire_in_progress(db: &PgPool) -> Result<(), CustomError> {
+        let now = Utc::now();
+        let mut conn = db.acquire().await?;
+
+        // Find orders that are IN_PROGRESS and past their goal_time
+        let rows = sqlx::query(
+            "SELECT order_id, group_id FROM orders WHERE status='IN_PROGRESS' AND goal_time < $1",
+        )
+        .bind(now)
+        .fetch_all(&mut *conn)
+        .await?;
+        if rows.is_empty() {
+            return Ok(());
+        }
+
+        let mut ids: Vec<i64> = Vec::with_capacity(rows.len());
+        for r in rows {
+            let id: i64 = r.try_get("order_id").unwrap_or_default();
+            ids.push(id);
+
+            // Deduct points for overdue
+            let group_id: Option<i64> = r.try_get("group_id").unwrap_or(None);
+            if let Some(gid) = group_id {
+                let pt_cfg = Self::get_group_point_config(&mut *conn, Some(gid)).await;
+                let overdue_pts = pt_cfg.overdue_unfinished_points;
+
+                let receiver_user_id = match sqlx::query(
+                    "SELECT user_id FROM association_group_members WHERE group_id=$1 AND role_in_group='RECEIVING'::group_member_role_enum LIMIT 1"
+                )
+                .bind(gid)
+                .fetch_optional(&mut *conn)
+                .await
+                {
+                    Ok(Some(r)) => r.get::<i64, _>("user_id"),
+                    _ => continue,
+                };
+
+                let mut tx = conn.begin().await?;
+                if let Ok(user_row) =
+                    sqlx::query("SELECT love_point FROM users WHERE user_id=$1 FOR UPDATE")
+                        .bind(receiver_user_id)
+                        .fetch_one(&mut *tx)
+                        .await
+                {
+                    let current_lp: i32 = user_row.get("love_point");
+                    let balance_after = current_lp + overdue_pts;
+                    sqlx::query("INSERT INTO point_transactions (user_id, amount, type, ref_type, ref_id, balance_after) VALUES ($1,$2,'FINISH_REWARD',1,$3,$4)")
+                        .bind(receiver_user_id)
+                        .bind(overdue_pts)
+                        .bind(id)
+                        .bind(balance_after)
+                        .execute(&mut *tx)
+                        .await?;
+                    sqlx::query("UPDATE users SET love_point=$2 WHERE user_id=$1")
+                        .bind(receiver_user_id)
+                        .bind(balance_after)
+                        .execute(&mut *tx)
+                        .await?;
+                }
+                tx.commit().await?;
+            }
+        }
+
+        let mut tx = conn.begin().await?;
+        for oid in &ids {
+            sqlx::query("UPDATE orders SET status='TIMEOUT', last_status_change_at=NOW(), updated_at=NOW() WHERE order_id=$1")
+                .bind(oid)
+                .execute(&mut *tx)
+                .await?;
+            sqlx::query("INSERT INTO order_status_history (order_id, from_status, to_status, changed_by, remark) VALUES ($1,$2,$3,$4,$5)")
+                .bind(oid)
+                .bind(OrderStatusEnum::InProgress)
+                .bind(OrderStatusEnum::Timeout)
+                .bind(None::<Option<i64>>)
+                .bind(Some("逾期未完成".to_string()))
+                .execute(&mut *tx)
+                .await?;
+        }
+        tx.commit().await?;
+
+        for oid in ids {
+            let pool_clone = db.clone();
+            tokio::spawn(async move {
+                if let Err(e) =
+                    push_order_with_type(oid, OrderPushType::StatusUpdated, pool_clone).await
+                {
+                    log::warn!("order in_progress expire push error: {}", e);
                 }
             });
         }

@@ -675,7 +675,7 @@ impl GroupService {
         cfg.group_id = group_id;
 
         let row = sqlx::query_as::<_, crate::users::models::group::GroupPointConfig>(
-            "SELECT group_id, breeder_closed_points, confirmed_finished_points, confirmed_unfinished_points, timeout_points FROM group_point_configs WHERE group_id=$1"
+            "SELECT group_id, breeder_closed_points, confirmed_finished_points, confirmed_unfinished_points, timeout_points, overdue_unfinished_points FROM group_point_configs WHERE group_id=$1"
         )
         .bind(group_id)
         .fetch_optional(db)
@@ -720,54 +720,42 @@ impl GroupService {
         if existing.is_none() {
             let def = crate::users::models::group::GroupPointConfig::default();
             sqlx::query(
-                "INSERT INTO group_point_configs (group_id, breeder_closed_points, confirmed_finished_points, confirmed_unfinished_points, timeout_points) VALUES ($1, $2, $3, $4, $5)"
+                "INSERT INTO group_point_configs (group_id, breeder_closed_points, confirmed_finished_points, confirmed_unfinished_points, timeout_points, overdue_unfinished_points) VALUES ($1, $2, $3, $4, $5, $6)"
             )
             .bind(group_id)
             .bind(body.breeder_closed_points.unwrap_or(def.breeder_closed_points))
             .bind(body.confirmed_finished_points.unwrap_or(def.confirmed_finished_points))
             .bind(body.confirmed_unfinished_points.unwrap_or(def.confirmed_unfinished_points))
             .bind(body.timeout_points.unwrap_or(def.timeout_points))
+            .bind(body.overdue_unfinished_points.unwrap_or(def.overdue_unfinished_points))
             .execute(&mut *tx)
             .await?;
         } else {
-            let mut update_query = String::from("UPDATE group_point_configs SET updated_at=NOW()");
-            if body.breeder_closed_points.is_some() {
-                update_query.push_str(", breeder_closed_points=$2");
-            }
-            if body.confirmed_finished_points.is_some() {
-                update_query.push_str(", confirmed_finished_points=$3");
-            }
-            if body.confirmed_unfinished_points.is_some() {
-                update_query.push_str(", confirmed_unfinished_points=$4");
-            }
-            if body.timeout_points.is_some() {
-                update_query.push_str(", timeout_points=$5");
-            }
-            update_query.push_str(" WHERE group_id=$1");
-
-            let mut q = sqlx::query(&update_query).bind(group_id);
+            let mut qb = sqlx::QueryBuilder::<sqlx::Postgres>::new("UPDATE group_point_configs SET updated_at=NOW()");
             if let Some(v) = body.breeder_closed_points {
-                q = q.bind(v);
-            } else {
-                q = q.bind(0);
+                qb.push(", breeder_closed_points = ");
+                qb.push_bind(v);
             }
             if let Some(v) = body.confirmed_finished_points {
-                q = q.bind(v);
-            } else {
-                q = q.bind(0);
+                qb.push(", confirmed_finished_points = ");
+                qb.push_bind(v);
             }
             if let Some(v) = body.confirmed_unfinished_points {
-                q = q.bind(v);
-            } else {
-                q = q.bind(0);
+                qb.push(", confirmed_unfinished_points = ");
+                qb.push_bind(v);
             }
             if let Some(v) = body.timeout_points {
-                q = q.bind(v);
-            } else {
-                q = q.bind(0);
+                qb.push(", timeout_points = ");
+                qb.push_bind(v);
             }
+            if let Some(v) = body.overdue_unfinished_points {
+                qb.push(", overdue_unfinished_points = ");
+                qb.push_bind(v);
+            }
+            qb.push(" WHERE group_id = ");
+            qb.push_bind(group_id);
 
-            q.execute(&mut *tx).await?;
+            qb.build().execute(&mut *tx).await?;
         }
 
         tx.commit().await?;
