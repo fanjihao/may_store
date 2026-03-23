@@ -104,6 +104,13 @@ pub struct OrderQuery {
     pub expired_only: Option<bool>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema, utoipa::IntoParams)]
+#[serde(rename_all = "camelCase")]
+#[into_params(parameter_in = Query)]
+pub struct TeamTodayOrdersQuery {
+    pub group_id: i64,
+}
+
 #[derive(Debug, Deserialize, Serialize)]
 pub struct OrderCursor {
     pub created_at: DateTime<Utc>,

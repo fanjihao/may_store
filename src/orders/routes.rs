@@ -5,7 +5,7 @@ use crate::{
     errors::CustomError,
     orders::models::{
         OrderStatistics, OrderCreateInput, OrderOutNew, OrderQuery, OrderRatingCreateInput, OrderRatingOut,
-        OrderStatusUpdateInput,
+        OrderStatusUpdateInput, TeamTodayOrdersQuery,
     },
     users::models::user::UserToken,
 };
@@ -45,6 +45,23 @@ pub async fn get_orders(
 ) -> Result<impl Responder, CustomError> {
     let page = OrderService::get_orders(&state.db_pool, &token, &query.into_inner()).await?;
     Ok(HttpResponse::Ok().json(&page))
+}
+
+#[utoipa::path(
+    get,
+    path = "/orders/team-today",
+    tag = "订单",
+    params(TeamTodayOrdersQuery),
+    responses((status = 200, body = Vec<OrderOutNew>))
+)]
+pub async fn get_team_today_orders(
+    token: UserToken,
+    state: State<Arc<AppState>>,
+    query: Query<TeamTodayOrdersQuery>,
+) -> Result<impl Responder, CustomError> {
+    let q = query.into_inner();
+    let orders = OrderService::get_team_today_orders(&state.db_pool, &token, q.group_id).await?;
+    Ok(HttpResponse::Ok().json(&orders))
 }
 
 #[utoipa::path(

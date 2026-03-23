@@ -218,6 +218,10 @@ fn order_routes(cfg: &mut web::ServiceConfig) {
             .route("", web::post().to(orders::routes::create_order))
             .route("", web::get().to(orders::routes::get_orders))
             .route(
+                "/team-today",
+                web::get().to(orders::routes::get_team_today_orders),
+            )
+            .route(
                 "/status",
                 web::put().to(orders::routes::update_order_status),
             )

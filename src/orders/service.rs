@@ -368,6 +368,126 @@ impl OrderService {
         })
     }
 
+    pub async fn get_team_today_orders(
+        db: &PgPool,
+        token: &UserToken,
+        group_id: i64,
+    ) -> Result<Vec<OrderOutNew>, CustomError> {
+        let user_id = token.user_id as i64;
+
+        let is_member = sqlx::query_scalar::<_, bool>(
+            "SELECT EXISTS(SELECT 1 FROM association_group_members WHERE group_id=$1 AND user_id=$2)"
+        )
+        .bind(group_id)
+        .bind(user_id)
+        .fetch_one(db)
+        .await?;
+
+        if !is_member {
+            return Err(CustomError::BadRequest("无权访问该组订单".into()));
+        }
+
+        let now = Utc::now();
+        let start_of_day = now.date_naive().and_hms_opt(0, 0, 0).unwrap().and_utc();
+        let end_of_day = now.date_naive().and_hms_opt(23, 59, 59).unwrap().and_utc();
+
+        let orders_rows = sqlx::query(
+            "SELECT o.order_id, o.user_id, o.guest_id, o.group_id, o.status, o.goal_time, o.remark, o.points_reward, o.cancel_reason, o.reject_reason, o.last_status_change_at, o.created_at, o.updated_at, \
+            (o.group_id IS NOT NULL AND m.user_id IS NULL) AS is_guest, \
+            g.group_name, \
+            ug.nick_name AS db_guest_nick_name, ug.avatar AS db_guest_avatar, \
+            uc.nick_name AS creator_nick_name, uc.avatar AS creator_avatar \
+            FROM orders o \
+            LEFT JOIN association_group_members m ON o.group_id = m.group_id AND o.user_id = m.user_id \
+            LEFT JOIN association_groups g ON o.group_id = g.group_id \
+            LEFT JOIN users ug ON o.guest_id = ug.user_id \
+            LEFT JOIN users uc ON o.user_id = uc.user_id \
+            WHERE o.group_id = $1 AND o.created_at >= $2 AND o.created_at <= $3 \
+            ORDER BY o.created_at DESC"
+        )
+        .bind(group_id)
+        .bind(start_of_day)
+        .bind(end_of_day)
+        .fetch_all(db)
+        .await?;
+
+        let mut items: Vec<OrderOutNew> = Vec::new();
+        for row in orders_rows {
+            let order = OrderRecord {
+                order_id: row.get("order_id"),
+                user_id: row.get("user_id"),
+                guest_id: row.get("guest_id"),
+                group_id: row.get("group_id"),
+                status: row.get::<OrderStatusEnum, _>("status"),
+                goal_time: row.try_get("goal_time").ok(),
+                remark: row.get("remark"),
+                points_reward: row.get("points_reward"),
+                cancel_reason: row.try_get("cancel_reason").ok(),
+                reject_reason: row.try_get("reject_reason").ok(),
+                last_status_change_at: row.try_get("last_status_change_at").ok(),
+                created_at: row.get("created_at"),
+                updated_at: row.get("updated_at"),
+                is_guest: row.get("is_guest"),
+            };
+
+            let group_id: Option<i64> = row.get("group_id");
+            let group_name: Option<String> = row.try_get("group_name").ok();
+            let group_info = group_id.map(|gid| GroupInfoSimple {
+                group_id: gid,
+                group_name: group_name.clone(),
+            });
+            let db_guest_nick_name: Option<String> = row.try_get("db_guest_nick_name").ok();
+            let db_guest_avatar: Option<String> = row.try_get("db_guest_avatar").ok();
+            let creator_nick_name: Option<String> = row.try_get("creator_nick_name").ok();
+            let creator_avatar: Option<String> = row.try_get("creator_avatar").ok();
+
+            let order_items: Vec<OrderItemOut> = sqlx::query(
+                "SELECT oi.id, oi.food_id, oi.quantity, oi.price, f.food_name, f.food_photo \
+                 FROM order_items oi LEFT JOIN foods f ON f.food_id = oi.food_id WHERE oi.order_id=$1",
+            )
+            .bind(order.order_id)
+            .fetch_all(db)
+            .await?
+            .into_iter()
+            .map(|r| OrderItemOut {
+                id: r.get("id"),
+                food_id: r.get("food_id"),
+                food_name: r.try_get::<String, _>("food_name").ok(),
+                food_photo: r.try_get::<Option<String>, _>("food_photo").ok().flatten(),
+                quantity: r.get("quantity"),
+                price: r.try_get("price").ok(),
+            })
+            .collect();
+
+            let history_rows = sqlx::query(
+                "SELECT h.from_status, h.to_status, u.nick_name, h.remark, h.changed_at \
+                 FROM order_status_history h LEFT JOIN users u ON h.changed_by = u.user_id \
+                 WHERE h.order_id=$1 ORDER BY h.changed_at DESC LIMIT 5",
+            )
+            .bind(order.order_id)
+            .fetch_all(db)
+            .await?;
+            let history = history_rows
+                .into_iter()
+                .map(Self::map_history_row)
+                .collect();
+
+            let mut out = OrderOutNew::from((order, order_items, history));
+            out.group_name = group_name;
+            out.group_info = group_info;
+            out.receiver_nick_name = db_guest_nick_name;
+            out.receiver_avatar = db_guest_avatar;
+            if out.guest_id.is_none() && out.is_guest {
+                out.guest_id = Some(out.user_id);
+                out.receiver_nick_name = creator_nick_name;
+                out.receiver_avatar = creator_avatar;
+            }
+            items.push(out);
+        }
+
+        Ok(items)
+    }
+
     pub async fn get_order_detail(
         db: &PgPool,
         _token: Option<&UserToken>,

@@ -72,6 +72,7 @@ use crate::{dashboard, foods, game_im, orders, upload, users};
         orders::routes::get_order_detail,
         orders::routes::delete_order,
         orders::routes::get_order_statistics,
+        orders::routes::get_team_today_orders,
 
         // 评分 (Rating)
         orders::routes::create_order_rating,
@@ -175,6 +176,7 @@ use crate::{dashboard, foods, game_im, orders, upload, users};
             orders::models::OrderRatingCreateInput,
             orders::models::OrderRatingOut,
             orders::models::OrderStatistics,
+            orders::models::TeamTodayOrdersQuery,
         ),
         // 心愿模型
         schemas(
