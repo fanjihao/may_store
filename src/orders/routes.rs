@@ -82,9 +82,9 @@ pub async fn get_order_detail(
 
 #[utoipa::path(
     get,
-    path = "/orders-statistics/{group_id}",
+    path = "/orders-statistics/{groupId}",
     tag = "订单",
-    params(("group_id" = i64, Path, description = "组ID")),
+    params(("groupId" = i64, Path, description = "组ID")),
     responses((status = 200, body = OrderStatistics))
 )]
 pub async fn get_order_statistics(
@@ -132,9 +132,9 @@ pub async fn delete_order(
 
 #[utoipa::path(
     post,
-    path = "/orders-rating/{order_id}",
+    path = "/orders-rating/{id}",
     tag = "评分",
-    params(("order_id" = i64, Path, description = "订单ID")),
+    params(("id" = i64, Path, description = "订单ID")),
     request_body = OrderRatingCreateInput,
     responses((status = 201, body = OrderRatingOut))
 )]
@@ -156,9 +156,9 @@ pub async fn create_order_rating(
 
 #[utoipa::path(
     get,
-    path = "/orders-rating/{order_id}",
+    path = "/orders-rating/{id}",
     tag = "评分",
-    params(("order_id" = i64, Path, description = "订单ID")),
+    params(("id" = i64, Path, description = "订单ID")),
     responses((status = 200, body = OrderRatingOut))
 )]
 pub async fn get_order_rating(

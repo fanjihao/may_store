@@ -1,4 +1,4 @@
-use chrono::{DateTime, Duration, Utc};
+use chrono::{DateTime, Datelike, Duration, Local, TimeZone, Utc};
 use sqlx::{Acquire, PgPool, Row};
 use std::sync::Arc;
 
@@ -387,9 +387,31 @@ impl OrderService {
             return Err(CustomError::BadRequest("无权访问该组订单".into()));
         }
 
-        let now = Utc::now();
-        let start_of_day = now.date_naive().and_hms_opt(0, 0, 0).unwrap().and_utc();
-        let end_of_day = now.date_naive().and_hms_opt(23, 59, 59).unwrap().and_utc();
+        let now = Local::now();
+        let start_of_day = Local
+            .with_ymd_and_hms(
+                Datelike::year(&now),
+                Datelike::month(&now),
+                Datelike::day(&now),
+                0,
+                0,
+                0,
+            )
+            .single()
+            .unwrap()
+            .with_timezone(&Utc);
+        let end_of_day = Local
+            .with_ymd_and_hms(
+                Datelike::year(&now),
+                Datelike::month(&now),
+                Datelike::day(&now),
+                23,
+                59,
+                59,
+            )
+            .single()
+            .unwrap()
+            .with_timezone(&Utc);
 
         let orders_rows = sqlx::query(
             "SELECT o.order_id, o.user_id, o.guest_id, o.group_id, o.status, o.goal_time, o.remark, o.points_reward, o.cancel_reason, o.reject_reason, o.last_status_change_at, o.created_at, o.updated_at, \
@@ -402,8 +424,8 @@ impl OrderService {
             LEFT JOIN association_groups g ON o.group_id = g.group_id \
             LEFT JOIN users ug ON o.guest_id = ug.user_id \
             LEFT JOIN users uc ON o.user_id = uc.user_id \
-            WHERE o.group_id = $1 AND o.created_at >= $2 AND o.created_at <= $3 \
-            ORDER BY o.created_at DESC"
+            WHERE o.group_id = $1 AND o.goal_time >= $2 AND o.goal_time <= $3 \
+            ORDER BY o.goal_time DESC"
         )
         .bind(group_id)
         .bind(start_of_day)
