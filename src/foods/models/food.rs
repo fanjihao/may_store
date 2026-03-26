@@ -1,3 +1,4 @@
+use super::ingredient::IngredientOut;
 use super::tag::{FoodTagOut, TagRecord};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -70,7 +71,7 @@ pub struct FoodOut {
     pub food_id: i64,
     pub food_name: String,
     pub food_photo: Option<String>,
-    pub ingredients: Option<String>,
+    pub ingredients: Vec<IngredientOut>,
     pub steps: Option<String>,
     pub food_status: FoodStatusEnum,
     pub apply_status: ApplyStatusEnum,
@@ -98,7 +99,7 @@ impl From<(FoodRecord, Option<TagRecord>, Vec<MarkTypeEnum>)> for FoodOut {
             food_id: f.food_id,
             food_name: f.food_name,
             food_photo: f.food_photo,
-            ingredients: f.ingredients,
+            ingredients: Vec::new(),
             steps: f.steps,
             food_status: f.food_status,
             apply_status: f.apply_status,
@@ -164,7 +165,7 @@ impl FoodOut {
             food_id: row.food_id,
             food_name: row.food_name,
             food_photo: row.food_photo,
-            ingredients: row.ingredients,
+            ingredients: Vec::new(),
             steps: row.steps,
             food_status: row.food_status,
             apply_status: row.apply_status,
@@ -194,7 +195,7 @@ impl FoodOut {
 pub struct FoodCreateInput {
     pub food_name: String,
     pub food_photo: Option<String>,
-    pub ingredients: Option<String>,
+    pub ingredients: Option<Vec<i64>>,
     pub steps: Option<String>,
     pub tag_id: Option<i64>,
     pub group_id: Option<i64>,
@@ -206,7 +207,7 @@ pub struct FoodUpdateInput {
     pub food_id: i64,
     pub food_name: Option<String>,
     pub food_photo: Option<String>,
-    pub ingredients: Option<String>,
+    pub ingredients: Option<Vec<i64>>,
     pub steps: Option<String>,
     pub tag_id: Option<i64>,
     pub apply_remark: Option<String>,

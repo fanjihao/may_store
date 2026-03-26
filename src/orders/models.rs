@@ -1,5 +1,6 @@
 // ================= New Order Models (Refactored to new PostgreSQL schema) =================
 use chrono::{DateTime, Utc};
+use serde::de::{self, Deserializer};
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
@@ -109,6 +110,19 @@ pub struct OrderQuery {
 #[into_params(parameter_in = Query)]
 pub struct TeamTodayOrdersQuery {
     pub group_id: i64,
+    #[serde(default, deserialize_with = "deserialize_status_vec")]
+    pub status: Option<Vec<OrderStatusEnum>>,
+}
+
+fn deserialize_status_vec<'de, D>(deserializer: D) -> Result<Option<Vec<OrderStatusEnum>>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let s = String::deserialize(deserializer)?;
+    if s.is_empty() {
+        return Ok(None);
+    }
+    serde_json::from_str(&s).map(Some).map_err(de::Error::custom)
 }
 
 #[derive(Debug, Deserialize, Serialize)]

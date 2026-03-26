@@ -8,7 +8,7 @@ use crate::{
     orders::models::{
         GroupInfoSimple, OrderCreateInput, OrderCursor, OrderItemOut, OrderItemRecord, OrderOutNew,
         OrderQuery, OrderRatingCreateInput, OrderRatingOut, OrderRecord, OrderStatistics,
-        OrderStatusEnum, OrderStatusHistoryOut, OrderStatusUpdateInput,
+        OrderStatusEnum, OrderStatusHistoryOut, OrderStatusUpdateInput, TeamTodayOrdersQuery,
     },
     services::notifications::{push_order_with_type, OrderPushType},
     users::models::{group::GroupPointConfig, user::UserToken},
@@ -371,9 +371,10 @@ impl OrderService {
     pub async fn get_team_today_orders(
         db: &PgPool,
         token: &UserToken,
-        group_id: i64,
+        query: &TeamTodayOrdersQuery,
     ) -> Result<Vec<OrderOutNew>, CustomError> {
         let user_id = token.user_id as i64;
+        let group_id = query.group_id;
 
         let is_member = sqlx::query_scalar::<_, bool>(
             "SELECT EXISTS(SELECT 1 FROM association_group_members WHERE group_id=$1 AND user_id=$2)"
@@ -413,7 +414,7 @@ impl OrderService {
             .unwrap()
             .with_timezone(&Utc);
 
-        let orders_rows = sqlx::query(
+        let mut qb = sqlx::QueryBuilder::<sqlx::Postgres>::new(
             "SELECT o.order_id, o.user_id, o.guest_id, o.group_id, o.status, o.goal_time, o.remark, o.points_reward, o.cancel_reason, o.reject_reason, o.last_status_change_at, o.created_at, o.updated_at, \
             (o.group_id IS NOT NULL AND m.user_id IS NULL) AS is_guest, \
             g.group_name, \
@@ -424,14 +425,28 @@ impl OrderService {
             LEFT JOIN association_groups g ON o.group_id = g.group_id \
             LEFT JOIN users ug ON o.guest_id = ug.user_id \
             LEFT JOIN users uc ON o.user_id = uc.user_id \
-            WHERE o.group_id = $1 AND o.goal_time >= $2 AND o.goal_time <= $3 \
-            ORDER BY o.goal_time DESC"
-        )
-        .bind(group_id)
-        .bind(start_of_day)
-        .bind(end_of_day)
-        .fetch_all(db)
-        .await?;
+            WHERE o.group_id = "
+        );
+        qb.push_bind(group_id);
+        qb.push(" AND o.goal_time >= ");
+        qb.push_bind(start_of_day);
+        qb.push(" AND o.goal_time <= ");
+        qb.push_bind(end_of_day);
+
+        if let Some(statuses) = &query.status {
+            if !statuses.is_empty() {
+                qb.push(" AND o.status IN (");
+                let mut separated = qb.separated(", ");
+                for status in statuses {
+                    separated.push_bind(*status);
+                }
+                qb.push(")");
+            }
+        }
+
+        qb.push(" ORDER BY o.goal_time DESC");
+
+        let orders_rows = qb.build().fetch_all(db).await?;
 
         let mut items: Vec<OrderOutNew> = Vec::new();
         for row in orders_rows {

@@ -60,7 +60,7 @@ pub async fn get_team_today_orders(
     query: Query<TeamTodayOrdersQuery>,
 ) -> Result<impl Responder, CustomError> {
     let q = query.into_inner();
-    let orders = OrderService::get_team_today_orders(&state.db_pool, &token, q.group_id).await?;
+    let orders = OrderService::get_team_today_orders(&state.db_pool, &token, &q).await?;
     Ok(HttpResponse::Ok().json(&orders))
 }
 

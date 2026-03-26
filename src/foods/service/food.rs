@@ -5,14 +5,90 @@ use crate::foods::models::food::{
     FoodCreateInput, FoodFilterQuery, FoodOut, FoodRecord, FoodStatusEnum, FoodUpdateInput,
     FoodWithStatsRecord, MarkTypeEnum, SubmitRoleEnum,
 };
+use crate::foods::models::ingredient::{IngredientOut, IngredientRecord};
 use crate::foods::models::tag::TagRecord;
 use crate::models::pagination::{decode_cursor, encode_cursor, CursorPage};
 use crate::users::models::user::UserToken;
 use sqlx::{PgPool, QueryBuilder, Row};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 pub struct FoodService;
 impl FoodService {
+    fn parse_ingredient_ids(input: &str) -> Vec<i64> {
+        if let Ok(ids) = serde_json::from_str::<Vec<i64>>(input) {
+            return ids;
+        }
+        if let Ok(strs) = serde_json::from_str::<Vec<String>>(input) {
+            return strs.iter().filter_map(|s| s.parse::<i64>().ok()).collect();
+        }
+        input
+            .split(',')
+            .filter_map(|s| s.trim().parse::<i64>().ok())
+            .collect()
+    }
+
+    async fn hydrate_ingredients(
+        db: &PgPool,
+        items: &mut Vec<FoodOut>,
+        raw_ingredients: Vec<Option<String>>,
+    ) -> Result<(), CustomError> {
+        let mut all_ids = HashSet::new();
+        let parsed_ids_list: Vec<Vec<i64>> = raw_ingredients
+            .into_iter()
+            .map(|opt| {
+                if let Some(s) = opt {
+                    let ids = Self::parse_ingredient_ids(&s);
+                    for id in &ids {
+                        all_ids.insert(*id);
+                    }
+                    ids
+                } else {
+                    Vec::new()
+                }
+            })
+            .collect();
+
+        if all_ids.is_empty() {
+            return Ok(());
+        }
+
+        let id_vec: Vec<i64> = all_ids.into_iter().collect();
+        let ing_records = sqlx::query_as::<_, IngredientRecord>(
+            "SELECT * FROM ingredients WHERE ingredient_id = ANY($1)",
+        )
+        .bind(&id_vec)
+        .fetch_all(db)
+        .await?;
+
+        let ing_map: HashMap<i64, IngredientOut> = ing_records
+            .into_iter()
+            .map(|r| {
+                (
+                    r.ingredient_id,
+                    IngredientOut {
+                        ingredient_id: r.ingredient_id,
+                        name: r.name,
+                        group_id: r.group_id,
+                        unit: r.unit,
+                        calories: r.calories,
+                        description: r.description,
+                        icon: r.icon,
+                        sort: r.sort,
+                    },
+                )
+            })
+            .collect();
+
+        for (item, parsed_ids) in items.iter_mut().zip(parsed_ids_list) {
+            item.ingredients = parsed_ids
+                .into_iter()
+                .filter_map(|id| ing_map.get(&id).cloned())
+                .collect();
+        }
+
+        Ok(())
+    }
+
     pub async fn create_food(
         db: &PgPool,
         token: &UserToken,
@@ -47,13 +123,18 @@ impl FoodService {
             FoodStatusEnum::AUDITING
         };
 
+        let ingredients_str = data
+            .ingredients
+            .as_ref()
+            .map(|v| serde_json::to_string(v).unwrap_or_default());
+
         let rec = sqlx::query_as::<_, FoodRecord>(
             "INSERT INTO foods (food_name, food_photo, ingredients, steps, submit_role, apply_status, food_status, created_by, owner_user_id, group_id, apply_remark, tag_id) \
              VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$8,$9,$10,$11) RETURNING food_id, food_name, food_photo, ingredients, steps, food_status, submit_role, apply_status, apply_remark, created_by, owner_user_id, group_id, approved_at, approved_by, is_del, created_at, updated_at, tag_id"
         )
         .bind(&data.food_name)
         .bind(&data.food_photo)
-        .bind(&data.ingredients)
+        .bind(&ingredients_str)
         .bind(&data.steps)
         .bind(submit_role)
         .bind(apply_status)
@@ -85,17 +166,15 @@ impl FoodService {
         .map(|r| r.get::<String, _>(0))
         .collect();
 
-        let mark_enums = marks
-            .into_iter()
-            .filter_map(|s| match s.as_str() {
-                "LIKE" => Some(MarkTypeEnum::LIKE),
-                "NOT_RECOMMEND" => Some(MarkTypeEnum::NotRecommend),
-                _ => None,
-            })
-            .collect();
+        let mark_enums = mark_enums_from_strings(marks);
 
+        let raw_ing = rec.ingredients.clone();
         tx.commit().await?;
-        Ok(FoodOut::from((rec, tag_row, mark_enums)))
+
+        let out = FoodOut::from((rec, tag_row, mark_enums));
+        let mut items = vec![out];
+        Self::hydrate_ingredients(db, &mut items, vec![raw_ing]).await?;
+        Ok(items.pop().unwrap())
     }
 
     pub async fn get_foods(
@@ -201,7 +280,8 @@ impl FoodService {
             }
         }
 
-        let items = rows
+        let raw_ings: Vec<Option<String>> = rows.iter().map(|r| r.ingredients.clone()).collect();
+        let mut items: Vec<FoodOut> = rows
             .into_iter()
             .map(|rec| {
                 let tag = rec.tag_id.and_then(|tid| tags_map.get(&tid).cloned());
@@ -209,6 +289,8 @@ impl FoodService {
                 FoodOut::from_with_stats(rec, tag, mark_vec)
             })
             .collect();
+
+        Self::hydrate_ingredients(db, &mut items, raw_ings).await?;
 
         Ok(CursorPage {
             items,
@@ -252,19 +334,16 @@ impl FoodService {
             .into_iter()
             .map(|r| r.get::<String, _>(0))
             .collect();
-            marks
-                .into_iter()
-                .filter_map(|s| match s.as_str() {
-                    "LIKE" => Some(MarkTypeEnum::LIKE),
-                    "NOT_RECOMMEND" => Some(MarkTypeEnum::NotRecommend),
-                    _ => None,
-                })
-                .collect()
+            mark_enums_from_strings(marks)
         } else {
             Vec::new()
         };
 
-        Ok(FoodOut::from_with_stats(rec, tag_row, mark_enums))
+        let raw_ing = rec.ingredients.clone();
+        let out = FoodOut::from_with_stats(rec, tag_row, mark_enums);
+        let mut items = vec![out];
+        Self::hydrate_ingredients(db, &mut items, vec![raw_ing]).await?;
+        Ok(items.pop().unwrap())
     }
 
     pub async fn update_food(
@@ -339,7 +418,7 @@ impl FoodService {
             rec.food_photo = Some(photo.clone());
         }
         if let Some(ing) = &data.ingredients {
-            rec.ingredients = Some(ing.clone());
+            rec.ingredients = Some(serde_json::to_string(ing).unwrap_or_default());
         }
         if let Some(st) = &data.steps {
             rec.steps = Some(st.clone());
@@ -392,17 +471,15 @@ impl FoodService {
         .map(|r| r.get::<String, _>(0))
         .collect();
 
-        let mark_enums = marks
-            .into_iter()
-            .filter_map(|s| match s.as_str() {
-                "LIKE" => Some(MarkTypeEnum::LIKE),
-                "NOT_RECOMMEND" => Some(MarkTypeEnum::NotRecommend),
-                _ => None,
-            })
-            .collect();
+        let mark_enums = mark_enums_from_strings(marks);
 
+        let raw_ing = rec.ingredients.clone();
         tx.commit().await?;
-        Ok(FoodOut::from((rec, tag_row, mark_enums)))
+
+        let out = FoodOut::from((rec, tag_row, mark_enums));
+        let mut items = vec![out];
+        Self::hydrate_ingredients(db, &mut items, vec![raw_ing]).await?;
+        Ok(items.pop().unwrap())
     }
 
     pub async fn mark_food(
@@ -481,7 +558,9 @@ impl FoodService {
         };
 
         let mut items = Vec::new();
+        let mut raw_ings = Vec::new();
         for rec in rows {
+            raw_ings.push(rec.ingredients.clone());
             let tag_row: Option<TagRecord> = if let Some(tid) = rec.tag_id {
                 sqlx::query_as("SELECT * FROM tags WHERE tag_id=$1")
                     .bind(tid)
@@ -496,6 +575,8 @@ impl FoodService {
                 vec![MarkTypeEnum::LIKE],
             ));
         }
+
+        Self::hydrate_ingredients(db, &mut items, raw_ings).await?;
 
         Ok(CursorPage {
             items,
@@ -600,3 +681,15 @@ impl FoodService {
         Ok(())
     }
 }
+
+fn mark_enums_from_strings(marks: Vec<String>) -> Vec<MarkTypeEnum> {
+    marks
+        .into_iter()
+        .filter_map(|s| match s.as_str() {
+            "LIKE" => Some(MarkTypeEnum::LIKE),
+            "NOT_RECOMMEND" => Some(MarkTypeEnum::NotRecommend),
+            _ => None,
+        })
+        .collect()
+}
+
