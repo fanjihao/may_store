@@ -1,6 +1,6 @@
 use crate::{
     config::AppState,
-    dashboard, foods, game_im, game_ws,
+    dashboard, foods, footprint, game_im, game_ws,
     openapi::{openapi_json, serve_swagger},
     orders, upload, users, wishes, wx,
 };
@@ -27,6 +27,7 @@ pub fn route(_state: Arc<AppState>, cfg: &mut web::ServiceConfig) {
     checkin_routes(cfg);
     wechat_routes(cfg);
     dashboard_routes(cfg);
+    footprint_routes(cfg);
 }
 
 /// 游戏 (Game)
@@ -49,6 +50,11 @@ fn game_routes(cfg: &mut web::ServiceConfig) {
     cfg.service(
         web::resource("/game/rooms/{group_id}/vote").route(web::post().to(game_im::routes::vote)),
     );
+}
+
+/// 足迹 (Footprint)
+fn footprint_routes(cfg: &mut web::ServiceConfig) {
+    footprint::footprint_routes(cfg);
 }
 
 /// 用户 (User)

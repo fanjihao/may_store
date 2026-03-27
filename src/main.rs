@@ -18,6 +18,7 @@ mod orders;
 mod services; // 新增服务模块用于通知推送
 mod upload;
 mod users;
+mod footprint;
 mod wishes; // 心愿与兑换模块
 mod wx; // 看板与组活动
 

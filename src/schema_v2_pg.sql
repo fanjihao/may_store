@@ -711,3 +711,85 @@ COMMENT ON COLUMN group_point_configs.confirmed_unfinished_points IS '下单方�
 COMMENT ON COLUMN group_point_configs.timeout_points IS '接单超时未接单扣分(通常为负数)';
 COMMENT ON COLUMN group_point_configs.overdue_unfinished_points IS '逾期未完成扣分(通常为负数)';
 COMMENT ON COLUMN group_point_configs.daily_checkin_rewards IS '每日签到奖励配置(仅管理员)';
+
+-- ================= FOOTPRINT & DIAMONDS =================
+CREATE TABLE user_diamond (
+    id BIGSERIAL PRIMARY KEY,
+    user_id BIGINT NOT NULL UNIQUE REFERENCES users(user_id) ON DELETE CASCADE,
+    diamond_balance INT NOT NULL DEFAULT 0,
+    total_get INT NOT NULL DEFAULT 0,
+    total_consume INT NOT NULL DEFAULT 0,
+    create_time TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    update_time TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+COMMENT ON TABLE user_diamond IS '用户钻石余额表';
+COMMENT ON COLUMN user_diamond.user_id IS '用户ID';
+COMMENT ON COLUMN user_diamond.diamond_balance IS '当前钻石余额';
+
+CREATE TABLE diamond_flow (
+    id BIGSERIAL PRIMARY KEY,
+    flow_no VARCHAR(64) NOT NULL UNIQUE,
+    user_id BIGINT NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+    type SMALLINT NOT NULL, -- 1: 获取, 2: 消耗
+    scene VARCHAR(32) NOT NULL, -- sign: 签到, record: 记录, share: 分享, expand: 扩容
+    diamond_num INT NOT NULL,
+    balance_after INT NOT NULL,
+    relation_id BIGINT, -- 关联业务ID（如订单ID、记录ID等）
+    remark VARCHAR(255),
+    create_time TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+COMMENT ON TABLE diamond_flow IS '钻石流水记录表';
+CREATE INDEX idx_diamond_flow_user_id ON diamond_flow(user_id);
+
+CREATE TABLE record_group (
+    id BIGSERIAL PRIMARY KEY,
+    group_id BIGINT NOT NULL REFERENCES association_groups(group_id) ON DELETE CASCADE,
+    group_name VARCHAR(50) NOT NULL,
+    group_type SMALLINT NOT NULL, -- 1: 免费默认
+    max_capacity INT NOT NULL DEFAULT 50,
+    current_count INT NOT NULL DEFAULT 0,
+    status SMALLINT NOT NULL DEFAULT 1, -- 0: 禁用, 1: 正常
+    create_time TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    update_time TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE(group_id, group_name)
+);
+COMMENT ON TABLE record_group IS '足迹记录分组表（如：干饭日常）';
+CREATE INDEX idx_record_group_group_id ON record_group(group_id);
+
+CREATE TABLE user_record (
+    id BIGSERIAL PRIMARY KEY,
+    group_id BIGINT NOT NULL REFERENCES association_groups(group_id) ON DELETE CASCADE,
+    record_group_id BIGINT NOT NULL REFERENCES record_group(id) ON DELETE CASCADE,
+    user_id BIGINT NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+    order_id BIGINT UNIQUE REFERENCES orders(order_id) ON DELETE SET NULL,
+    images TEXT NOT NULL, -- 图片URL，逗号分隔
+    content TEXT,
+    address VARCHAR(255),
+    record_time TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    like_count INT NOT NULL DEFAULT 0,
+    comment_count INT NOT NULL DEFAULT 0,
+    is_draft SMALLINT NOT NULL DEFAULT 0, -- 0: 正式记录, 1: 草稿
+    create_time TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    update_time TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+COMMENT ON TABLE user_record IS '用户足迹记录表';
+CREATE INDEX idx_user_record_group_id ON user_record(group_id);
+CREATE INDEX idx_user_record_rg_id ON user_record(record_group_id);
+
+CREATE TABLE record_comment (
+    id BIGSERIAL PRIMARY KEY,
+    record_id BIGINT NOT NULL REFERENCES user_record(id) ON DELETE CASCADE,
+    user_id BIGINT NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+    content VARCHAR(500) NOT NULL,
+    create_time TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+COMMENT ON TABLE record_comment IS '记录评论表';
+
+CREATE TABLE record_like (
+    id BIGSERIAL PRIMARY KEY,
+    record_id BIGINT NOT NULL REFERENCES user_record(id) ON DELETE CASCADE,
+    user_id BIGINT NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+    create_time TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE(record_id, user_id)
+);
+COMMENT ON TABLE record_like IS '记录点赞表';

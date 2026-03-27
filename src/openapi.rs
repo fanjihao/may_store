@@ -4,7 +4,7 @@ use utoipa::openapi::security::{ApiKey, ApiKeyValue, SecurityScheme};
 use utoipa::{Modify, OpenApi};
 
 // Re-export model modules for macro path resolution
-use crate::{dashboard, foods, game_im, orders, upload, users};
+use crate::{dashboard, foods, footprint, game_im, orders, upload, users};
 
 #[derive(OpenApi)]
 #[openapi(
@@ -105,6 +105,13 @@ use crate::{dashboard, foods, game_im, orders, upload, users};
         users::routes::sign::sign_in,
         users::routes::sign::get_sign_info,
 
+        // 足迹 (Footprint)
+        footprint::routes::check_permission,
+        footprint::routes::get_overview,
+        footprint::routes::get_groups,
+        footprint::routes::get_records,
+        footprint::routes::submit_record,
+
         // 上传
         upload::routes::get_qiniu_token,
     ),
@@ -199,6 +206,19 @@ use crate::{dashboard, foods, game_im, orders, upload, users};
             dashboard::models::DateFoodsResponse,
             dashboard::models::DateFoodOut,
 
+            // 足迹模型
+            footprint::models::FootprintOverview,
+            footprint::models::RecordGroup,
+            footprint::models::UserRecord,
+            footprint::models::RecordOut,
+            footprint::models::RecordCreateInput,
+            footprint::models::CheckPermissionResponse,
+            footprint::models::SubmitRecordResponse,
+            footprint::models::DraftConfirmInput,
+            footprint::models::CapacityExpandInput,
+            footprint::models::UserDiamond,
+            footprint::models::DiamondFlow,
+
             // IM
             game_im::models::ImUserSigOut,
             game_im::models::ImRoomOut,
@@ -224,6 +244,7 @@ use crate::{dashboard, foods, game_im, orders, upload, users};
         (name = "微信", description = "微信服务与消息模板接口"),
         (name = "看板", description = "数据概览与组内动态接口"),
         (name = "签到", description = "签到与打卡相关接口"),
+        (name = "足迹", description = "记录我们的足迹相关接口"),
     ),
     servers((url = "http://localhost:9831", description = "本地服务器"))
 )]

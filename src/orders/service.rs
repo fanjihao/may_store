@@ -4,6 +4,7 @@ use std::sync::Arc;
 
 use crate::{
     errors::CustomError,
+    footprint::service::FootprintService,
     models::pagination::{decode_cursor, encode_cursor, CursorPage},
     orders::models::{
         GroupInfoSimple, OrderCreateInput, OrderCursor, OrderItemOut, OrderItemRecord, OrderOutNew,
@@ -716,6 +717,14 @@ impl OrderService {
         if matches!(data.to_status, OrderStatusEnum::ConfirmedFinished)
             && !matches!(from_status, OrderStatusEnum::ConfirmedFinished)
         {
+            let oid = order.order_id;
+            let pool_clone = db.clone();
+            tokio::spawn(async move {
+                if let Err(e) = FootprintService::create_draft_from_order(&pool_clone, oid).await {
+                    log::warn!("Failed to create footprint draft from order {}: {}", oid, e);
+                }
+            });
+
             let items: Vec<(i64, i32)> =
                 sqlx::query_as("SELECT food_id, quantity FROM order_items WHERE order_id=$1")
                     .bind(order.order_id)

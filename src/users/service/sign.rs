@@ -1,6 +1,7 @@
 use crate::{
     config::AppState,
     errors::CustomError,
+    footprint::service::FootprintService,
     users::models::sign::{SignInResponse, SignInfoResponse, SignRecordOut},
     users::models::user::{DailyCheckinOut, UserToken},
 };
@@ -189,8 +190,17 @@ impl SignService {
             .execute(&mut *tx)
             .await?;
 
-        // 由于不再增加爱心积分，移除 point_transactions 的记录逻辑，或者以后如果有 diamond_transactions 再加
-        // 既然签到的不再记录到爱心积分流水，原有的 INSERT INTO point_transactions 移除
+        // 同步增加足迹系统的钻石流水
+        if let Err(e) = FootprintService::award_diamonds(
+            &mut tx,
+            user_id,
+            diamonds_earned,
+            "sign",
+            Some(sign_id),
+            Some("签到奖励".into()),
+        ).await {
+            log::warn!("Failed to record footprint diamond flow for sign {}: {}", sign_id, e);
+        }
 
         tx.commit().await?;
 
