@@ -402,21 +402,29 @@ impl GroupService {
     ) -> Result<GroupInfoOut, CustomError> {
         let db = &state.db_pool;
         let base = sqlx::query(
-        "SELECT group_id, invite_code, group_name, group_type::text, status, created_at, updated_at FROM association_groups WHERE group_id=$1"
-    )
-    .bind(group_id)
-    .fetch_optional(db)
-    .await?;
+            "SELECT 
+                group_id, invite_code, group_name, group_type::text, status, created_at, 
+                updated_at 
+            FROM association_groups WHERE group_id=$1",
+        )
+        .bind(group_id)
+        .fetch_optional(db)
+        .await?;
         let g = match base {
             Some(r) => r,
             None => return Err(CustomError::BadRequest("群组不存在".into())),
         };
         let member_rows = sqlx::query(
-        "SELECT agm.user_id, u.nick_name, u.avatar, agm.role_in_group::text, agm.is_primary FROM association_group_members agm LEFT JOIN users u ON u.user_id=agm.user_id WHERE agm.group_id=$1 ORDER BY agm.is_primary DESC, agm.user_id"
-    )
-    .bind(group_id)
-    .fetch_all(db)
-    .await?;
+            "SELECT 
+                agm.user_id, u.nick_name, u.avatar, agm.role_in_group::text, agm.is_primary 
+            FROM association_group_members agm 
+            LEFT JOIN users u ON u.user_id=agm.user_id 
+            WHERE agm.group_id=$1 
+            ORDER BY agm.is_primary DESC, agm.user_id",
+        )
+        .bind(group_id)
+        .fetch_all(db)
+        .await?;
         let mut members = Vec::with_capacity(member_rows.len());
         for r in member_rows {
             members.push(GroupMemberOut {
@@ -430,20 +438,18 @@ impl GroupService {
                 is_primary: r.get("is_primary"),
             });
         }
-        let member_ids: Vec<i64> = members.iter().map(|m| m.user_id).collect();
-        let stats = if member_ids.is_empty() {
-            (0i64, 0i64)
-        } else {
-            let total: i64 =
-                sqlx::query_scalar("SELECT COUNT(*) FROM orders WHERE user_id = ANY($1)")
-                    .bind(&member_ids)
-                    .fetch_one(db)
-                    .await
-                    .unwrap_or(0);
-            let completed: i64 = sqlx::query_scalar(
-                "SELECT COUNT(*) FROM orders WHERE user_id = ANY($1) AND status = 'FINISHED'",
+        let stats = {
+            let total: i64 = sqlx::query_scalar(
+                "SELECT COUNT(*) FROM orders WHERE group_id = $1",
             )
-            .bind(&member_ids)
+            .bind(group_id)
+            .fetch_one(db)
+            .await
+            .unwrap_or(0);
+            let completed: i64 = sqlx::query_scalar(
+                "SELECT COUNT(*) FROM orders WHERE group_id = $1 AND status = 'CONFIRMED_FINISHED'",
+            )
+            .bind(group_id)
             .fetch_one(db)
             .await
             .unwrap_or(0);
@@ -732,7 +738,9 @@ impl GroupService {
             .execute(&mut *tx)
             .await?;
         } else {
-            let mut qb = sqlx::QueryBuilder::<sqlx::Postgres>::new("UPDATE group_point_configs SET updated_at=NOW()");
+            let mut qb = sqlx::QueryBuilder::<sqlx::Postgres>::new(
+                "UPDATE group_point_configs SET updated_at=NOW()",
+            );
             if let Some(v) = body.breeder_closed_points {
                 qb.push(", breeder_closed_points = ");
                 qb.push_bind(v);
