@@ -110,6 +110,8 @@ CREATE TABLE association_groups (
     status SMALLINT NOT NULL DEFAULT 1,
     invite_code VARCHAR(32),
     -- 1活跃 0关闭
+    footprint_capacity INT NOT NULL DEFAULT 10,
+    footprint_count INT NOT NULL DEFAULT 0,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
@@ -119,6 +121,8 @@ COMMENT ON COLUMN association_groups.group_name IS '组名称';
 COMMENT ON COLUMN association_groups.group_type IS '组类型：PAIR/FAMILY/TEAM';
 COMMENT ON COLUMN association_groups.status IS '状态：1活跃 0关闭';
 COMMENT ON COLUMN association_groups.invite_code IS '做客邀请码';
+COMMENT ON COLUMN association_groups.footprint_capacity IS '足迹全局容量';
+COMMENT ON COLUMN association_groups.footprint_count IS '当前足迹记录总数';
 COMMENT ON COLUMN association_groups.created_at IS '创建时间';
 COMMENT ON COLUMN association_groups.updated_at IS '更新时间';
 CREATE TABLE association_group_members (
@@ -699,6 +703,8 @@ CREATE TABLE group_point_configs (
     confirmed_unfinished_points INT NOT NULL DEFAULT -5,
     timeout_points INT NOT NULL DEFAULT -3,
     overdue_unfinished_points INT NOT NULL DEFAULT -10,
+    unlock_card_diamond_cost INT NOT NULL DEFAULT 100,
+    default_footprint_capacity INT NOT NULL DEFAULT 10,
     daily_checkin_rewards INT[] NOT NULL DEFAULT '{5,6,7,8,9,10,20}',
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
@@ -710,6 +716,7 @@ COMMENT ON COLUMN group_point_configs.confirmed_finished_points IS '下单方确
 COMMENT ON COLUMN group_point_configs.confirmed_unfinished_points IS '下单方确认未完成扣分(通常为负数)';
 COMMENT ON COLUMN group_point_configs.timeout_points IS '接单超时未接单扣分(通常为负数)';
 COMMENT ON COLUMN group_point_configs.overdue_unfinished_points IS '逾期未完成扣分(通常为负数)';
+COMMENT ON COLUMN group_point_configs.unlock_card_diamond_cost IS '解锁足迹容量消耗钻石数量';
 COMMENT ON COLUMN group_point_configs.daily_checkin_rewards IS '每日签到奖励配置(仅管理员)';
 
 -- ================= FOOTPRINT & DIAMONDS =================
@@ -762,6 +769,7 @@ CREATE TABLE user_record (
     record_group_id BIGINT NOT NULL REFERENCES record_group(id) ON DELETE CASCADE,
     user_id BIGINT NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
     order_id BIGINT UNIQUE REFERENCES orders(order_id) ON DELETE SET NULL,
+    title VARCHAR(128),
     images TEXT NOT NULL, -- 图片URL，逗号分隔
     content TEXT,
     address VARCHAR(255),
@@ -793,3 +801,25 @@ CREATE TABLE record_like (
     UNIQUE(record_id, user_id)
 );
 COMMENT ON TABLE record_like IS '记录点赞表';
+
+-- ================= ACHIEVEMENTS =================
+CREATE TABLE achievement_definitions (
+    id BIGSERIAL PRIMARY KEY,
+    slug VARCHAR(64) NOT NULL UNIQUE,
+    name VARCHAR(128) NOT NULL,
+    icon VARCHAR(256),
+    description TEXT,
+    requirement_type VARCHAR(64) NOT NULL, -- e.g., 'FOOTPRINT_COUNT'
+    requirement_value INT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+COMMENT ON TABLE achievement_definitions IS '成就/勋章定义表';
+
+CREATE TABLE user_achievements (
+    id BIGSERIAL PRIMARY KEY,
+    user_id BIGINT NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+    achievement_id BIGINT NOT NULL REFERENCES achievement_definitions(id) ON DELETE CASCADE,
+    unlocked_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE(user_id, achievement_id)
+);
+COMMENT ON TABLE user_achievements IS '用户成就解锁记录表';

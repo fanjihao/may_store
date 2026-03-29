@@ -10,7 +10,10 @@ pub fn footprint_routes(cfg: &mut web::ServiceConfig) {
             .route("/check-permission", web::get().to(routes::check_permission))
             .route("/overview", web::get().to(routes::get_overview))
             .route("/groups", web::get().to(routes::get_groups))
-            .route("/groups/{id}/records", web::get().to(routes::get_records))
-            .route("/records", web::post().to(routes::submit_record)),
+            .route("/records", web::get().to(routes::get_records))
+            .route("/records", web::post().to(routes::submit_record))
+            .route("/records/{id}", web::put().to(routes::update_record))
+            .route("/records/{id}", web::delete().to(routes::delete_record))
+            .route("/capacity/expand", web::post().to(routes::expand_capacity)),
     );
 }

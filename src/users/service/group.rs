@@ -681,7 +681,7 @@ impl GroupService {
         cfg.group_id = group_id;
 
         let row = sqlx::query_as::<_, crate::users::models::group::GroupPointConfig>(
-            "SELECT group_id, breeder_closed_points, confirmed_finished_points, confirmed_unfinished_points, timeout_points, overdue_unfinished_points, daily_checkin_rewards FROM group_point_configs WHERE group_id=$1"
+            "SELECT group_id, breeder_closed_points, confirmed_finished_points, confirmed_unfinished_points, timeout_points, overdue_unfinished_points, unlock_card_diamond_cost, default_footprint_capacity, daily_checkin_rewards FROM group_point_configs WHERE group_id=$1"
         )
         .bind(group_id)
         .fetch_optional(db)
@@ -726,7 +726,7 @@ impl GroupService {
         if existing.is_none() {
             let def = crate::users::models::group::GroupPointConfig::default();
             sqlx::query(
-                "INSERT INTO group_point_configs (group_id, breeder_closed_points, confirmed_finished_points, confirmed_unfinished_points, timeout_points, overdue_unfinished_points, daily_checkin_rewards) VALUES ($1, $2, $3, $4, $5, $6, $7)"
+                "INSERT INTO group_point_configs (group_id, breeder_closed_points, confirmed_finished_points, confirmed_unfinished_points, timeout_points, overdue_unfinished_points, unlock_card_diamond_cost, default_footprint_capacity, daily_checkin_rewards) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)"
             )
             .bind(group_id)
             .bind(body.breeder_closed_points.unwrap_or(def.breeder_closed_points))
@@ -734,6 +734,8 @@ impl GroupService {
             .bind(body.confirmed_unfinished_points.unwrap_or(def.confirmed_unfinished_points))
             .bind(body.timeout_points.unwrap_or(def.timeout_points))
             .bind(body.overdue_unfinished_points.unwrap_or(def.overdue_unfinished_points))
+            .bind(body.unlock_card_diamond_cost.unwrap_or(def.unlock_card_diamond_cost))
+            .bind(body.default_footprint_capacity.unwrap_or(def.default_footprint_capacity))
             .bind(body.daily_checkin_rewards.unwrap_or(def.daily_checkin_rewards))
             .execute(&mut *tx)
             .await?;
@@ -759,6 +761,14 @@ impl GroupService {
             }
             if let Some(v) = body.overdue_unfinished_points {
                 qb.push(", overdue_unfinished_points = ");
+                qb.push_bind(v);
+            }
+            if let Some(v) = body.unlock_card_diamond_cost {
+                qb.push(", unlock_card_diamond_cost = ");
+                qb.push_bind(v);
+            }
+            if let Some(v) = body.default_footprint_capacity {
+                qb.push(", default_footprint_capacity = ");
                 qb.push_bind(v);
             }
             if let Some(v) = body.daily_checkin_rewards {

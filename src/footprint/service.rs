@@ -95,6 +95,14 @@ impl FootprintService {
         .fetch_one(db)
         .await? as i32;
 
+        // Group capacity info
+        let (footprint_capacity, footprint_count): (i32, i32) = sqlx::query_as(
+            "SELECT footprint_capacity, footprint_count FROM association_groups WHERE group_id = $1"
+        )
+        .bind(group_id)
+        .fetch_one(db)
+        .await?;
+
         // Streak days (simplified: consecutive days with records in group)
         // In a real scenario, this needs a more complex query or pre-calculated field
         let streak_days = 0; // Placeholder for V1 MVP
@@ -127,6 +135,8 @@ impl FootprintService {
             streak_progress: (streak_days % 7) as f32 / 7.0,
             feeding_text,
             diamond_balance: diamond.diamond_balance,
+            footprint_capacity,
+            footprint_count,
         })
     }
 
@@ -163,7 +173,7 @@ impl FootprintService {
         db: &PgPool,
         user_id: i64,
         group_id: i64,
-        record_group_id: i64,
+        record_group_id: Option<i64>,
         query: RecordQuery,
     ) -> Result<CursorPage<RecordOut>, CustomError> {
         let limit = query.limit.unwrap_or(20).clamp(1, 100);
@@ -175,8 +185,12 @@ impl FootprintService {
         qb.push_bind(user_id);
         qb.push(") as is_liked FROM user_record r LEFT JOIN users u ON u.user_id = r.user_id WHERE r.group_id = ");
         qb.push_bind(group_id);
-        qb.push(" AND r.record_group_id = ");
-        qb.push_bind(record_group_id);
+
+        if let Some(rg_id) = record_group_id {
+            qb.push(" AND r.record_group_id = ");
+            qb.push_bind(rg_id);
+        }
+
         qb.push(" AND r.is_draft = 0 ");
 
         if let Some(cursor_str) = &query.cursor {
@@ -237,17 +251,16 @@ impl FootprintService {
     ) -> Result<i64, CustomError> {
         let mut tx = db.begin().await?;
 
-        // 1. Check capacity
+        // 1. Check global group capacity
         let cap_info: (i32, i32) = sqlx::query_as(
-            "SELECT current_count, max_capacity FROM record_group WHERE id = $1 AND group_id = $2 FOR UPDATE"
+            "SELECT footprint_count, footprint_capacity FROM association_groups WHERE group_id = $1 FOR UPDATE"
         )
-        .bind(input.record_group_id)
         .bind(group_id)
         .fetch_one(&mut *tx)
         .await?;
 
         if cap_info.0 >= cap_info.1 {
-            return Err(CustomError::BadRequest("该分组记录容量已满，请扩容".into()));
+            return Err(CustomError::BadRequest("该组足迹记录容量已满，请解锁更多容量".into()));
         }
 
         // 2. Insert record
@@ -265,13 +278,14 @@ impl FootprintService {
         };
 
         let record_id = sqlx::query_scalar::<_, i64>(
-            "INSERT INTO user_record (group_id, record_group_id, user_id, images, content, address, record_time, is_draft) \
-             VALUES ($1, $2, $3, $4, $5, $6, $7, 0) \
+            "INSERT INTO user_record (group_id, record_group_id, user_id, title, images, content, address, record_time, is_draft) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 0) \
              RETURNING id"
         )
         .bind(group_id)
         .bind(input.record_group_id)
         .bind(user_id)
+        .bind(&input.title)
         .bind(input.images.join(","))
         .bind(&input.content)
         .bind(&input.address)
@@ -279,18 +293,174 @@ impl FootprintService {
         .fetch_one(&mut *tx)
         .await?;
 
-        // 3. Update count
+        // 3. Update global count
+        sqlx::query("UPDATE association_groups SET footprint_count = footprint_count + 1 WHERE group_id = $1")
+            .bind(group_id)
+            .execute(&mut *tx)
+            .await?;
+
+        // 4. Update legacy count in record_group for backwards compatibility
         sqlx::query("UPDATE record_group SET current_count = current_count + 1 WHERE id = $1")
             .bind(input.record_group_id)
             .execute(&mut *tx)
             .await?;
 
-        // 4. Award diamonds (max 20 per day from records)
+        // 5. Award diamonds (max 20 per day from records)
         // Simplified limit check
         Self::award_diamonds(&mut tx, user_id, 5, "record", Some(record_id), Some("发布足迹奖励".into())).await?;
 
         tx.commit().await?;
         Ok(record_id)
+    }
+
+    pub async fn update_record(
+        db: &PgPool,
+        user_id: i64,
+        record_id: i64,
+        input: RecordUpdateInput,
+    ) -> Result<(), CustomError> {
+        let mut tx = db.begin().await?;
+
+        // Check ownership
+        let record_user_id: i64 = sqlx::query_scalar("SELECT user_id FROM user_record WHERE id = $1")
+            .bind(record_id)
+            .fetch_optional(&mut *tx)
+            .await?
+            .ok_or_else(|| CustomError::BadRequest("记录不存在".into()))?;
+
+        if record_user_id != user_id {
+            return Err(CustomError::Forbidden("无权修改该记录".into()));
+        }
+
+        let mut qb = sqlx::QueryBuilder::<sqlx::Postgres>::new("UPDATE user_record SET update_time = NOW()");
+
+        if let Some(title) = &input.title {
+            qb.push(", title = ");
+            qb.push_bind(title);
+        }
+        if let Some(content) = &input.content {
+            qb.push(", content = ");
+            qb.push_bind(content);
+        }
+        if let Some(images) = &input.images {
+            qb.push(", images = ");
+            qb.push_bind(images.join(","));
+        }
+        if let Some(address) = &input.address {
+            qb.push(", address = ");
+            qb.push_bind(address);
+        }
+        if let Some(rg_id) = input.record_group_id {
+            qb.push(", record_group_id = ");
+            qb.push_bind(rg_id);
+        }
+        if let Some(s) = &input.record_time {
+            let record_time = chrono::DateTime::parse_from_rfc3339(s)
+                .map(|dt| dt.with_timezone(&Utc))
+                .or_else(|_| {
+                    chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S")
+                        .map(|ndt| chrono::DateTime::<Utc>::from_naive_utc_and_offset(ndt, Utc))
+                })
+                .map_err(|_| CustomError::BadRequest("时间格式错误".into()))?;
+            qb.push(", record_time = ");
+            qb.push_bind(record_time);
+        }
+
+        qb.push(" WHERE id = ");
+        qb.push_bind(record_id);
+
+        qb.build().execute(&mut *tx).await?;
+
+        tx.commit().await?;
+        Ok(())
+    }
+
+    pub async fn delete_record(db: &PgPool, user_id: i64, record_id: i64) -> Result<(), CustomError> {
+        let mut tx = db.begin().await?;
+
+        // Check ownership and get group info
+        let row = sqlx::query("SELECT user_id, group_id, record_group_id FROM user_record WHERE id = $1")
+            .bind(record_id)
+            .fetch_optional(&mut *tx)
+            .await?
+            .ok_or_else(|| CustomError::BadRequest("记录不存在".into()))?;
+
+        let record_user_id: i64 = row.get("user_id");
+        let group_id: i64 = row.get("group_id");
+        let rg_id: i64 = row.get("record_group_id");
+
+        if record_user_id != user_id {
+            // Check if user is admin in this group
+            let is_admin: bool = sqlx::query_scalar(
+                "SELECT EXISTS(SELECT 1 FROM association_group_members WHERE group_id = $1 AND user_id = $2 AND role_in_group = 'ADMIN')"
+            )
+            .bind(group_id)
+            .bind(user_id)
+            .fetch_one(&mut *tx)
+            .await?;
+
+            if !is_admin {
+                return Err(CustomError::Forbidden("无权删除该记录".into()));
+            }
+        }
+
+        // Delete record
+        sqlx::query("DELETE FROM user_record WHERE id = $1")
+            .bind(record_id)
+            .execute(&mut *tx)
+            .await?;
+
+        // Update counts
+        sqlx::query("UPDATE association_groups SET footprint_count = GREATEST(0, footprint_count - 1) WHERE group_id = $1")
+            .bind(group_id)
+            .execute(&mut *tx)
+            .await?;
+
+        sqlx::query("UPDATE record_group SET current_count = GREATEST(0, current_count - 1) WHERE id = $1")
+            .bind(rg_id)
+            .execute(&mut *tx)
+            .await?;
+
+        tx.commit().await?;
+        Ok(())
+    }
+
+    pub async fn expand_capacity(db: &PgPool, user_id: i64, group_id: i64) -> Result<i32, CustomError> {
+        let mut tx = db.begin().await?;
+
+        // 1. Get cost
+        let cost: i32 = sqlx::query_scalar(
+            "SELECT unlock_card_diamond_cost FROM group_point_configs WHERE group_id = $1"
+        )
+        .bind(group_id)
+        .fetch_optional(&mut *tx)
+        .await?
+        .unwrap_or(100);
+
+        // 2. Check and deduct diamonds
+        let current_balance: i32 = sqlx::query_scalar(
+            "SELECT diamond_balance FROM user_diamond WHERE user_id = $1 FOR UPDATE"
+        )
+        .bind(user_id)
+        .fetch_one(&mut *tx)
+        .await?;
+
+        if current_balance < cost {
+            return Err(CustomError::BadRequest("钻石不足".into()));
+        }
+
+        Self::award_diamonds(&mut tx, user_id, -cost, "expand", Some(group_id), Some("解锁足迹容量".into())).await?;
+
+        // 3. Update capacity
+        let new_capacity: i32 = sqlx::query_scalar(
+            "UPDATE association_groups SET footprint_capacity = footprint_capacity + 10 WHERE group_id = $1 RETURNING footprint_capacity"
+        )
+        .bind(group_id)
+        .fetch_one(&mut *tx)
+        .await?;
+
+        tx.commit().await?;
+        Ok(new_capacity)
     }
 
     pub async fn create_draft_from_order(db: &PgPool, order_id: i64) -> Result<(), CustomError> {

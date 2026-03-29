@@ -4,6 +4,7 @@ use crate::footprint::models::*;
 use crate::footprint::service::FootprintService;
 use crate::models::pagination::CursorPage;
 use crate::users::models::user::UserToken;
+use crate::users::service::UserService;
 use ntex::web::{
     types::{Json, Path, Query, State},
     HttpResponse, Responder,
@@ -48,13 +49,10 @@ pub async fn get_overview(
     security(("cookie_auth" = []))
 )]
 pub async fn check_permission(
-    _state: State<Arc<AppState>>,
+    state: State<Arc<AppState>>,
     token: UserToken,
 ) -> Result<impl Responder, CustomError> {
-    let user = token
-        .user
-        .as_ref()
-        .ok_or_else(|| CustomError::unauthorized("未登录"))?;
+    let user = UserService::get_current_info(token.user_id, &state).await?;
     Ok(HttpResponse::Ok().json(&CheckPermissionResponse {
         has_group: user.group_id.is_some(),
         group_id: user.group_id,
@@ -87,12 +85,12 @@ pub async fn get_groups(
     Ok(HttpResponse::Ok().json(&res))
 }
 
-/// 分页查询足迹记录列表
+/// 分页查询足迹记录列表 (统一时间轴，可选分组ID作为标签过滤)
 #[utoipa::path(
     get,
-    path = "/footprint/groups/{id}/records",
+    path = "/footprint/records",
     params(
-        ("id" = i64, Path, description = "足迹分组ID"),
+        ("recordGroupId" = Option<i64>, Query, description = "足迹分组ID(标签过滤)"),
         RecordQuery
     ),
     responses(
@@ -106,7 +104,6 @@ pub async fn get_groups(
 pub async fn get_records(
     state: State<Arc<AppState>>,
     token: UserToken,
-    id: Path<i64>,
     query: Query<RecordQuery>,
 ) -> Result<impl Responder, CustomError> {
     let group_id = token
@@ -115,14 +112,13 @@ pub async fn get_records(
         .and_then(|u| u.group_id)
         .ok_or_else(|| CustomError::forbidden("请先加入组"))?;
 
-    let rg_id = id.into_inner();
-
+    let q = query.into_inner();
     let res = FootprintService::list_records(
         &state.db_pool,
         token.user_id,
         group_id,
-        rg_id,
-        query.into_inner(),
+        q.record_group_id,
+        q,
     )
     .await?;
     Ok(HttpResponse::Ok().json(&res))
@@ -160,4 +156,83 @@ pub async fn submit_record(
     )
     .await?;
     Ok(HttpResponse::Ok().json(&SubmitRecordResponse { record_id: id }))
+}
+
+/// 修改足迹记录
+#[utoipa::path(
+    put,
+    path = "/footprint/records/{id}",
+    params(("id" = i64, Path, description = "足迹记录ID")),
+    request_body = RecordUpdateInput,
+    responses(
+        (status = 200, description = "修改成功"),
+        (status = 401, description = "未登录"),
+        (status = 403, description = "无权修改")
+    ),
+    tag = "足迹",
+    security(("cookie_auth" = []))
+)]
+pub async fn update_record(
+    state: State<Arc<AppState>>,
+    token: UserToken,
+    id: Path<i64>,
+    input: Json<RecordUpdateInput>,
+) -> Result<impl Responder, CustomError> {
+    FootprintService::update_record(
+        &state.db_pool,
+        token.user_id,
+        id.into_inner(),
+        input.into_inner(),
+    )
+    .await?;
+    Ok(HttpResponse::Ok().json(&serde_json::json!({ "status": "ok" })))
+}
+
+/// 删除足迹记录
+#[utoipa::path(
+    delete,
+    path = "/footprint/records/{id}",
+    params(("id" = i64, Path, description = "足迹记录ID")),
+    responses(
+        (status = 200, description = "删除成功"),
+        (status = 401, description = "未登录"),
+        (status = 403, description = "无权删除")
+    ),
+    tag = "足迹",
+    security(("cookie_auth" = []))
+)]
+pub async fn delete_record(
+    state: State<Arc<AppState>>,
+    token: UserToken,
+    id: Path<i64>,
+) -> Result<impl Responder, CustomError> {
+    FootprintService::delete_record(&state.db_pool, token.user_id, id.into_inner()).await?;
+    Ok(HttpResponse::Ok().json(&serde_json::json!({ "status": "ok" })))
+}
+
+/// 消耗钻石解锁足迹容量
+#[utoipa::path(
+    post,
+    path = "/footprint/capacity/expand",
+    responses(
+        (status = 200, description = "解锁成功"),
+        (status = 400, description = "钻石不足"),
+        (status = 401, description = "未登录")
+    ),
+    tag = "足迹",
+    security(("cookie_auth" = []))
+)]
+pub async fn expand_capacity(
+    state: State<Arc<AppState>>,
+    token: UserToken,
+) -> Result<impl Responder, CustomError> {
+    let group_id = token
+        .user
+        .as_ref()
+        .and_then(|u| u.group_id)
+        .ok_or_else(|| CustomError::forbidden("请先加入组"))?;
+
+    let new_capacity =
+        FootprintService::expand_capacity(&state.db_pool, token.user_id, group_id).await?;
+    Ok(HttpResponse::Ok().json(&serde_json::json!({ "status": "ok", "newCapacity": new_capacity })))
 }

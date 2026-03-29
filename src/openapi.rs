@@ -110,7 +110,10 @@ use crate::{dashboard, foods, footprint, game_im, orders, upload, users};
         footprint::routes::get_overview,
         footprint::routes::get_groups,
         footprint::routes::get_records,
+        footprint::routes::update_record,
+        footprint::routes::delete_record,
         footprint::routes::submit_record,
+        footprint::routes::expand_capacity,
 
         // 上传
         upload::routes::get_qiniu_token,

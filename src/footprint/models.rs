@@ -77,6 +77,7 @@ pub struct UserRecord {
     pub record_group_id: i64,
     pub user_id: i64,
     pub order_id: Option<i64>,
+    pub title: Option<String>,
     pub images: String,
     pub content: Option<String>,
     pub address: Option<String>,
@@ -86,6 +87,28 @@ pub struct UserRecord {
     pub is_draft: i16, // 0: Official, 1: Draft
     pub create_time: DateTime<Utc>,
     pub update_time: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct AchievementDefinition {
+    pub id: i64,
+    pub slug: String,
+    pub name: String,
+    pub icon: Option<String>,
+    pub description: Option<String>,
+    pub requirement_type: String,
+    pub requirement_value: i32,
+    pub create_time: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct UserAchievement {
+    pub id: i64,
+    pub user_id: i64,
+    pub achievement_id: i64,
+    pub unlocked_at: DateTime<Utc>,
 }
 
 // ============ API DTOs ============
@@ -100,6 +123,8 @@ pub struct FootprintOverview {
     pub streak_progress: f32, // Progress towards 7 days
     pub feeding_text: String, // Identity-specific text
     pub diamond_balance: i32,
+    pub footprint_capacity: i32,
+    pub footprint_count: i32,
 }
 
 #[derive(Debug, Deserialize, ToSchema)]
@@ -107,10 +132,22 @@ pub struct FootprintOverview {
 pub struct RecordCreateInput {
     #[serde(deserialize_with = "deserialize_number_from_string")]
     pub record_group_id: i64,
+    pub title: Option<String>,
     pub images: Vec<String>,
     pub content: Option<String>,
     pub address: Option<String>,
     pub record_time: Option<String>,
+}
+
+#[derive(Debug, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct RecordUpdateInput {
+    pub title: Option<String>,
+    pub images: Option<Vec<String>>,
+    pub content: Option<String>,
+    pub address: Option<String>,
+    pub record_time: Option<String>,
+    pub record_group_id: Option<i64>, // Tag update
 }
 
 #[derive(Debug, Deserialize, ToSchema)]
@@ -141,6 +178,7 @@ pub struct RecordCursor {
 pub struct RecordQuery {
     pub cursor: Option<String>,
     pub limit: Option<i64>,
+    pub record_group_id: Option<i64>,
 }
 
 #[derive(Debug, Serialize, ToSchema)]

@@ -110,6 +110,8 @@ pub struct GroupPointConfig {
     pub confirmed_unfinished_points: i32,
     pub timeout_points: i32,
     pub overdue_unfinished_points: i32,
+    pub unlock_card_diamond_cost: i32,
+    pub default_footprint_capacity: i32,
     pub daily_checkin_rewards: Vec<i32>,
 }
 
@@ -122,6 +124,8 @@ impl Default for GroupPointConfig {
             confirmed_unfinished_points: -5,
             timeout_points: -3,
             overdue_unfinished_points: -10,
+            unlock_card_diamond_cost: 100,
+            default_footprint_capacity: 10,
             daily_checkin_rewards: vec![5, 6, 7, 8, 9, 10, 20],
         }
     }
@@ -135,5 +139,7 @@ pub struct GroupPointConfigUpdateInput {
     pub confirmed_unfinished_points: Option<i32>,
     pub timeout_points: Option<i32>,
     pub overdue_unfinished_points: Option<i32>,
+    pub unlock_card_diamond_cost: Option<i32>,
+    pub default_footprint_capacity: Option<i32>,
     pub daily_checkin_rewards: Option<Vec<i32>>,
 }
