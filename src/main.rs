@@ -21,6 +21,7 @@ mod users;
 mod footprint;
 mod wishes; // 心愿与兑换模块
 mod wx; // 看板与组活动
+mod couple_space;
 
 use dotenvy::dotenv;
 use errors::CustomError;

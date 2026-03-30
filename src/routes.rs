@@ -2,7 +2,7 @@ use crate::{
     config::AppState,
     dashboard, foods, footprint, game_im, game_ws,
     openapi::{openapi_json, serve_swagger},
-    orders, upload, users, wishes, wx,
+    orders, upload, users, wishes, wx, couple_space,
 };
 use ntex::web;
 use std::sync::Arc;
@@ -28,6 +28,7 @@ pub fn route(_state: Arc<AppState>, cfg: &mut web::ServiceConfig) {
     wechat_routes(cfg);
     dashboard_routes(cfg);
     footprint_routes(cfg);
+    couple_space_routes(cfg);
 }
 
 /// 游戏 (Game)
@@ -55,6 +56,17 @@ fn game_routes(cfg: &mut web::ServiceConfig) {
 /// 足迹 (Footprint)
 fn footprint_routes(cfg: &mut web::ServiceConfig) {
     footprint::footprint_routes(cfg);
+}
+
+/// 情侣空间 (Couple Space)
+fn couple_space_routes(cfg: &mut web::ServiceConfig) {
+    cfg.service(
+        web::scope("/couple-space/memorial-days")
+            .route("", web::get().to(couple_space::routes::list_memorial_days))
+            .route("", web::post().to(couple_space::routes::create_memorial_day))
+            .route("/{id}", web::put().to(couple_space::routes::update_memorial_day))
+            .route("/{id}", web::delete().to(couple_space::routes::delete_memorial_day)),
+    );
 }
 
 /// 用户 (User)

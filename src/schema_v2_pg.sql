@@ -823,3 +823,26 @@ CREATE TABLE user_achievements (
     UNIQUE(user_id, achievement_id)
 );
 COMMENT ON TABLE user_achievements IS '用户成就解锁记录表';
+
+
+-- ================== MEMORIAL DAY ==================
+CREATE TABLE memorial_day (
+    id BIGSERIAL PRIMARY KEY,
+    group_id BIGINT NOT NULL REFERENCES association_groups(group_id) ON DELETE CASCADE,
+    name VARCHAR(128) NOT NULL,
+    description TEXT,
+    memorial_date DATE NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    is_default SMALLINT NOT NULL DEFAULT 0,
+    UNIQUE(group_id, name)
+);
+COMMENT ON TABLE memorial_day IS '纪念日表';
+COMMENT ON COLUMN memorial_day.id IS '纪念日主键ID';
+COMMENT ON COLUMN memorial_day.group_id IS '所属关联组ID';
+COMMENT ON COLUMN memorial_day.name IS '纪念日名称';
+COMMENT ON COLUMN memorial_day.description IS '纪念日描述';
+COMMENT ON COLUMN memorial_day.memorial_date IS '纪念日日期';
+COMMENT ON COLUMN memorial_day.is_default IS '是否默认纪念日';
+COMMENT ON COLUMN memorial_day.created_at IS '创建时间';
+COMMENT ON COLUMN memorial_day.updated_at IS '更新时间';

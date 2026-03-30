@@ -4,7 +4,7 @@ use utoipa::openapi::security::{ApiKey, ApiKeyValue, SecurityScheme};
 use utoipa::{Modify, OpenApi};
 
 // Re-export model modules for macro path resolution
-use crate::{dashboard, foods, footprint, game_im, orders, upload, users};
+use crate::{dashboard, foods, footprint, game_im, orders, upload, users, couple_space};
 
 #[derive(OpenApi)]
 #[openapi(
@@ -114,6 +114,12 @@ use crate::{dashboard, foods, footprint, game_im, orders, upload, users};
         footprint::routes::delete_record,
         footprint::routes::submit_record,
         footprint::routes::expand_capacity,
+
+        // 情侣空间 (Couple Space)
+        couple_space::routes::list_memorial_days,
+        couple_space::routes::create_memorial_day,
+        couple_space::routes::update_memorial_day,
+        couple_space::routes::delete_memorial_day,
 
         // 上传
         upload::routes::get_qiniu_token,
@@ -231,6 +237,11 @@ use crate::{dashboard, foods, footprint, game_im, orders, upload, users};
             game_im::models::ImVoteOut,
             // 微信
             crate::wx::models::WxSubscriptionTemplateOut,
+
+            // 情侣空间
+            couple_space::models::MemorialDay,
+            couple_space::models::MemorialDayCreate,
+            couple_space::models::MemorialDayUpdate,
         ),
     ),
     modifiers(&SecurityAddon),
