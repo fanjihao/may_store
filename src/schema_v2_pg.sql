@@ -832,6 +832,10 @@ CREATE TABLE memorial_day (
     name VARCHAR(128) NOT NULL,
     description TEXT,
     memorial_date DATE NOT NULL,
+    calendar_type VARCHAR(16) NOT NULL DEFAULT 'SOLAR',
+    lunar_month SMALLINT,
+    lunar_day SMALLINT,
+    is_leap_month BOOLEAN DEFAULT FALSE,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     is_default SMALLINT NOT NULL DEFAULT 0,
@@ -844,5 +848,9 @@ COMMENT ON COLUMN memorial_day.name IS '纪念日名称';
 COMMENT ON COLUMN memorial_day.description IS '纪念日描述';
 COMMENT ON COLUMN memorial_day.memorial_date IS '纪念日日期';
 COMMENT ON COLUMN memorial_day.is_default IS '是否默认纪念日';
+COMMENT ON COLUMN memorial_day.calendar_type IS '日历类型: SOLAR(公历), LUNAR(农历)';
+COMMENT ON COLUMN memorial_day.lunar_month IS '农历月(1-12)';
+COMMENT ON COLUMN memorial_day.lunar_day IS '农历日(1-30)';
+COMMENT ON COLUMN memorial_day.is_leap_month IS '是否是闰月';
 COMMENT ON COLUMN memorial_day.created_at IS '创建时间';
 COMMENT ON COLUMN memorial_day.updated_at IS '更新时间';

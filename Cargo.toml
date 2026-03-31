@@ -49,3 +49,4 @@ flate2 = "1.0"
 
 utoipa = { version = "5.2", features = ["chrono"] }
 utoipa-swagger-ui = "*"
+chinese-lunisolar-calendar = "0.2"

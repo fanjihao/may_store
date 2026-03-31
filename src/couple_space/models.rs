@@ -10,9 +10,17 @@ pub struct MemorialDay {
     pub name: String,
     pub description: Option<String>,
     pub memorial_date: chrono::NaiveDate,
+    pub calendar_type: String, // "SOLAR" or "LUNAR"
+    pub lunar_month: Option<i16>,
+    pub lunar_day: Option<i16>,
+    pub is_leap_month: Option<bool>,
     pub created_at: chrono::DateTime<chrono::Utc>,
     pub updated_at: chrono::DateTime<chrono::Utc>,
     pub is_default: i16,
+    #[sqlx(default)]
+    pub next_date: Option<chrono::NaiveDate>,
+    #[sqlx(default)]
+    pub days_remaining: Option<i64>,
 }
 
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
@@ -22,6 +30,10 @@ pub struct MemorialDayCreate {
     pub name: String,
     pub description: Option<String>,
     pub memorial_date: chrono::NaiveDate,
+    pub calendar_type: Option<String>, // Default "SOLAR"
+    pub lunar_month: Option<i16>,
+    pub lunar_day: Option<i16>,
+    pub is_leap_month: Option<bool>,
     pub is_default: Option<i16>,
 }
 
@@ -32,6 +44,10 @@ pub struct MemorialDayUpdate {
     pub name: Option<String>,
     pub description: Option<String>,
     pub memorial_date: Option<chrono::NaiveDate>,
+    pub calendar_type: Option<String>,
+    pub lunar_month: Option<i16>,
+    pub lunar_day: Option<i16>,
+    pub is_leap_month: Option<bool>,
     pub is_default: Option<i16>,
 }
 
