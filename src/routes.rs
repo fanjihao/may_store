@@ -65,7 +65,8 @@ fn couple_space_routes(cfg: &mut web::ServiceConfig) {
             .route("", web::get().to(couple_space::routes::list_memorial_days))
             .route("", web::post().to(couple_space::routes::create_memorial_day))
             .route("/{id}", web::put().to(couple_space::routes::update_memorial_day))
-            .route("/{id}", web::delete().to(couple_space::routes::delete_memorial_day)),
+            .route("/{id}", web::delete().to(couple_space::routes::delete_memorial_day))
+            .route("/default", web::get().to(couple_space::routes::get_default_memorial_day)),
     );
 }
 

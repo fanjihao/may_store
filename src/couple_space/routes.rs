@@ -27,7 +27,9 @@ pub async fn list_memorial_days(
 ) -> Result<HttpResponse, CustomError> {
     let limit = query.limit.unwrap_or(20).clamp(1, 100);
     let cursor_condition = if let Some(cursor_str) = &query.cursor {
-        if let Some(cursor) = decode_cursor::<MemorialDayCursor>(cursor_str) {
+        if cursor_str.is_empty() || cursor_str == "null" {
+            None
+        } else if let Some(cursor) = decode_cursor::<MemorialDayCursor>(cursor_str) {
             Some((cursor.memorial_date, cursor.id))
         } else {
             return Err(CustomError::bad_request("无效的游标"));
@@ -68,6 +70,25 @@ pub async fn list_memorial_days(
     }))
 }
 
+// 获取默认纪念日
+#[utoipa::path(
+    get,
+    path = "/couple-space/memorial-days/default",
+    tag = "情侣空间",
+    params(("group_id" = i64, Query, description = "组ID")),
+    responses(
+        (status = 200, description = "获取成功", body = MemorialDay),
+        (status = 404, description = "未找到", body = CustomError)
+    ),
+    security(("cookie_auth" = []))
+)]
+pub async fn get_default_memorial_day(
+    state: State<Arc<AppState>>,
+    query: Query<MemorialDayQuery>,
+) -> Result<HttpResponse, CustomError> {
+    let record = MemorialDayService::get_default_memorial_day(&state.db_pool, query.group_id).await?;
+    Ok(HttpResponse::Ok().json(&record))
+}
 /// 创建纪念日
 #[utoipa::path(
     post,
@@ -95,7 +116,6 @@ pub async fn create_memorial_day(
     tag = "情侣空间",
     params(
         ("id" = i64, Path, description = "纪念日ID"),
-        ("group_id" = i64, Query, description = "组ID")
     ),
     request_body = MemorialDayUpdate,
     responses(
@@ -107,13 +127,12 @@ pub async fn create_memorial_day(
 pub async fn update_memorial_day(
     state: State<Arc<AppState>>,
     path: Path<i64>,
-    query: Query<MemorialDayQuery>,
     body: Json<MemorialDayUpdate>,
 ) -> Result<HttpResponse, CustomError> {
     let record = MemorialDayService::update_memorial_day(
         &state.db_pool,
         path.into_inner(),
-        query.group_id,
+        body.group_id,
         body.into_inner(),
     )
     .await?;

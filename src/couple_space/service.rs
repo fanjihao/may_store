@@ -1,6 +1,6 @@
-use sqlx::{PgPool, Postgres, Transaction, QueryBuilder};
-use crate::errors::CustomError;
 use super::models::{MemorialDay, MemorialDayCreate, MemorialDayUpdate};
+use crate::errors::CustomError;
+use sqlx::{PgPool, Postgres, QueryBuilder, Transaction};
 
 pub struct MemorialDayService;
 
@@ -11,14 +11,14 @@ impl MemorialDayService {
         limit: i64,
         cursor_condition: Option<(chrono::NaiveDate, i64)>,
     ) -> Result<(Vec<MemorialDay>, i64), CustomError> {
-        let total: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM memorial_day WHERE group_id = $1"
-        )
-        .bind(group_id)
-        .fetch_one(pool)
-        .await?;
+        let total: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM memorial_day WHERE group_id = $1")
+                .bind(group_id)
+                .fetch_one(pool)
+                .await?;
 
-        let mut qb: QueryBuilder<Postgres> = QueryBuilder::new("SELECT * FROM memorial_day WHERE group_id = ");
+        let mut qb: QueryBuilder<Postgres> =
+            QueryBuilder::new("SELECT * FROM memorial_day WHERE group_id = ");
         qb.push_bind(group_id);
 
         if let Some((date, id)) = cursor_condition {
@@ -38,6 +38,21 @@ impl MemorialDayService {
         Ok((records, total))
     }
 
+    pub async fn get_default_memorial_day(
+        pool: &PgPool,
+        group_id: i64,
+    ) -> Result<MemorialDay, CustomError> {
+        let record = sqlx::query_as::<_, MemorialDay>(
+            "SELECT * FROM memorial_day WHERE group_id = $1 AND is_default = 1",
+        )
+        .bind(group_id)
+        .fetch_optional(pool)
+        .await?
+        .ok_or_else(|| CustomError::not_found("默认纪念日不存在"))?;
+
+        Ok(record)
+    }
+    
     pub async fn create_memorial_day(
         pool: &PgPool,
         data: MemorialDayCreate,
@@ -51,7 +66,7 @@ impl MemorialDayService {
         let record = sqlx::query_as::<_, MemorialDay>(
             "INSERT INTO memorial_day (group_id, name, description, memorial_date, is_default)
              VALUES ($1, $2, $3, $4, $5)
-             RETURNING *"
+             RETURNING *",
         )
         .bind(data.group_id)
         .bind(data.name)
@@ -75,7 +90,7 @@ impl MemorialDayService {
 
         // Verify existence and ownership
         let _current = sqlx::query_as::<_, MemorialDay>(
-            "SELECT * FROM memorial_day WHERE id = $1 AND group_id = $2"
+            "SELECT * FROM memorial_day WHERE id = $1 AND group_id = $2",
         )
         .bind(id)
         .bind(group_id)
@@ -95,7 +110,7 @@ impl MemorialDayService {
                  is_default = COALESCE($4, is_default),
                  updated_at = NOW()
              WHERE id = $5 AND group_id = $6
-             RETURNING *"
+             RETURNING *",
         )
         .bind(data.name)
         .bind(data.description)
@@ -115,13 +130,11 @@ impl MemorialDayService {
         id: i64,
         group_id: i64,
     ) -> Result<(), CustomError> {
-        let result = sqlx::query(
-            "DELETE FROM memorial_day WHERE id = $1 AND group_id = $2"
-        )
-        .bind(id)
-        .bind(group_id)
-        .execute(pool)
-        .await?;
+        let result = sqlx::query("DELETE FROM memorial_day WHERE id = $1 AND group_id = $2")
+            .bind(id)
+            .bind(group_id)
+            .execute(pool)
+            .await?;
 
         if result.rows_affected() == 0 {
             return Err(CustomError::not_found("纪念日不存在"));
@@ -135,7 +148,7 @@ impl MemorialDayService {
         group_id: i64,
     ) -> Result<(), CustomError> {
         sqlx::query(
-            "UPDATE memorial_day SET is_default = 0 WHERE group_id = $1 AND is_default = 1"
+            "UPDATE memorial_day SET is_default = 0 WHERE group_id = $1 AND is_default = 1",
         )
         .bind(group_id)
         .execute(&mut **tx)

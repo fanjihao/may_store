@@ -28,6 +28,7 @@ pub struct MemorialDayCreate {
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct MemorialDayUpdate {
+    pub group_id: i64,
     pub name: Option<String>,
     pub description: Option<String>,
     pub memorial_date: Option<chrono::NaiveDate>,

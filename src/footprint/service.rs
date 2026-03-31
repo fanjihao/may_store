@@ -1,8 +1,8 @@
-use crate::models::pagination::{decode_cursor, encode_cursor, CursorPage};
-use sqlx::{PgPool, Postgres, Transaction, FromRow, Row};
 use crate::errors::CustomError;
 use crate::footprint::models::*;
-use chrono::{Utc};
+use crate::models::pagination::{decode_cursor, encode_cursor, CursorPage};
+use chrono::Utc;
+use sqlx::{FromRow, PgPool, Postgres, Row, Transaction};
 
 pub struct FootprintService;
 
@@ -30,7 +30,9 @@ impl FootprintService {
         relation_id: Option<i64>,
         remark: Option<String>,
     ) -> Result<i32, CustomError> {
-        if amount == 0 { return Ok(0); }
+        if amount == 0 {
+            return Ok(0);
+        }
 
         // 1. Update balance
         let new_balance = sqlx::query_scalar::<_, i32>(
@@ -39,7 +41,7 @@ impl FootprintService {
              total_consume = total_consume + CASE WHEN $1 < 0 THEN ABS($1) ELSE 0 END, \
              update_time = NOW() \
              WHERE user_id = $2 \
-             RETURNING diamond_balance"
+             RETURNING diamond_balance",
         )
         .bind(amount)
         .bind(user_id)
@@ -69,11 +71,15 @@ impl FootprintService {
 
     // --- Overview Logic ---
 
-    pub async fn get_overview(db: &PgPool, user_id: i64, group_id: i64) -> Result<FootprintOverview, CustomError> {
+    pub async fn get_overview(
+        db: &PgPool,
+        user_id: i64,
+        group_id: i64,
+    ) -> Result<FootprintOverview, CustomError> {
         // Together dining days: unique dates of completed orders in group
         let together_days = sqlx::query_scalar::<_, i64>(
             "SELECT COUNT(DISTINCT DATE(goal_time)) FROM orders \
-             WHERE group_id = $1 AND status = 'CONFIRMED_FINISHED'"
+             WHERE group_id = $1 AND status = 'CONFIRMED_FINISHED'",
         )
         .bind(group_id)
         .fetch_one(db)
@@ -81,7 +87,7 @@ impl FootprintService {
 
         // Total feedings: count of orders where user is receiver (guest_id) or group member role is receiving
         let total_feedings = sqlx::query_scalar::<_, i64>(
-            "SELECT COUNT(*) FROM orders WHERE group_id = $1 AND status = 'CONFIRMED_FINISHED'"
+            "SELECT COUNT(*) FROM orders WHERE group_id = $1 AND status = 'CONFIRMED_FINISHED'",
         )
         .bind(group_id)
         .fetch_one(db)
@@ -89,7 +95,7 @@ impl FootprintService {
 
         // Total records: official ones
         let total_records = sqlx::query_scalar::<_, i64>(
-            "SELECT COUNT(*) FROM user_record WHERE group_id = $1 AND is_draft = 0"
+            "SELECT COUNT(*) FROM user_record WHERE group_id = $1 AND is_draft = 0",
         )
         .bind(group_id)
         .fetch_one(db)
@@ -158,10 +164,13 @@ impl FootprintService {
         Ok(())
     }
 
-    pub async fn list_record_groups(db: &PgPool, group_id: i64) -> Result<Vec<RecordGroup>, CustomError> {
+    pub async fn list_record_groups(
+        db: &PgPool,
+        group_id: i64,
+    ) -> Result<Vec<RecordGroup>, CustomError> {
         Self::ensure_default_groups(db, group_id).await?;
         let res = sqlx::query_as::<_, RecordGroup>(
-            "SELECT * FROM record_group WHERE group_id = $1 AND status = 1 ORDER BY id ASC"
+            "SELECT * FROM record_group WHERE group_id = $1 AND status = 1 ORDER BY id ASC",
         )
         .bind(group_id)
         .fetch_all(db)
@@ -180,7 +189,7 @@ impl FootprintService {
 
         let mut qb = sqlx::QueryBuilder::<sqlx::Postgres>::new(
             "SELECT r.*, u.nick_name, u.avatar, \
-             EXISTS(SELECT 1 FROM record_like l WHERE l.record_id = r.id AND l.user_id = "
+             EXISTS(SELECT 1 FROM record_like l WHERE l.record_id = r.id AND l.user_id = ",
         );
         qb.push_bind(user_id);
         qb.push(") as is_liked FROM user_record r LEFT JOIN users u ON u.user_id = r.user_id WHERE r.group_id = ");
@@ -247,7 +256,7 @@ impl FootprintService {
         db: &PgPool,
         user_id: i64,
         group_id: i64,
-        input: RecordCreateInput
+        input: RecordCreateInput,
     ) -> Result<i64, CustomError> {
         let mut tx = db.begin().await?;
 
@@ -260,20 +269,29 @@ impl FootprintService {
         .await?;
 
         if cap_info.0 >= cap_info.1 {
-            return Err(CustomError::BadRequest("该组足迹记录容量已满，请解锁更多容量".into()));
+            return Err(CustomError::BadRequest(
+                "该组足迹记录容量已满，请解锁更多容量".into(),
+            ));
         }
 
         // 2. Insert record
         let record_time = match &input.record_time {
-            Some(s) if !s.is_empty() => {
-                chrono::DateTime::parse_from_rfc3339(s)
-                    .map(|dt| dt.with_timezone(&Utc))
-                    .or_else(|_| {
-                        chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S")
-                            .map(|ndt| chrono::DateTime::<Utc>::from_naive_utc_and_offset(ndt, Utc))
+            Some(s) if !s.is_empty() => chrono::DateTime::parse_from_rfc3339(s)
+                .map(|dt| dt.with_timezone(&Utc))
+                .or_else(|_| {
+                    chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S").map(|ndt| {
+                        let offset = chrono::FixedOffset::east_opt(8 * 3600).unwrap();
+                        let dt_local = chrono::TimeZone::from_local_datetime(&offset, &ndt)
+                            .single()
+                            .unwrap_or_else(|| {
+                                chrono::DateTime::<chrono::FixedOffset>::from_naive_utc_and_offset(
+                                    ndt, offset,
+                                )
+                            });
+                        dt_local.with_timezone(&Utc)
                     })
-                    .unwrap_or_else(|_| Utc::now())
-            }
+                })
+                .unwrap_or_else(|_| Utc::now()),
             _ => Utc::now(),
         };
 
@@ -307,7 +325,15 @@ impl FootprintService {
 
         // 5. Award diamonds (max 20 per day from records)
         // Simplified limit check
-        Self::award_diamonds(&mut tx, user_id, 5, "record", Some(record_id), Some("发布足迹奖励".into())).await?;
+        Self::award_diamonds(
+            &mut tx,
+            user_id,
+            5,
+            "record",
+            Some(record_id),
+            Some("发布足迹奖励".into()),
+        )
+        .await?;
 
         tx.commit().await?;
         Ok(record_id)
@@ -322,17 +348,19 @@ impl FootprintService {
         let mut tx = db.begin().await?;
 
         // Check ownership
-        let record_user_id: i64 = sqlx::query_scalar("SELECT user_id FROM user_record WHERE id = $1")
-            .bind(record_id)
-            .fetch_optional(&mut *tx)
-            .await?
-            .ok_or_else(|| CustomError::BadRequest("记录不存在".into()))?;
+        let record_user_id: i64 =
+            sqlx::query_scalar("SELECT user_id FROM user_record WHERE id = $1")
+                .bind(record_id)
+                .fetch_optional(&mut *tx)
+                .await?
+                .ok_or_else(|| CustomError::BadRequest("记录不存在".into()))?;
 
         if record_user_id != user_id {
             return Err(CustomError::Forbidden("无权修改该记录".into()));
         }
 
-        let mut qb = sqlx::QueryBuilder::<sqlx::Postgres>::new("UPDATE user_record SET update_time = NOW()");
+        let mut qb =
+            sqlx::QueryBuilder::<sqlx::Postgres>::new("UPDATE user_record SET update_time = NOW()");
 
         if let Some(title) = &input.title {
             qb.push(", title = ");
@@ -358,8 +386,17 @@ impl FootprintService {
             let record_time = chrono::DateTime::parse_from_rfc3339(s)
                 .map(|dt| dt.with_timezone(&Utc))
                 .or_else(|_| {
-                    chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S")
-                        .map(|ndt| chrono::DateTime::<Utc>::from_naive_utc_and_offset(ndt, Utc))
+                    chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S").map(|ndt| {
+                        let offset = chrono::FixedOffset::east_opt(8 * 3600).unwrap();
+                        let dt_local = chrono::TimeZone::from_local_datetime(&offset, &ndt)
+                            .single()
+                            .unwrap_or_else(|| {
+                                chrono::DateTime::<chrono::FixedOffset>::from_naive_utc_and_offset(
+                                    ndt, offset,
+                                )
+                            });
+                        dt_local.with_timezone(&Utc)
+                    })
                 })
                 .map_err(|_| CustomError::BadRequest("时间格式错误".into()))?;
             qb.push(", record_time = ");
@@ -375,15 +412,20 @@ impl FootprintService {
         Ok(())
     }
 
-    pub async fn delete_record(db: &PgPool, user_id: i64, record_id: i64) -> Result<(), CustomError> {
+    pub async fn delete_record(
+        db: &PgPool,
+        user_id: i64,
+        record_id: i64,
+    ) -> Result<(), CustomError> {
         let mut tx = db.begin().await?;
 
         // Check ownership and get group info
-        let row = sqlx::query("SELECT user_id, group_id, record_group_id FROM user_record WHERE id = $1")
-            .bind(record_id)
-            .fetch_optional(&mut *tx)
-            .await?
-            .ok_or_else(|| CustomError::BadRequest("记录不存在".into()))?;
+        let row =
+            sqlx::query("SELECT user_id, group_id, record_group_id FROM user_record WHERE id = $1")
+                .bind(record_id)
+                .fetch_optional(&mut *tx)
+                .await?
+                .ok_or_else(|| CustomError::BadRequest("记录不存在".into()))?;
 
         let record_user_id: i64 = row.get("user_id");
         let group_id: i64 = row.get("group_id");
@@ -416,21 +458,27 @@ impl FootprintService {
             .execute(&mut *tx)
             .await?;
 
-        sqlx::query("UPDATE record_group SET current_count = GREATEST(0, current_count - 1) WHERE id = $1")
-            .bind(rg_id)
-            .execute(&mut *tx)
-            .await?;
+        sqlx::query(
+            "UPDATE record_group SET current_count = GREATEST(0, current_count - 1) WHERE id = $1",
+        )
+        .bind(rg_id)
+        .execute(&mut *tx)
+        .await?;
 
         tx.commit().await?;
         Ok(())
     }
 
-    pub async fn expand_capacity(db: &PgPool, user_id: i64, group_id: i64) -> Result<i32, CustomError> {
+    pub async fn expand_capacity(
+        db: &PgPool,
+        user_id: i64,
+        group_id: i64,
+    ) -> Result<i32, CustomError> {
         let mut tx = db.begin().await?;
 
         // 1. Get cost
         let cost: i32 = sqlx::query_scalar(
-            "SELECT unlock_card_diamond_cost FROM group_point_configs WHERE group_id = $1"
+            "SELECT unlock_card_diamond_cost FROM group_point_configs WHERE group_id = $1",
         )
         .bind(group_id)
         .fetch_optional(&mut *tx)
@@ -439,7 +487,7 @@ impl FootprintService {
 
         // 2. Check and deduct diamonds
         let current_balance: i32 = sqlx::query_scalar(
-            "SELECT diamond_balance FROM user_diamond WHERE user_id = $1 FOR UPDATE"
+            "SELECT diamond_balance FROM user_diamond WHERE user_id = $1 FOR UPDATE",
         )
         .bind(user_id)
         .fetch_one(&mut *tx)
@@ -449,7 +497,15 @@ impl FootprintService {
             return Err(CustomError::BadRequest("钻石不足".into()));
         }
 
-        Self::award_diamonds(&mut tx, user_id, -cost, "expand", Some(group_id), Some("解锁足迹容量".into())).await?;
+        Self::award_diamonds(
+            &mut tx,
+            user_id,
+            -cost,
+            "expand",
+            Some(group_id),
+            Some("解锁足迹容量".into()),
+        )
+        .await?;
 
         // 3. Update capacity
         let new_capacity: i32 = sqlx::query_scalar(
@@ -464,12 +520,11 @@ impl FootprintService {
     }
 
     pub async fn create_draft_from_order(db: &PgPool, order_id: i64) -> Result<(), CustomError> {
-        let order = sqlx::query(
-            "SELECT user_id, group_id, created_at FROM orders WHERE order_id = $1"
-        )
-        .bind(order_id)
-        .fetch_one(db)
-        .await?;
+        let order =
+            sqlx::query("SELECT user_id, group_id, created_at FROM orders WHERE order_id = $1")
+                .bind(order_id)
+                .fetch_one(db)
+                .await?;
 
         let user_id: i64 = order.get("user_id");
         let group_id: Option<i64> = order.get("group_id");
@@ -477,7 +532,7 @@ impl FootprintService {
         if let Some(gid) = group_id {
             // Find "干饭日常" group_id
             let rg_id: i64 = sqlx::query_scalar(
-                "SELECT id FROM record_group WHERE group_id = $1 AND group_name = '干饭日常'"
+                "SELECT id FROM record_group WHERE group_id = $1 AND group_name = '干饭日常'",
             )
             .bind(gid)
             .fetch_one(db)

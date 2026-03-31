@@ -120,6 +120,7 @@ use crate::{dashboard, foods, footprint, game_im, orders, upload, users, couple_
         couple_space::routes::create_memorial_day,
         couple_space::routes::update_memorial_day,
         couple_space::routes::delete_memorial_day,
+        couple_space::routes::get_default_memorial_day,
 
         // 上传
         upload::routes::get_qiniu_token,
