@@ -672,28 +672,28 @@ CREATE INDEX idx_wst_active ON wx_subscription_templates(is_active);
 
 -- ================= 模板数据 =================
 -- -- 插入订单创建通知模板
--- INSERT INTO wx_subscription_templates (template_code, template_name, wx_template_id, description, is_active, created_at, updated_at)
--- VALUES (
---     'ORDER_CREATED',
---     '订单创建通知',
---     'UmBKohC4s3sni-E5fmpDp_xL_S6uhQ1yTaTl6LOtftI',
---     '当用户成功创建订单时发送通知',
---     1,
---     NOW(),
---     NOW()
--- );
+INSERT INTO wx_subscription_templates (template_code, template_name, wx_template_id, description, is_active, created_at, updated_at)
+VALUES (
+    'ORDER_CREATED',
+    '订单创建通知',
+    'UmBKohC4s3sni-E5fmpDp_xL_S6uhQ1yTaTl6LOtftI',
+    '当用户成功创建订单时发送通知',
+    1,
+    NOW(),
+    NOW()
+);
 
--- -- 插入订单状态更新通知模板
--- INSERT INTO wx_subscription_templates (template_code, template_name, wx_template_id, description, is_active, created_at, updated_at)
--- VALUES (
---     'ORDER_STATUS_UPDATED',
---     '订单状态更新通知',
---     '3rkE-wK9z6Rxc_ffMx_fS4woy7iIDsxMcBUPsMWuFKI',
---     '当订单状态发生变化时发送通知（已接受、已完成、已取消等）',
---     1,
---     NOW(),
---     NOW()
--- );
+-- 插入订单状态更新通知模板
+INSERT INTO wx_subscription_templates (template_code, template_name, wx_template_id, description, is_active, created_at, updated_at)
+VALUES (
+    'ORDER_STATUS_UPDATED',
+    '订单状态更新通知',
+    '3rkE-wK9z6Rxc_ffMx_fS4woy7iIDsxMcBUPsMWuFKI',
+    '当订单状态发生变化时发送通知（已接受、已完成、已取消等）',
+    1,
+    NOW(),
+    NOW()
+);
 -- ============================================
 -- ================= GROUP POINT CONFIGS =================
 CREATE TABLE group_point_configs (
@@ -732,6 +732,10 @@ CREATE TABLE user_diamond (
 COMMENT ON TABLE user_diamond IS '用户钻石余额表';
 COMMENT ON COLUMN user_diamond.user_id IS '用户ID';
 COMMENT ON COLUMN user_diamond.diamond_balance IS '当前钻石余额';
+COMMENT ON COLUMN user_diamond.total_get IS '累计获得钻石数量';
+COMMENT ON COLUMN user_diamond.total_consume IS '累计消耗钻石数量';
+COMMENT ON COLUMN user_diamond.create_time IS '创建时间';
+COMMENT ON COLUMN user_diamond.update_time IS '更新时间';
 
 CREATE TABLE diamond_flow (
     id BIGSERIAL PRIMARY KEY,
@@ -747,6 +751,15 @@ CREATE TABLE diamond_flow (
 );
 COMMENT ON TABLE diamond_flow IS '钻石流水记录表';
 CREATE INDEX idx_diamond_flow_user_id ON diamond_flow(user_id);
+COMMENT ON COLUMN diamond_flow.user_id IS '用户ID';
+COMMENT ON COLUMN diamond_flow.type IS '类型（1: 获取, 2: 消耗）';
+COMMENT ON COLUMN diamond_flow.scene IS '场景（sign: 签到, record: 记录, share: 分享, expand: 扩容）';
+COMMENT ON COLUMN diamond_flow.diamond_num IS '变动钻石数量';
+COMMENT ON COLUMN diamond_flow.balance_after IS '变动后的余额';
+COMMENT ON COLUMN diamond_flow.relation_id IS '关联业务ID（如订单ID、记录ID等）';
+COMMENT ON COLUMN diamond_flow.remark IS '备注';
+
+-- ================= RECORD GROUP =================
 
 CREATE TABLE record_group (
     id BIGSERIAL PRIMARY KEY,
@@ -762,6 +775,14 @@ CREATE TABLE record_group (
 );
 COMMENT ON TABLE record_group IS '足迹记录分组表（如：干饭日常）';
 CREATE INDEX idx_record_group_group_id ON record_group(group_id);
+COMMENT ON COLUMN record_group.group_id IS '关联组ID';
+COMMENT ON COLUMN record_group.group_name IS '分组名称';
+COMMENT ON COLUMN record_group.group_type IS '分组类型（1: 免费默认）';
+COMMENT ON COLUMN record_group.max_capacity IS '最大容量';
+COMMENT ON COLUMN record_group.current_count IS '当前记录数';
+COMMENT ON COLUMN record_group.status IS '状态（0: 禁用, 1: 正常）';
+
+-- ================= USER RECORD =================
 
 CREATE TABLE user_record (
     id BIGSERIAL PRIMARY KEY,
@@ -783,6 +804,22 @@ CREATE TABLE user_record (
 COMMENT ON TABLE user_record IS '用户足迹记录表';
 CREATE INDEX idx_user_record_group_id ON user_record(group_id);
 CREATE INDEX idx_user_record_rg_id ON user_record(record_group_id);
+COMMENT ON COLUMN user_record.group_id IS '所属关联组ID';
+COMMENT ON COLUMN user_record.record_group_id IS '足迹记录分组ID';
+COMMENT ON COLUMN user_record.user_id IS '用户ID';
+COMMENT ON COLUMN user_record.order_id IS '关联订单ID（如果有的话）';
+COMMENT ON COLUMN user_record.title IS '记录标题';
+COMMENT ON COLUMN user_record.images IS '图片URL列表，逗号分隔';
+COMMENT ON COLUMN user_record.content IS '记录内容';
+COMMENT ON COLUMN user_record.address IS '记录地点';
+COMMENT ON COLUMN user_record.record_time IS '记录时间';
+COMMENT ON COLUMN user_record.like_count IS '点赞数';
+COMMENT ON COLUMN user_record.comment_count IS '评论数';
+COMMENT ON COLUMN user_record.is_draft IS '是否为草稿';
+COMMENT ON COLUMN user_record.create_time IS '记录创建时间';
+COMMENT ON COLUMN user_record.update_time IS '记录更新时间';
+
+-- ================= COMMENTS & LIKES =================
 
 CREATE TABLE record_comment (
     id BIGSERIAL PRIMARY KEY,
@@ -792,6 +829,10 @@ CREATE TABLE record_comment (
     create_time TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 COMMENT ON TABLE record_comment IS '记录评论表';
+COMMENT ON COLUMN record_comment.record_id IS '被评论的记录ID';
+COMMENT ON COLUMN record_comment.user_id IS '评论用户ID';
+COMMENT ON COLUMN record_comment.content IS '评论内容';
+COMMENT ON COLUMN record_comment.create_time IS '评论时间';
 
 CREATE TABLE record_like (
     id BIGSERIAL PRIMARY KEY,
@@ -801,6 +842,9 @@ CREATE TABLE record_like (
     UNIQUE(record_id, user_id)
 );
 COMMENT ON TABLE record_like IS '记录点赞表';
+COMMENT ON COLUMN record_like.record_id IS '被点赞的记录ID';
+COMMENT ON COLUMN record_like.user_id IS '点赞用户ID';
+COMMENT ON COLUMN record_like.create_time IS '点赞时间';
 
 -- ================= ACHIEVEMENTS =================
 CREATE TABLE achievement_definitions (
@@ -814,6 +858,14 @@ CREATE TABLE achievement_definitions (
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 COMMENT ON TABLE achievement_definitions IS '成就/勋章定义表';
+COMMENT ON COLUMN achievement_definitions.id IS '成就ID';
+COMMENT ON COLUMN achievement_definitions.slug IS '成就唯一标识符';
+COMMENT ON COLUMN achievement_definitions.name IS '成就名称';
+COMMENT ON COLUMN achievement_definitions.icon IS '成就图标';
+COMMENT ON COLUMN achievement_definitions.description IS '成就描述';
+COMMENT ON COLUMN achievement_definitions.requirement_type IS '成就达成条件类型';
+COMMENT ON COLUMN achievement_definitions.requirement_value IS '成就达成条件值';
+COMMENT ON COLUMN achievement_definitions.created_at IS '创建时间';
 
 CREATE TABLE user_achievements (
     id BIGSERIAL PRIMARY KEY,
@@ -823,7 +875,10 @@ CREATE TABLE user_achievements (
     UNIQUE(user_id, achievement_id)
 );
 COMMENT ON TABLE user_achievements IS '用户成就解锁记录表';
-
+COMMENT ON COLUMN user_achievements.id IS '用户成就解锁记录表主键ID';
+COMMENT ON COLUMN user_achievements.user_id IS '用户ID';
+COMMENT ON COLUMN user_achievements.achievement_id IS '成就ID';
+COMMENT ON COLUMN user_achievements.unlocked_at IS '解锁时间';
 
 -- ================== MEMORIAL DAY ==================
 CREATE TABLE memorial_day (
