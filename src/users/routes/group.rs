@@ -78,6 +78,11 @@ pub async fn confirm_invitation(
     state: State<Arc<AppState>>,
 ) -> Result<impl Responder, CustomError> {
     GroupService::confirm_invitation(token.user_id, id.0, data.into_inner(), &state).await?;
+    let _ = state
+        .redis_cache
+        .delete_user(&token.user_id.to_string())
+        .await;
+
     Ok(HttpResponse::Ok().finish())
 }
 
@@ -122,6 +127,11 @@ pub async fn unbind_request(
     state: State<Arc<AppState>>,
 ) -> Result<impl Responder, CustomError> {
     GroupService::unbind_request(token.user_id, data.into_inner(), &state).await?;
+    let _ = state
+        .redis_cache
+        .delete_user(&token.user_id.to_string())
+        .await;
+
     Ok(HttpResponse::Ok().finish())
 }
 
@@ -166,6 +176,10 @@ pub async fn bind_user_directly(
     state: State<Arc<AppState>>,
 ) -> Result<impl Responder, CustomError> {
     GroupService::bind_user_directly(token.user_id, data.into_inner(), &state).await?;
+    let _ = state
+        .redis_cache
+        .delete_user(&token.user_id.to_string())
+        .await;
     Ok(HttpResponse::Ok().finish())
 }
 

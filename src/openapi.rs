@@ -109,6 +109,7 @@ use crate::{dashboard, foods, footprint, game_im, orders, upload, users, couple_
         footprint::routes::check_permission,
         footprint::routes::get_overview,
         footprint::routes::get_groups,
+        footprint::routes::get_record,
         footprint::routes::get_records,
         footprint::routes::update_record,
         footprint::routes::delete_record,

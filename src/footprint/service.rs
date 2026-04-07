@@ -178,6 +178,34 @@ impl FootprintService {
         Ok(res)
     }
 
+    pub async fn get_record(
+        db: &PgPool,
+        user_id: i64,
+        group_id: i64,
+        record_id: i64,
+    ) -> Result<RecordOut, CustomError> {
+        let row = sqlx::query(
+            "SELECT r.*, u.nick_name, u.avatar, \
+             EXISTS(SELECT 1 FROM record_like l WHERE l.record_id = r.id AND l.user_id = $1) as is_liked \
+             FROM user_record r LEFT JOIN users u ON u.user_id = r.user_id \
+             WHERE r.id = $2 AND r.group_id = $3 AND r.is_draft = 0"
+        )
+        .bind(user_id)
+        .bind(record_id)
+        .bind(group_id)
+        .fetch_optional(db)
+        .await?
+        .ok_or_else(|| CustomError::NotFound("记录不存在".into()))?;
+
+        let base = UserRecord::from_row(&row)?;
+        Ok(RecordOut {
+            base,
+            user_nick_name: row.try_get("nick_name").ok(),
+            user_avatar: row.try_get("avatar").ok(),
+            is_liked: row.get("is_liked"),
+        })
+    }
+
     pub async fn list_records(
         db: &PgPool,
         user_id: i64,

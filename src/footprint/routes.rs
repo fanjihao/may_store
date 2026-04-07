@@ -85,6 +85,43 @@ pub async fn get_groups(
     Ok(HttpResponse::Ok().json(&res))
 }
 
+/// 获取足迹记录详情
+#[utoipa::path(
+    get,
+    path = "/footprint/records/{id}",
+    params(
+        ("id" = i64, Path, description = "足迹记录ID")
+    ),
+    responses(
+        (status = 200, description = "获取成功", body = RecordOut),
+        (status = 401, description = "未登录"),
+        (status = 403, description = "无权查看"),
+        (status = 404, description = "记录不存在")
+    ),
+    tag = "足迹",
+    security(("cookie_auth" = []))
+)]
+pub async fn get_record(
+    state: State<Arc<AppState>>,
+    token: UserToken,
+    id: Path<i64>,
+) -> Result<impl Responder, CustomError> {
+    let group_id = token
+        .user
+        .as_ref()
+        .and_then(|u| u.group_id)
+        .ok_or_else(|| CustomError::forbidden("请先加入组"))?;
+
+    let res = FootprintService::get_record(
+        &state.db_pool,
+        token.user_id,
+        group_id,
+        id.into_inner(),
+    )
+    .await?;
+    Ok(HttpResponse::Ok().json(&res))
+}
+
 /// 分页查询足迹记录列表 (统一时间轴，可选分组ID作为标签过滤)
 #[utoipa::path(
     get,
