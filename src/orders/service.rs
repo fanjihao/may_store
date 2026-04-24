@@ -442,10 +442,16 @@ impl OrderService {
                     separated.push_bind(*status);
                 }
                 qb.push(")");
+            } else {
+                qb.push(" AND o.status = ");
+                qb.push_bind(OrderStatusEnum::PendingAccept);
             }
+        } else {
+            qb.push(" AND o.status = ");
+            qb.push_bind(OrderStatusEnum::PendingAccept);
         }
 
-        qb.push(" ORDER BY o.goal_time DESC");
+        qb.push(" ORDER BY o.goal_time ASC");
 
         let orders_rows = qb.build().fetch_all(db).await?;
 
