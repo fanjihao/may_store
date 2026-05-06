@@ -8,8 +8,8 @@ use ntex::{
 use serde::{Deserialize, Serialize};
 
 use crate::config::{AppState, TOKEN_SECRET_KEY};
+use crate::domain::user::{UserPublic, UserRecord};
 use crate::errors::CustomError;
-use crate::users::models::user::{UserPublic, UserRecord};
 
 // ========== Token Claims ==========
 #[derive(Debug, Clone, Serialize, Deserialize)]

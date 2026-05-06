@@ -1,27 +1,20 @@
+// 主入口文件
+// 遵循 FSD (Feature-Sliced Design) 架构
+
+mod api;          // API 层 - HTTP 路由和处理器
+mod application;  // 应用服务层 - 业务用例编排
+mod domain;      // 领域层 - 核心业务逻辑
+mod infrastructure; // 基础设施层 - 数据库、外部服务
+
+// 保留通用模块
 mod config;
 mod middlewares;
-
 mod cache;
 mod errors;
 mod models;
 mod openapi;
 mod private;
-mod routes;
 mod utils;
-
-mod game_im;
-mod game_ws;
-
-mod dashboard;
-mod foods;
-mod orders;
-mod services; // 新增服务模块用于通知推送
-mod upload;
-mod users;
-mod footprint;
-mod wishes; // 心愿与兑换模块
-mod wx; // 看板与组活动
-mod couple_space;
 
 use dotenvy::dotenv;
 use errors::CustomError;
@@ -37,16 +30,15 @@ use middlewares::logger::init_logger;
 async fn main() -> Result<(), CustomError> {
     dotenv().ok();
 
-    // log
+    // 初始化日志
     init_logger();
 
-    // 雪花id
+    // 雪花 ID 生成器
     let options = IdGeneratorOptions::new().worker_id(1).worker_id_bit_len(6);
     let _ = IdInstance::init(options)?;
 
-    // state
+    // 应用状态
     let app_state = init_app_state().await?;
-    let app_state_clone = Arc::clone(&app_state);
 
     let allowed_origin = env::var("FRONTEND_ORIGIN").unwrap_or_else(|_| "*".to_string());
 
@@ -61,9 +53,8 @@ async fn main() -> Result<(), CustomError> {
                     .expose_headers(vec!["Authorization"])
                     .max_age(3600);
 
-                // 开发环境允许所有 origin（FRONTEND_ORIGIN 未设置或为 *）
+                // 开发环境允许所有 origin
                 if allowed_origin == "*" {
-                    // ntex-cors 没有 allow_any_origin，用 send_wildcard 代替
                     cors = cors.send_wildcard();
                 } else {
                     cors = cors
@@ -74,22 +65,15 @@ async fn main() -> Result<(), CustomError> {
 
                 cors.finish()
             })
-            .configure(|cfg| routes::route(Arc::clone(&app_state), cfg))
+            // API 路由配置
+            .configure(|cfg| api::configure(cfg))
     })
     .workers(4)
     .bind("0.0.0.0:9831")?
     .run();
 
-    // 启动订单过期后台任务（不阻塞主服务器运行）
-    let expiration_handle = tokio::spawn(orders::service::OrderService::run_expiration_worker(
-        app_state_clone,
-    ));
-
-    // 运行 HTTP 服务器（阻塞直到停止）
+    // 运行 HTTP 服务器
     server.await?;
-
-    // 等待后台任务结束（正常情况下不会返回，除非出现 panic 或关闭）
-    let _ = expiration_handle.await;
 
     Ok(())
 }

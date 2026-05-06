@@ -1,0 +1,145 @@
+// 领域层 - 心愿实体
+// 包含心愿记录、反馈等数据库记录和 DTO
+
+use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
+use sqlx::types::Json;
+use sqlx::FromRow;
+use utoipa::ToSchema;
+
+use super::WishStatus;
+
+/// 心愿记录
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct WishRecord {
+    pub wish_id: i64,
+    pub wish_name: String,
+    pub wish_cost: i32,
+    pub status: WishStatus,
+    pub created_by: i64,
+    pub group_id: i64,
+    pub claimed_by: Option<i64>,
+    pub claimed_at: Option<DateTime<Utc>>,
+    pub claim_cost: Option<i32>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+/// 心愿反馈记录（数据库记录格式）
+#[derive(Debug, Clone, FromRow)]
+pub struct WishFeedbackRecord {
+    pub feedback_id: i64,
+    pub wish_id: i64,
+    pub user_id: i64,
+    pub content: Option<String>,
+    pub images: Option<Json<Vec<String>>>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+/// 心愿反馈输出（API 格式）
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct WishFeedbackOut {
+    pub feedback_id: i64,
+    pub user_id: i64,
+    pub content: Option<String>,
+    pub images: Option<Vec<String>>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+impl From<WishFeedbackRecord> for WishFeedbackOut {
+    fn from(r: WishFeedbackRecord) -> Self {
+        Self {
+            feedback_id: r.feedback_id,
+            user_id: r.user_id,
+            content: r.content,
+            images: r.images.map(|j| j.0),
+            created_at: r.created_at,
+            updated_at: r.updated_at,
+        }
+    }
+}
+
+/// 心愿创建输入
+#[derive(Debug, Deserialize, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct WishCreateInput {
+    pub wish_name: String,
+    pub wish_cost: i32,
+    pub group_id: i64,
+}
+
+/// 心愿更新输入
+#[derive(Debug, Deserialize, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct WishUpdateInput {
+    pub wish_name: Option<String>,
+    pub wish_cost: Option<i32>,
+    pub status: Option<WishStatus>,
+}
+
+/// 心愿反馈输入
+#[derive(Debug, Deserialize, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct WishFeedbackInput {
+    pub content: Option<String>,
+    pub images: Option<Vec<String>>,
+}
+
+/// 心愿输出
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct WishOut {
+    pub wish_id: i64,
+    pub wish_name: String,
+    pub wish_cost: i32,
+    pub status: WishStatus,
+    pub created_by: i64,
+    pub group_id: i64,
+    pub claimed_by: Option<i64>,
+    pub claimed_at: Option<DateTime<Utc>>,
+    pub claim_cost: Option<i32>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+    pub feedback: Option<WishFeedbackOut>,
+}
+
+impl WishOut {
+    pub fn from_record(r: WishRecord, f: Option<WishFeedbackRecord>) -> Self {
+        Self {
+            wish_id: r.wish_id,
+            wish_name: r.wish_name,
+            wish_cost: r.wish_cost,
+            status: r.status,
+            created_by: r.created_by,
+            group_id: r.group_id,
+            claimed_by: r.claimed_by,
+            claimed_at: r.claimed_at,
+            claim_cost: r.claim_cost,
+            created_at: r.created_at,
+            updated_at: r.updated_at,
+            feedback: f.map(WishFeedbackOut::from),
+        }
+    }
+}
+
+/// 心愿查询参数
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema, utoipa::IntoParams)]
+#[serde(rename_all = "camelCase")]
+#[into_params(parameter_in = Query)]
+pub struct WishQuery {
+    pub group_id: Option<i64>,
+    pub status: Option<WishStatus>,
+    pub limit: Option<u32>,
+    pub cursor: Option<String>,
+}
+
+/// 心愿游标分页
+#[derive(Debug, Deserialize, Serialize)]
+pub struct WishCursor {
+    pub created_at: DateTime<Utc>,
+    pub wish_id: i64,
+}

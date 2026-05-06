@@ -110,6 +110,7 @@ CREATE TABLE association_groups (
     status SMALLINT NOT NULL DEFAULT 1,
     invite_code VARCHAR(32),
     -- 1活跃 0关闭
+    diamond INT NOT NULL DEFAULT 0,
     footprint_capacity INT NOT NULL DEFAULT 10,
     footprint_count INT NOT NULL DEFAULT 0,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -121,6 +122,7 @@ COMMENT ON COLUMN association_groups.group_name IS '组名称';
 COMMENT ON COLUMN association_groups.group_type IS '组类型：PAIR/FAMILY/TEAM';
 COMMENT ON COLUMN association_groups.status IS '状态：1活跃 0关闭';
 COMMENT ON COLUMN association_groups.invite_code IS '做客邀请码';
+COMMENT ON COLUMN association_groups.diamond IS '组钻石余额';
 COMMENT ON COLUMN association_groups.footprint_capacity IS '足迹全局容量';
 COMMENT ON COLUMN association_groups.footprint_count IS '当前足迹记录总数';
 COMMENT ON COLUMN association_groups.created_at IS '创建时间';
@@ -759,6 +761,30 @@ COMMENT ON COLUMN diamond_flow.balance_after IS '变动后的余额';
 COMMENT ON COLUMN diamond_flow.relation_id IS '关联业务ID（如订单ID、记录ID等）';
 COMMENT ON COLUMN diamond_flow.remark IS '备注';
 
+-- ================= GROUP DIAMOND FLOW =================
+CREATE TABLE group_diamond_flow (
+    id BIGSERIAL PRIMARY KEY,
+    group_id BIGINT NOT NULL REFERENCES association_groups(group_id) ON DELETE CASCADE,
+    type SMALLINT NOT NULL, -- 1: 获取, 2: 消耗
+    scene VARCHAR(50) NOT NULL, -- sign: 签到, record: 记录, share: 分享, expand: 扩容, group_bonus: 组内全员签到奖励
+    diamond_num INT NOT NULL,
+    balance_after INT NOT NULL,
+    remark TEXT,
+    ref_id BIGINT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+COMMENT ON TABLE group_diamond_flow IS '组钻石流水记录表';
+CREATE INDEX idx_group_diamond_flow_group_id ON group_diamond_flow(group_id);
+CREATE INDEX idx_group_diamond_flow_created ON group_diamond_flow(created_at);
+COMMENT ON COLUMN group_diamond_flow.group_id IS '组ID';
+COMMENT ON COLUMN group_diamond_flow.type IS '类型（1: 获取, 2: 消耗）';
+COMMENT ON COLUMN group_diamond_flow.scene IS '场景（sign: 签到, record: 记录, expand: 扩容, group_bonus: 组内全员签到奖励）';
+COMMENT ON COLUMN group_diamond_flow.diamond_num IS '变动钻石数量';
+COMMENT ON COLUMN group_diamond_flow.balance_after IS '变动后的余额';
+COMMENT ON COLUMN group_diamond_flow.remark IS '备注';
+COMMENT ON COLUMN group_diamond_flow.ref_id IS '关联业务ID';
+COMMENT ON COLUMN group_diamond_flow.created_at IS '创建时间';
+
 -- ================= RECORD GROUP =================
 
 CREATE TABLE record_group (
@@ -855,6 +881,7 @@ CREATE TABLE achievement_definitions (
     description TEXT,
     requirement_type VARCHAR(64) NOT NULL, -- e.g., 'FOOTPRINT_COUNT'
     requirement_value INT NOT NULL,
+    is_active BOOLEAN NOT NULL DEFAULT TRUE,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 COMMENT ON TABLE achievement_definitions IS '成就/勋章定义表';
@@ -879,6 +906,48 @@ COMMENT ON COLUMN user_achievements.id IS '用户成就解锁记录表主键ID';
 COMMENT ON COLUMN user_achievements.user_id IS '用户ID';
 COMMENT ON COLUMN user_achievements.achievement_id IS '成就ID';
 COMMENT ON COLUMN user_achievements.unlocked_at IS '解锁时间';
+
+-- ================== EVENT LOG ==================
+CREATE TYPE event_status_enum AS ENUM ('PENDING', 'PROCESSING', 'DONE', 'FAILED');
+
+CREATE TABLE event_log (
+    id BIGSERIAL PRIMARY KEY,
+    event_type VARCHAR(64) NOT NULL,
+    payload JSONB NOT NULL DEFAULT '{}',
+    user_id BIGINT,
+    group_id BIGINT,
+    ref_type VARCHAR(32),
+    ref_id BIGINT,
+    status event_status_enum NOT NULL DEFAULT 'PENDING',
+    retry_count INT NOT NULL DEFAULT 0,
+    max_retries INT NOT NULL DEFAULT 3,
+    error_message TEXT,
+    idempotency_key VARCHAR(128),
+    trace_id VARCHAR(64),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    processed_at TIMESTAMPTZ
+);
+COMMENT ON TABLE event_log IS '事件日志表 - 事件驱动架构核心';
+COMMENT ON COLUMN event_log.id IS '事件主键ID';
+COMMENT ON COLUMN event_log.event_type IS '事件类型(OrderCreatedEvent, SignInEvent等)';
+COMMENT ON COLUMN event_log.payload IS '事件负载JSON';
+COMMENT ON COLUMN event_log.user_id IS '关联用户ID';
+COMMENT ON COLUMN event_log.group_id IS '关联组ID';
+COMMENT ON COLUMN event_log.ref_type IS '关联业务类型(order, sign, footprint等)';
+COMMENT ON COLUMN event_log.ref_id IS '关联业务ID';
+COMMENT ON COLUMN event_log.status IS '事件状态(PENDING/PROCESSING/DONE/FAILED)';
+COMMENT ON COLUMN event_log.retry_count IS '重试次数';
+COMMENT ON COLUMN event_log.max_retries IS '最大重试次数';
+COMMENT ON COLUMN event_log.error_message IS '失败原因';
+COMMENT ON COLUMN event_log.idempotency_key IS '幂等Key';
+COMMENT ON COLUMN event_log.trace_id IS '链路追踪ID';
+COMMENT ON COLUMN event_log.created_at IS '创建时间';
+COMMENT ON COLUMN event_log.processed_at IS '处理完成时间';
+CREATE INDEX idx_event_log_status ON event_log(status, created_at);
+CREATE INDEX idx_event_log_user_id ON event_log(user_id);
+CREATE INDEX idx_event_log_group_id ON event_log(group_id);
+CREATE INDEX idx_event_log_type ON event_log(event_type);
+CREATE INDEX idx_event_log_idempotency ON event_log(idempotency_key) WHERE idempotency_key IS NOT NULL;
 
 -- ================== MEMORIAL DAY ==================
 CREATE TABLE memorial_day (
