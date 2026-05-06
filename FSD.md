@@ -25,6 +25,9 @@
 - **notification**：消息推送、系统通知、未读数
 - **upload**：文件/图片上传、资源管理
 - **admin**：后台管理、运营配置、数据统计
+- **couple_space**：情侣空间、纪念日管理
+- **dashboard**：数据看板、订单统计、积分旅程（可合并至 user 模块）
+- **wx**：微信公众平台集成（外部服务，移入 infrastructure/external）
 - **utils/middleware**：通用工具、日志、鉴权、限流、审计
 
 > 说明：如需扩展活动、AI推荐、第三方集成等，可独立新模块。
@@ -122,6 +125,21 @@
 ### 2.11 后台管理（admin）
 
 - 运营配置、数据统计、权限管理
+
+### 2.12 情侣空间（couple_space）
+
+- 纪念日管理：创建、编辑、删除纪念日
+- 纪念日类型：相识日、结婚日、生日等
+- 默认纪念日：自动计算在一起的天数
+- 情侣双用户关联，共同维护纪念日
+
+### 2.13 数据看板（dashboard）
+
+- 热门菜品排行
+- 今日订单统计
+- 用户积分旅程
+- 周订单日期分布
+- 活动事件聚合
 
 ---
 
@@ -413,7 +431,28 @@
 ```
 src/
   api/            # API 层（REST/GraphQL/WS）
+    orders/        # 订单路由
+    wishes/        # 心愿路由
+    users/         # 用户路由
+    footprint/     # 足迹路由
+    foods/         # 菜品路由
+    dashboard/     # 数据看板路由
+    sign_in/       # 签到路由
+    notification/  # 通知路由
+    couple_space/  # 情侣空间路由
+    upload/        # 文件上传路由
+    admin/         # 后台管理路由
   application/    # 应用服务层
+    order_service.rs
+    wish_service.rs
+    user_service.rs
+    footprint_service.rs
+    food_service.rs
+    dashboard_service.rs
+    sign_in_service.rs
+    notification_service.rs
+    couple_space_service.rs
+    event_handlers/  # 事件处理器
   domain/         # 领域模型（聚合根/实体/值对象/服务）
     user/
     order/
@@ -422,9 +461,14 @@ src/
     achievement/
     wish/
     sign_in/
-    notification/
     event/
+    foods/
+    dashboard/
+    couple_space/
   infrastructure/ # 基础设施（DB/Redis/消息/外部服务）
+    event/        # 事件发布/日志
+    persistence/  # 数据库 Repository 实现
+    external/     # 外部服务（微信等）
   utils/          # 工具库
   middlewares/    # 中间件
   admin/          # 后台管理

@@ -9,7 +9,7 @@ use utoipa::ToSchema;
 use super::{Gender, LoginMethod, UserRole};
 
 /// 用户记录
-#[derive(Debug, Clone, Serialize, Deserialize, FromRow, ToSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
 #[serde(rename_all = "camelCase")]
 pub struct UserRecord {
     pub user_id: i64,
@@ -28,6 +28,24 @@ pub struct UserRecord {
     pub last_login_at: Option<DateTime<Utc>>,
     pub create_time: DateTime<Utc>,
     pub update_time: DateTime<Utc>,
+    #[sqlx(default)]
+    pub password_hash: Option<String>,
+    #[sqlx(default)]
+    pub password_algo: Option<String>,
+    #[sqlx(default)]
+    pub open_id: Option<String>,
+    #[sqlx(default)]
+    pub username_change: Option<bool>,
+    #[sqlx(default)]
+    pub login_method: Option<LoginMethod>,
+    #[sqlx(default)]
+    pub password_updated_at: Option<DateTime<Utc>>,
+    #[sqlx(default)]
+    pub is_temp_password: Option<bool>,
+    #[sqlx(default)]
+    pub push_id: Option<String>,
+    #[sqlx(default)]
+    pub last_role_switch_at: Option<DateTime<Utc>>,
 }
 
 impl From<UserRecord> for UserPublic {
@@ -234,7 +252,7 @@ pub struct BindUserDirectlyInput {
 }
 
 /// 群组积分配置
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct GroupPointConfig {
     pub group_id: i64,

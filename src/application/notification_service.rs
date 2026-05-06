@@ -1,7 +1,7 @@
 // 应用服务层 - 通知服务
 // 包含微信推送等通知业务用例
 
-use sqlx::PgPool;
+use sqlx::{PgPool, Row};
 use std::sync::Arc;
 
 use crate::config::AppState;
