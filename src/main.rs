@@ -1,16 +1,16 @@
 // 主入口文件
 // 遵循 FSD (Feature-Sliced Design) 架构
 
-mod api;          // API 层 - HTTP 路由和处理器
-mod application;  // 应用服务层 - 业务用例编排
-mod domain;      // 领域层 - 核心业务逻辑
+mod api; // API 层 - HTTP 路由和处理器
+mod application; // 应用服务层 - 业务用例编排
+mod domain; // 领域层 - 核心业务逻辑
 mod infrastructure; // 基础设施层 - 数据库、外部服务
 
 // 保留通用模块
-mod config;
-mod middlewares;
 mod cache;
+mod config;
 mod errors;
+mod middlewares;
 mod models;
 mod openapi;
 mod private;

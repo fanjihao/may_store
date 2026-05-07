@@ -204,11 +204,6 @@ impl WishService {
             return Err(CustomError::BadRequest("心愿已被认领".into()));
         }
 
-        // 不能认领自己的心愿
-        if existing.created_by == user_id as i64 {
-            return Err(CustomError::BadRequest("不能认领自己的心愿".into()));
-        }
-
         // 扣除积分
         let points_spent = existing.wish_cost;
         let user_points: i32 = sqlx::query("SELECT love_point FROM users WHERE user_id = $1")
