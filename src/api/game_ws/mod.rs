@@ -1,14 +1,14 @@
 // API 层 - 游戏 WebSocket 路由
-// 提供实时双向通信，支持微信小程序 WebSocket 连接
-//
-// 注意: ntex 2.x 的 WebSocket API 需要深入理解其服务工厂和分发器模式。
-// 当前实现为基础结构，完整的 WebSocket 支持需要进一步适配。
+// 使用 tokio-tungstenite 实现 WebSocket，支持微信小程序连接
 
 pub mod connection;
 pub mod messages;
 
 use std::sync::Arc;
 use ntex::web::{self, ServiceConfig};
+use tokio::net::TcpListener;
+use tokio_tungstenite::{accept_async, tungstenite::Message};
+use futures_util::{SinkExt, StreamExt};
 
 use crate::api::game_ws::connection::ConnectionManager;
 
@@ -20,42 +20,32 @@ pub fn get_connection_manager() -> Arc<ConnectionManager> {
     CONNECTION_MANAGER.get_or_init(|| Arc::new(ConnectionManager::new())).clone()
 }
 
-/// 配置 WebSocket 路由
+/// 配置 WebSocket 路由（HTTP 端点）
 pub fn configure(cfg: &mut ServiceConfig) {
     cfg.service(
         web::scope("/ws")
-            .route("/connect", web::get().to(ws_connect))
+            .route("/info", web::get().to(ws_info))
             .route("/status", web::get().to(ws_status)),
     );
 }
 
-/// WebSocket 连接端点
-/// 客户端通过此端点建立 WebSocket 连接
-/// 微信小程序中使用 wx.connectSocket() 连接此端点
-///
-/// 消息格式：
-/// - 连接后发送认证消息: {"type": "auth", "data": {"token": "xxx"}}
-/// - 心跳: {"type": "ping", "data": {}}
-/// - 服务器响应: {"type": "pong", "data": {}} 或 {"type": "auth_resp", "data": {"success": true, "userId": 123}}
-///
-/// 完整的 WebSocket 实现需要使用 ntex::web::ws::start 并实现 ServiceFactory。
-/// 当前返回连接指南信息。
+/// WebSocket 信息端点
 #[utoipa::path(
     get,
-    path = "/ws/connect",
+    path = "/ws/info",
     tag = "WebSocket",
     responses(
-        (status = 200, description = "WebSocket 连接信息"),
-        (status = 400, description = "请求参数错误")
+        (status = 200, description = "获取成功")
     ),
     security(())
 )]
-pub async fn ws_connect() -> impl web::Responder {
+pub async fn ws_info() -> impl web::Responder {
     let info = serde_json::json!({
-        "message": "WebSocket 连接端点",
-        "description": "请使用 WebSocket 客户端连接此端点",
-        "url": "/ws/connect",
-        "protocol": "wss",
+        "message": "WebSocket 连接信息",
+        "description": "请连接到 WebSocket 服务器",
+        "host": "127.0.0.1",
+        "port": 9832,
+        "url": "ws://127.0.0.1:9832",
         "authMessage": {
             "type": "auth",
             "data": {
@@ -66,21 +56,13 @@ pub async fn ws_connect() -> impl web::Responder {
             "type": "ping",
             "data": {}
         },
-        "responseExamples": {
-            "connected": {"type": "connected", "data": {}},
-            "authSuccess": {"type": "auth_resp", "data": {"success": true, "userId": 123}},
-            "authFailed": {"type": "auth_resp", "data": {"success": false, "message": "错误信息"}},
-            "pong": {"type": "pong", "data": {}},
-            "error": {"type": "error", "data": {"code": 401, "message": "请先认证"}}
-        },
-        "wechatMiniProgram": "wx.connectSocket({ url: 'wss://your-domain.com/ws/connect' })"
+        "wechatMiniProgram": "wx.connectSocket({ url: 'ws://127.0.0.1:9832' })"
     });
 
     web::HttpResponse::Ok().json(&info)
 }
 
 /// WebSocket 状态端点
-/// 获取当前 WebSocket 服务状态
 #[utoipa::path(
     get,
     path = "/ws/status",
@@ -101,4 +83,134 @@ pub async fn ws_status() -> impl web::Responder {
         "onlineUsers": online_users,
         "serverTime": chrono::Utc::now().to_rfc3339()
     }))
+}
+
+/// 启动 WebSocket 服务器（在独立端口）
+pub async fn start_websocket_server(addr: &str) -> Result<(), Box<dyn std::error::Error>> {
+    let manager = get_connection_manager();
+    let listener = TcpListener::bind(addr).await?;
+    log::info!("WebSocket 服务器已启动: {}", addr);
+
+    while let Ok((tcp_stream, peer_addr)) = listener.accept().await {
+        let manager = manager.clone();
+        tokio::spawn(async move {
+            handle_websocket_connection(tcp_stream, manager, peer_addr).await;
+        });
+    }
+
+    Ok(())
+}
+
+/// 处理 WebSocket 连接
+async fn handle_websocket_connection(
+    tcp_stream: tokio::net::TcpStream,
+    manager: Arc<ConnectionManager>,
+    peer_addr: std::net::SocketAddr,
+) {
+    match accept_async(tcp_stream).await {
+        Ok(ws_stream) => {
+            log::info!("新的 WebSocket 连接: {}", peer_addr);
+            process_messages(ws_stream, manager, peer_addr).await;
+        }
+        Err(e) => {
+            log::error!("WebSocket 握手失败 from {}: {}", peer_addr, e);
+        }
+    }
+}
+
+/// 处理 WebSocket 消息循环
+async fn process_messages(
+    ws_stream: tokio_tungstenite::WebSocketStream<tokio::net::TcpStream>,
+    manager: Arc<ConnectionManager>,
+    peer_addr: std::net::SocketAddr,
+) {
+    let mut ws_stream = ws_stream;
+    let mut user_id: Option<i64> = None;
+
+    // 发送连接成功消息
+    let _ = ws_stream.send(Message::Text(r#"{"type":"connected","data":{}}"#.into())).await;
+
+    while let Some(msg) = ws_stream.next().await {
+        match msg {
+            Ok(Message::Text(text)) => {
+                let text = text.to_string();
+                log::debug!("收到消息 from {}: {}", peer_addr, text);
+
+                if let Ok(envelope) = serde_json::from_str::<crate::api::game_ws::messages::WsEnvelope>(&text) {
+                    match envelope.msg_type.as_str() {
+                        "ping" => {
+                            let _ = ws_stream.send(Message::Text(r#"{"type":"pong","data":{}}"#.into())).await;
+                        }
+                        "auth" => {
+                            if let Some(token) = envelope.data.get("token").and_then(|t| t.as_str()) {
+                                match verify_token(token).await {
+                                    Ok(uid) => {
+                                        user_id = Some(uid);
+                                        manager.add_connection(uid, crate::api::game_ws::connection::ConnectionInfo {
+                                            user_id: Some(uid),
+                                            connected_at: chrono::Utc::now(),
+                                            authenticated: true,
+                                        }).await;
+                                        let _ = ws_stream.send(Message::Text(format!(
+                                            r#"{{"type":"auth_resp","data":{{"success":true,"userId":{}}}}}"#,
+                                            uid
+                                        ).into())).await;
+                                        log::info!("用户 {} 认证成功 from {}", uid, peer_addr);
+                                    }
+                                    Err(e) => {
+                                        let _ = ws_stream.send(Message::Text(format!(
+                                            r#"{{"type":"auth_resp","data":{{"success":false,"message":"{}"}}}}"#,
+                                            e
+                                        ).into())).await;
+                                    }
+                                }
+                            }
+                        }
+                        _ => {
+                            if user_id.is_none() {
+                                let _ = ws_stream.send(Message::Text(r#"{"type":"error","data":{"code":401,"message":"请先认证"}}"#.into())).await;
+                            }
+                        }
+                    }
+                }
+            }
+            Ok(Message::Close(_)) => {
+                log::info!("WebSocket 连接关闭: {}", peer_addr);
+                break;
+            }
+            Ok(Message::Ping(data)) => {
+                let _ = ws_stream.send(Message::Pong(data)).await;
+            }
+            Err(e) => {
+                log::error!("WebSocket 错误 from {}: {}", peer_addr, e);
+                break;
+            }
+            _ => {}
+        }
+    }
+
+    // 清理连接
+    if let Some(uid) = user_id {
+        manager.remove_connection(uid).await;
+        log::info!("用户 {} 连接已清理", uid);
+    }
+}
+
+/// 验证 JWT Token
+async fn verify_token(token: &str) -> Result<i64, String> {
+    use jsonwebtoken::{decode, Algorithm, DecodingKey, Validation};
+    use crate::config::TOKEN_SECRET_KEY;
+
+    let validation = Validation::new(Algorithm::HS256);
+    let token_data = decode::<serde_json::Value>(
+        token,
+        &DecodingKey::from_secret(TOKEN_SECRET_KEY),
+        &validation,
+    ).map_err(|e| format!("Token 验证失败: {}", e))?;
+
+    let user_id = token_data.claims.get("user_id")
+        .and_then(|v| v.as_i64())
+        .ok_or("Token 中缺少 user_id".to_string())?;
+
+    Ok(user_id)
 }

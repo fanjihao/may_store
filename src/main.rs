@@ -40,6 +40,14 @@ async fn main() -> Result<(), CustomError> {
     // 应用状态
     let app_state = init_app_state().await?;
 
+    // 启动 WebSocket 服务器（独立端口 9832）
+    let ws_handle = tokio::spawn(async {
+        use api::game_ws;
+        if let Err(e) = game_ws::start_websocket_server("0.0.0.0:9832").await {
+            log::error!("WebSocket 服务器错误: {}", e);
+        }
+    });
+
     let allowed_origin = env::var("FRONTEND_ORIGIN").unwrap_or_else(|_| "*".to_string());
 
     let server = HttpServer::new(move || {
@@ -72,8 +80,17 @@ async fn main() -> Result<(), CustomError> {
     .bind("0.0.0.0:9831")?
     .run();
 
-    // 运行 HTTP 服务器
-    server.await?;
+    // 运行 HTTP 服务器和 WebSocket 服务器
+    tokio::select! {
+        result = server => {
+            if let Err(e) = result {
+                log::error!("HTTP 服务器错误: {}", e);
+            }
+        }
+        _ = ws_handle => {
+            log::info!("WebSocket 服务器已停止");
+        }
+    };
 
     Ok(())
 }
