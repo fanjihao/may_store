@@ -1,11 +1,11 @@
 // 应用服务层 - 通知服务
 // 包含微信推送等通知业务用例
 
-use sqlx::{PgPool, Row};
-use std::sync::Arc;
 use crate::config::AppState;
 use crate::domain::event::EventType;
 use crate::errors::CustomError;
+use sqlx::{PgPool, Row};
+use std::sync::Arc;
 
 /// 通知类型枚举
 #[derive(Debug, Clone, Copy)]
@@ -37,13 +37,18 @@ impl NotificationService {
         let db = &state.db_pool;
 
         // 获取订单相关信息（创建者、接单人）
-        let order_info: Option<(i64, Option<i64>, String)> = sqlx::query(
-            "SELECT user_id, assignee_id, status FROM orders WHERE order_id = $1"
-        )
-        .bind(order_id)
-        .fetch_optional(db)
-        .await?
-        .map(|r| (r.get::<i64, _>("user_id"), r.get::<Option<i64>, _>("assignee_id"), r.get::<String, _>("status")));
+        let order_info: Option<(i64, Option<i64>, String)> =
+            sqlx::query("SELECT user_id, assignee_id, status FROM orders WHERE order_id = $1")
+                .bind(order_id)
+                .fetch_optional(db)
+                .await?
+                .map(|r| {
+                    (
+                        r.get::<i64, _>("user_id"),
+                        r.get::<Option<i64>, _>("assignee_id"),
+                        r.get::<String, _>("status"),
+                    )
+                });
 
         let (creator_id, assignee_id, status) = match order_info {
             Some(info) => info,
@@ -60,7 +65,12 @@ impl NotificationService {
             }
             NotificationType::OrderAccepted => {
                 // 通知下单人已有人接单
-                Self::send_template_message(state, creator_id, &format!("订单已被接受: {}", status)).await?;
+                Self::send_template_message(
+                    state,
+                    creator_id,
+                    &format!("订单已被接受: {}", status),
+                )
+                .await?;
             }
             NotificationType::OrderCompleted => {
                 // 通知下单人订单已完成，等待确认
@@ -81,9 +91,15 @@ impl NotificationService {
         diamonds_earned: i32,
     ) -> Result<(), CustomError> {
         let message = if consecutive_days >= 7 {
-            format!("太棒了！连续签到{}天，获得{}钻石", consecutive_days, diamonds_earned)
+            format!(
+                "太棒了！连续签到{}天，获得{}钻石",
+                consecutive_days, diamonds_earned
+            )
         } else if consecutive_days >= 3 {
-            format!("连续签到{}天，获得{}钻石，继续加油！", consecutive_days, diamonds_earned)
+            format!(
+                "连续签到{}天，获得{}钻石，继续加油！",
+                consecutive_days, diamonds_earned
+            )
         } else {
             format!("签到成功，获得{}钻石", diamonds_earned)
         };
@@ -102,21 +118,36 @@ impl NotificationService {
         let db = &state.db_pool;
 
         // 获取心愿信息
-        let wish_info: Option<(i64, i64, Option<i64>)> = sqlx::query(
-            "SELECT created_by, group_id, claimed_by FROM wishes WHERE wish_id = $1"
-        )
-        .bind(wish_id)
-        .fetch_optional(db)
-        .await?
-        .map(|r| (r.get::<i64, _>("created_by"), r.get::<i64, _>("group_id"), r.get::<Option<i64>, _>("claimed_by")));
+        let wish_info: Option<(i64, i64, Option<i64>)> =
+            sqlx::query("SELECT created_by, group_id, claimed_by FROM wishes WHERE wish_id = $1")
+                .bind(wish_id)
+                .fetch_optional(db)
+                .await?
+                .map(|r| {
+                    (
+                        r.get::<i64, _>("created_by"),
+                        r.get::<i64, _>("group_id"),
+                        r.get::<Option<i64>, _>("claimed_by"),
+                    )
+                });
 
         if let Some((creator_id, _, claimed_by)) = wish_info {
             // 通知创建者
-            Self::send_template_message(state, creator_id, &format!("您的心愿「{}」已完成", wish_name)).await?;
+            Self::send_template_message(
+                state,
+                creator_id,
+                &format!("您的心愿「{}」已完成", wish_name),
+            )
+            .await?;
 
             // 通知认领者
             if let Some(claimer) = claimed_by {
-                Self::send_template_message(state, claimer, &format!("您已完成心愿「{}」", wish_name)).await?;
+                Self::send_template_message(
+                    state,
+                    claimer,
+                    &format!("您已完成心愿「{}」", wish_name),
+                )
+                .await?;
             }
         }
 
@@ -153,7 +184,11 @@ impl NotificationService {
             .flatten()
             .and_then(|r| {
                 let s: String = r.get("push_id");
-                if s.is_empty() { None } else { Some(s) }
+                if s.is_empty() {
+                    None
+                } else {
+                    Some(s)
+                }
             });
 
         // 如果有push_id，则发送微信模板消息
@@ -172,16 +207,15 @@ impl NotificationService {
     }
 
     /// 获取用户的未读通知数量
-    pub async fn get_unread_count(
-        db: &PgPool,
-        user_id: i64,
-    ) -> Result<i32, CustomError> {
+    pub async fn get_unread_count(db: &PgPool, user_id: i64) -> Result<i32, CustomError> {
         // 简化实现：查询通知表获取未读数
-        let count: i32 = sqlx::query("SELECT COUNT(*) FROM notifications WHERE user_id = $1 AND is_read = false")
-            .bind(user_id as i64)
-            .fetch_one(db)
-            .await?
-            .get(0);
+        let count: i32 = sqlx::query(
+            "SELECT COUNT(*) FROM notifications WHERE user_id = $1 AND is_read = false",
+        )
+        .bind(user_id as i64)
+        .fetch_one(db)
+        .await?
+        .get(0);
 
         Ok(count)
     }

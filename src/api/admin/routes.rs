@@ -221,8 +221,71 @@ pub async fn update_config(
         return Err(CustomError::Forbidden("需要管理员权限".into()));
     }
 
-    // TODO: 实际实现应验证配置值并保存到数据库
-    println!("Admin config update request: {:?}", body);
+    let db = &state.db_pool;
+    let config = body.into_inner();
+
+    // 验证并更新配置项
+    if let Some(sign_reward_daily) = config.get("signRewardDaily").and_then(|v| v.as_i64()) {
+        if sign_reward_daily < 1 || sign_reward_daily > 100 {
+            return Err(CustomError::BadRequest("每日签到奖励必须在1-100之间".into()));
+        }
+        sqlx::query(
+            "INSERT INTO system_config (key, value, updated_at) VALUES ('sign_reward_daily', $1, NOW()) ON CONFLICT (key) DO UPDATE SET value = $1, updated_at = NOW()"
+        )
+        .bind(sign_reward_daily as i32)
+        .execute(db)
+        .await?;
+    }
+
+    if let Some(sign_reward_consecutive) = config.get("signRewardConsecutive").and_then(|v| v.as_i64()) {
+        if sign_reward_consecutive < 1 || sign_reward_consecutive > 100 {
+            return Err(CustomError::BadRequest("连续签到奖励必须在1-100之间".into()));
+        }
+        sqlx::query(
+            "INSERT INTO system_config (key, value, updated_at) VALUES ('sign_reward_consecutive', $1, NOW()) ON CONFLICT (key) DO UPDATE SET value = $1, updated_at = NOW()"
+        )
+        .bind(sign_reward_consecutive as i32)
+        .execute(db)
+        .await?;
+    }
+
+    if let Some(order_point_percent) = config.get("orderPointPercent").and_then(|v| v.as_i64()) {
+        if order_point_percent < 1 || order_point_percent > 200 {
+            return Err(CustomError::BadRequest("订单积分百分比必须在1-200之间".into()));
+        }
+        sqlx::query(
+            "INSERT INTO system_config (key, value, updated_at) VALUES ('order_point_percent', $1, NOW()) ON CONFLICT (key) DO UPDATE SET value = $1, updated_at = NOW()"
+        )
+        .bind(order_point_percent as i32)
+        .execute(db)
+        .await?;
+    }
+
+    if let Some(diamond_unlock_cost) = config.get("diamondUnlockCost").and_then(|v| v.as_i64()) {
+        if diamond_unlock_cost < 10 || diamond_unlock_cost > 10000 {
+            return Err(CustomError::BadRequest("钻石解锁费用必须在10-10000之间".into()));
+        }
+        sqlx::query(
+            "INSERT INTO system_config (key, value, updated_at) VALUES ('diamond_unlock_cost', $1, NOW()) ON CONFLICT (key) DO UPDATE SET value = $1, updated_at = NOW()"
+        )
+        .bind(diamond_unlock_cost as i32)
+        .execute(db)
+        .await?;
+    }
+
+    if let Some(default_capacity) = config.get("defaultFootprintCapacity").and_then(|v| v.as_i64()) {
+        if default_capacity < 10 || default_capacity > 1000 {
+            return Err(CustomError::BadRequest("默认足迹容量必须在10-1000之间".into()));
+        }
+        sqlx::query(
+            "INSERT INTO system_config (key, value, updated_at) VALUES ('default_footprint_capacity', $1, NOW()) ON CONFLICT (key) DO UPDATE SET value = $1, updated_at = NOW()"
+        )
+        .bind(default_capacity as i32)
+        .execute(db)
+        .await?;
+    }
+
+    println!("Admin config updated: {:?}", config);
 
     Ok(HttpResponse::Ok().json(&serde_json::json!({"status": "ok"})))
 }

@@ -1,19 +1,9 @@
 // OpenAPI 文档生成
-// 占位符实现
+// 从外部文件加载 OpenAPI 3.0 JSON 文档
 
-use ntex::web::{HttpRequest, HttpResponse};
-use std::sync::Arc;
-use utoipa::openapi::security::{ApiKey, ApiKeyValue, SecurityScheme};
-use utoipa::{Modify, OpenApi};
-
-#[derive(OpenApi)]
-#[openapi()]
-pub struct ApiDoc;
-
-pub async fn openapi_json() -> HttpResponse {
-    HttpResponse::Ok().json(&serde_json::json!({}))
-}
-
-pub async fn serve_swagger(_req: HttpRequest) -> HttpResponse {
-    HttpResponse::Ok().content_type("text/html").body("<html></html>")
+/// 生成 OpenAPI 3.0 JSON 文档
+pub fn openapi_json() -> String {
+    // 从外部 JSON 文件加载 OpenAPI 文档
+    // 避免在 Rust 代码中处理 $ref 等特殊字符
+    include_str!("openapi.json").to_string()
 }

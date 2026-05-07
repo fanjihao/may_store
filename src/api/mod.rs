@@ -6,9 +6,11 @@ pub mod couple_space;
 pub mod dashboard;
 pub mod foods;
 pub mod footprint;
+pub mod game_ws;
 pub mod notification;
 pub mod orders;
 pub mod sign_in;
+pub mod swagger;
 pub mod upload;
 pub mod users;
 pub mod wishes;
@@ -17,6 +19,8 @@ use ntex::web::ServiceConfig;
 
 /// 配置所有 API 路由
 pub fn configure(cfg: &mut ServiceConfig) {
+    swagger::configure(cfg);
+    game_ws::configure(cfg);
     orders::configure(cfg);
     wishes::configure(cfg);
     users::configure(cfg);

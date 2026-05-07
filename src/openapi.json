@@ -1,0 +1,864 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "May Store API",
+    "version": "1.0.0",
+    "description": "心愿菜单 RESTful API - 基于 FSD 架构的心愿订单系统"
+  },
+  "servers": [
+    {
+      "url": "http://localhost:9831",
+      "description": "开发环境服务器"
+    }
+  ],
+  "tags": [
+    {"name": "用户", "description": "用户注册、登录、资料管理"},
+    {"name": "订单", "description": "订单创建、状态管理、评价"},
+    {"name": "签到", "description": "每日签到、连续签到奖励"},
+    {"name": "足迹", "description": "用户足迹记录、相册管理"},
+    {"name": "菜品", "description": "菜品管理、标签、食材"},
+    {"name": "心愿", "description": "心愿创建、心愿池、心愿兑换"},
+    {"name": "数据看板", "description": "订单统计、积分旅程"},
+    {"name": "通知", "description": "消息推送、系统通知"},
+    {"name": "情侣空间", "description": "纪念日管理"},
+    {"name": "上传", "description": "文件上传、资源管理"},
+    {"name": "管理", "description": "后台管理、运营配置"}
+  ],
+  "paths": {
+    "/auth/login": {
+      "post": {
+        "tags": ["用户"],
+        "summary": "用户登录",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "username": {"type": "string"},
+                  "password": {"type": "string"},
+                  "weixin_code": {"type": "string"}
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "登录成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "token": {"type": "string"},
+                    "user": {"$ref": "#/components/schemas/UserPublic"}
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/auth/register": {
+      "post": {
+        "tags": ["用户"],
+        "summary": "用户注册",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "username": {"type": "string"},
+                  "password": {"type": "string"},
+                  "email": {"type": "string"},
+                  "phone": {"type": "string"},
+                  "avatar": {"type": "string"},
+                  "open_id": {"type": "string"}
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "注册成功"
+          }
+        }
+      }
+    },
+    "/users/me": {
+      "get": {
+        "tags": ["用户"],
+        "summary": "获取当前用户信息",
+        "security": [{"cookie_auth": []}],
+        "responses": {
+          "200": {
+            "description": "用户信息",
+            "content": {
+              "application/json": {
+                "schema": {"$ref": "#/components/schemas/UserPublic"}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/users/info": {
+      "get": {
+        "tags": ["用户"],
+        "summary": "根据用户名获取用户信息",
+        "parameters": [
+          {"name": "username", "in": "query", "required": true, "schema": {"type": "string"}}
+        ],
+        "responses": {
+          "200": {
+            "description": "用户信息",
+            "content": {
+              "application/json": {
+                "schema": {"$ref": "#/components/schemas/UserInfoResponse"}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/users/check-register": {
+      "get": {
+        "tags": ["用户"],
+        "summary": "检查用户名是否已注册",
+        "parameters": [
+          {"name": "username", "in": "query", "required": true, "schema": {"type": "string"}}
+        ],
+        "responses": {
+          "200": {
+            "description": "注册状态"
+          }
+        }
+      }
+    },
+    "/users/profile": {
+      "put": {
+        "tags": ["用户"],
+        "summary": "修改用户信息",
+        "security": [{"cookie_auth": []}],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {"$ref": "#/components/schemas/ProfileUpdateInput"}
+            }
+          }
+        },
+        "responses": {
+          "200": {"description": "更新成功"}
+        }
+      }
+    },
+    "/users/role-switch": {
+      "post": {
+        "tags": ["用户"],
+        "summary": "切换用户角色",
+        "security": [{"cookie_auth": []}],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {"$ref": "#/components/schemas/RoleSwitchInput"}
+            }
+          }
+        },
+        "responses": {
+          "200": {"description": "切换成功"}
+        }
+      }
+    },
+    "/orders": {
+      "get": {
+        "tags": ["订单"],
+        "summary": "获取订单列表",
+        "security": [{"cookie_auth": []}],
+        "responses": {
+          "200": {"description": "订单列表"}
+        }
+      },
+      "post": {
+        "tags": ["订单"],
+        "summary": "创建订单",
+        "security": [{"cookie_auth": []}],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {"$ref": "#/components/schemas/OrderCreateInput"}
+            }
+          }
+        },
+        "responses": {
+          "201": {"description": "订单创建成功"}
+        }
+      }
+    },
+    "/orders/{id}": {
+      "get": {
+        "tags": ["订单"],
+        "summary": "获取订单详情",
+        "security": [{"cookie_auth": []}],
+        "parameters": [
+          {"name": "id", "in": "path", "required": true, "schema": {"type": "integer"}}
+        ],
+        "responses": {
+          "200": {"description": "订单详情"}
+        }
+      },
+      "delete": {
+        "tags": ["订单"],
+        "summary": "删除订单",
+        "security": [{"cookie_auth": []}],
+        "parameters": [
+          {"name": "id", "in": "path", "required": true, "schema": {"type": "integer"}}
+        ],
+        "responses": {
+          "200": {"description": "删除成功"}
+        }
+      }
+    },
+    "/orders/team-today": {
+      "get": {
+        "tags": ["订单"],
+        "summary": "获取团队今日订单",
+        "security": [{"cookie_auth": []}],
+        "responses": {
+          "200": {"description": "今日订单列表"}
+        }
+      }
+    },
+    "/orders/status": {
+      "put": {
+        "tags": ["订单"],
+        "summary": "更新订单状态",
+        "security": [{"cookie_auth": []}],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {"$ref": "#/components/schemas/OrderStatusUpdateInput"}
+            }
+          }
+        },
+        "responses": {
+          "200": {"description": "状态更新成功"}
+        }
+      }
+    },
+    "/orders-statistics/{groupId}": {
+      "get": {
+        "tags": ["订单"],
+        "summary": "获取订单统计",
+        "parameters": [
+          {"name": "groupId", "in": "path", "required": true, "schema": {"type": "integer"}}
+        ],
+        "responses": {
+          "200": {"description": "订单统计信息"}
+        }
+      }
+    },
+    "/sign-in/daily": {
+      "post": {
+        "tags": ["签到"],
+        "summary": "每日签到",
+        "security": [{"cookie_auth": []}],
+        "responses": {
+          "200": {"description": "签到成功"}
+        }
+      }
+    },
+    "/sign-in/info": {
+      "get": {
+        "tags": ["签到"],
+        "summary": "获取签到信息",
+        "security": [{"cookie_auth": []}],
+        "responses": {
+          "200": {"description": "签到信息"}
+        }
+      }
+    },
+    "/footprint/overview": {
+      "get": {
+        "tags": ["足迹"],
+        "summary": "获取足迹概览",
+        "security": [{"cookie_auth": []}],
+        "responses": {
+          "200": {"description": "足迹概览"}
+        }
+      }
+    },
+    "/footprint/records": {
+      "get": {
+        "tags": ["足迹"],
+        "summary": "获取足迹记录列表",
+        "security": [{"cookie_auth": []}],
+        "responses": {
+          "200": {"description": "足迹记录列表"}
+        }
+      },
+      "post": {
+        "tags": ["足迹"],
+        "summary": "提交足迹记录",
+        "security": [{"cookie_auth": []}],
+        "responses": {
+          "201": {"description": "提交成功"}
+        }
+      }
+    },
+    "/foods": {
+      "get": {
+        "tags": ["菜品"],
+        "summary": "获取菜品列表",
+        "security": [{"cookie_auth": []}],
+        "responses": {
+          "200": {"description": "菜品列表"}
+        }
+      },
+      "post": {
+        "tags": ["菜品"],
+        "summary": "创建菜品",
+        "security": [{"cookie_auth": []}],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {"$ref": "#/components/schemas/FoodCreateInput"}
+            }
+          }
+        },
+        "responses": {
+          "201": {"description": "创建成功"}
+        }
+      }
+    },
+    "/foods/{id}": {
+      "get": {
+        "tags": ["菜品"],
+        "summary": "获取菜品详情",
+        "parameters": [
+          {"name": "id", "in": "path", "required": true, "schema": {"type": "integer"}}
+        ],
+        "responses": {
+          "200": {"description": "菜品详情"}
+        }
+      },
+      "put": {
+        "tags": ["菜品"],
+        "summary": "更新菜品",
+        "security": [{"cookie_auth": []}],
+        "parameters": [
+          {"name": "id", "in": "path", "required": true, "schema": {"type": "integer"}}
+        ],
+        "responses": {
+          "200": {"description": "更新成功"}
+        }
+      },
+      "delete": {
+        "tags": ["菜品"],
+        "summary": "删除菜品",
+        "security": [{"cookie_auth": []}],
+        "parameters": [
+          {"name": "id", "in": "path", "required": true, "schema": {"type": "integer"}}
+        ],
+        "responses": {
+          "200": {"description": "删除成功"}
+        }
+      }
+    },
+    "/wishes": {
+      "get": {
+        "tags": ["心愿"],
+        "summary": "获取心愿列表",
+        "security": [{"cookie_auth": []}],
+        "responses": {
+          "200": {"description": "心愿列表"}
+        }
+      },
+      "post": {
+        "tags": ["心愿"],
+        "summary": "创建心愿",
+        "security": [{"cookie_auth": []}],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {"$ref": "#/components/schemas/WishCreateInput"}
+            }
+          }
+        },
+        "responses": {
+          "201": {"description": "创建成功"}
+        }
+      }
+    },
+    "/wishes/{id}/fulfill": {
+      "post": {
+        "tags": ["心愿"],
+        "summary": "完成心愿",
+        "security": [{"cookie_auth": []}],
+        "parameters": [
+          {"name": "id", "in": "path", "required": true, "schema": {"type": "integer"}}
+        ],
+        "responses": {
+          "200": {"description": "心愿完成"}
+        }
+      }
+    },
+    "/dashboard/activities": {
+      "get": {
+        "tags": ["数据看板"],
+        "summary": "获取组活动",
+        "security": [{"cookie_auth": []}],
+        "responses": {
+          "200": {"description": "活动列表"}
+        }
+      }
+    },
+    "/dashboard/top-foods": {
+      "get": {
+        "tags": ["数据看板"],
+        "summary": "获取热门菜品排名",
+        "security": [{"cookie_auth": []}],
+        "responses": {
+          "200": {"description": "热门菜品"}
+        }
+      }
+    },
+    "/dashboard/my-today-orders": {
+      "get": {
+        "tags": ["数据看板"],
+        "summary": "获取我今日的订单",
+        "security": [{"cookie_auth": []}],
+        "responses": {
+          "200": {"description": "今日订单"}
+        }
+      }
+    },
+    "/dashboard/my-stats": {
+      "get": {
+        "tags": ["数据看板"],
+        "summary": "获取我的订单统计",
+        "security": [{"cookie_auth": []}],
+        "responses": {
+          "200": {"description": "订单统计"}
+        }
+      }
+    },
+    "/dashboard/points-journey": {
+      "get": {
+        "tags": ["数据看板"],
+        "summary": "获取积分旅程",
+        "security": [{"cookie_auth": []}],
+        "responses": {
+          "200": {"description": "积分历史"}
+        }
+      }
+    },
+    "/notifications": {
+      "get": {
+        "tags": ["通知"],
+        "summary": "获取通知列表",
+        "security": [{"cookie_auth": []}],
+        "responses": {
+          "200": {"description": "通知列表"}
+        }
+      }
+    },
+    "/notifications/unread-count": {
+      "get": {
+        "tags": ["通知"],
+        "summary": "获取未读通知数量",
+        "security": [{"cookie_auth": []}],
+        "responses": {
+          "200": {"description": "未读数量"}
+        }
+      }
+    },
+    "/notifications/read-all": {
+      "post": {
+        "tags": ["通知"],
+        "summary": "标记所有通知为已读",
+        "security": [{"cookie_auth": []}],
+        "responses": {
+          "200": {"description": "操作成功"}
+        }
+      }
+    },
+    "/couple-space/memorial-days": {
+      "get": {
+        "tags": ["情侣空间"],
+        "summary": "获取纪念日列表",
+        "security": [{"cookie_auth": []}],
+        "responses": {
+          "200": {"description": "纪念日列表"}
+        }
+      },
+      "post": {
+        "tags": ["情侣空间"],
+        "summary": "创建纪念日",
+        "security": [{"cookie_auth": []}],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {"$ref": "#/components/schemas/MemorialDayCreate"}
+            }
+          }
+        },
+        "responses": {
+          "201": {"description": "创建成功"}
+        }
+      }
+    },
+    "/couple-space/memorial-days/{id}": {
+      "put": {
+        "tags": ["情侣空间"],
+        "summary": "更新纪念日",
+        "security": [{"cookie_auth": []}],
+        "parameters": [
+          {"name": "id", "in": "path", "required": true, "schema": {"type": "integer"}}
+        ],
+        "responses": {
+          "200": {"description": "更新成功"}
+        }
+      },
+      "delete": {
+        "tags": ["情侣空间"],
+        "summary": "删除纪念日",
+        "security": [{"cookie_auth": []}],
+        "parameters": [
+          {"name": "id", "in": "path", "required": true, "schema": {"type": "integer"}}
+        ],
+        "responses": {
+          "200": {"description": "删除成功"}
+        }
+      }
+    },
+    "/upload/token": {
+      "get": {
+        "tags": ["上传"],
+        "summary": "获取上传凭证",
+        "security": [{"cookie_auth": []}],
+        "responses": {
+          "200": {"description": "上传凭证"}
+        }
+      }
+    },
+    "/admin/stats": {
+      "get": {
+        "tags": ["管理"],
+        "summary": "获取系统统计",
+        "security": [{"cookie_auth": []}],
+        "responses": {
+          "200": {"description": "系统统计"}
+        }
+      }
+    },
+    "/admin/groups": {
+      "get": {
+        "tags": ["管理"],
+        "summary": "获取所有群组",
+        "security": [{"cookie_auth": []}],
+        "responses": {
+          "200": {"description": "群组列表"}
+        }
+      }
+    },
+    "/admin/users": {
+      "get": {
+        "tags": ["管理"],
+        "summary": "获取所有用户",
+        "security": [{"cookie_auth": []}],
+        "responses": {
+          "200": {"description": "用户列表"}
+        }
+      }
+    },
+    "/groups/info": {
+      "get": {
+        "tags": ["用户"],
+        "summary": "获取群组信息",
+        "security": [{"cookie_auth": []}],
+        "parameters": [
+          {"name": "group_id", "in": "query", "required": true, "schema": {"type": "integer"}}
+        ],
+        "responses": {
+          "200": {"description": "群组信息"}
+        }
+      }
+    },
+    "/invitation/list": {
+      "get": {
+        "tags": ["用户"],
+        "summary": "获取邀请列表",
+        "security": [{"cookie_auth": []}],
+        "responses": {
+          "200": {"description": "邀请列表"}
+        }
+      }
+    },
+    "/invitation/create": {
+      "post": {
+        "tags": ["用户"],
+        "summary": "创建邀请",
+        "security": [{"cookie_auth": []}],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {"$ref": "#/components/schemas/NewInvitationInput"}
+            }
+          }
+        },
+        "responses": {
+          "200": {"description": "邀请已创建"}
+        }
+      }
+    },
+    "/invitation/confirm": {
+      "post": {
+        "tags": ["用户"],
+        "summary": "确认邀请",
+        "security": [{"cookie_auth": []}],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {"$ref": "#/components/schemas/ConfirmInvitationInput"}
+            }
+          }
+        },
+        "responses": {
+          "200": {"description": "邀请已确认"}
+        }
+      }
+    },
+    "/invitation/cancel": {
+      "post": {
+        "tags": ["用户"],
+        "summary": "取消邀请",
+        "security": [{"cookie_auth": []}],
+        "parameters": [
+          {"name": "id", "in": "query", "required": true, "schema": {"type": "integer"}}
+        ],
+        "responses": {
+          "200": {"description": "邀请已取消"}
+        }
+      }
+    },
+    "/invitation/unbind": {
+      "post": {
+        "tags": ["用户"],
+        "summary": "申请解绑",
+        "security": [{"cookie_auth": []}],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {"$ref": "#/components/schemas/UnbindRequestInput"}
+            }
+          }
+        },
+        "responses": {
+          "200": {"description": "解绑申请已提交"}
+        }
+      }
+    },
+    "/groups/bind-user": {
+      "post": {
+        "tags": ["用户"],
+        "summary": "直接绑定用户到组",
+        "security": [{"cookie_auth": []}],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {"$ref": "#/components/schemas/BindUserDirectlyInput"}
+            }
+          }
+        },
+        "responses": {
+          "200": {"description": "绑定成功"}
+        }
+      }
+    },
+    "/groups/update": {
+      "put": {
+        "tags": ["用户"],
+        "summary": "更新群组信息",
+        "security": [{"cookie_auth": []}],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {"$ref": "#/components/schemas/GroupUpdateInput"}
+            }
+          }
+        },
+        "responses": {
+          "200": {"description": "更新成功"}
+        }
+      }
+    },
+    "/groups/point-config": {
+      "get": {
+        "tags": ["用户"],
+        "summary": "获取群组积分配置",
+        "security": [{"cookie_auth": []}],
+        "responses": {
+          "200": {"description": "积分配置"}
+        }
+      },
+      "put": {
+        "tags": ["用户"],
+        "summary": "更新群组积分配置",
+        "security": [{"cookie_auth": []}],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {"$ref": "#/components/schemas/GroupPointConfigUpdateInput"}
+            }
+          }
+        },
+        "responses": {
+          "200": {"description": "更新成功"}
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "UserPublic": {
+        "type": "object",
+        "properties": {
+          "user_id": {"type": "integer"},
+          "username": {"type": "string"},
+          "nick_name": {"type": "string"},
+          "avatar": {"type": "string"},
+          "role": {"type": "string", "enum": ["ORDERING", "RECEIVING", "ADMIN"]},
+          "group_id": {"type": "integer"}
+        }
+      },
+      "UserInfoResponse": {
+        "type": "object",
+        "properties": {
+          "is_register": {"type": "boolean"},
+          "user": {"$ref": "#/components/schemas/UserPublic"}
+        }
+      },
+      "ProfileUpdateInput": {
+        "type": "object",
+        "properties": {
+          "username": {"type": "string"},
+          "nick_name": {"type": "string"},
+          "avatar": {"type": "string"},
+          "gender": {"type": "string"},
+          "birthday": {"type": "string", "format": "date"},
+          "new_password": {"type": "string"},
+          "old_password": {"type": "string"},
+          "new_username": {"type": "string"}
+        }
+      },
+      "RoleSwitchInput": {
+        "type": "object",
+        "properties": {
+          "role": {"type": "string", "enum": ["ORDERING", "RECEIVING", "ADMIN"]}
+        }
+      },
+      "OrderCreateInput": {
+        "type": "object",
+        "properties": {
+          "group_id": {"type": "integer"},
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "food_id": {"type": "integer"},
+                "quantity": {"type": "integer"}
+              }
+            }
+          },
+          "remark": {"type": "string"},
+          "goal_time": {"type": "string", "format": "date-time"}
+        }
+      },
+      "OrderStatusUpdateInput": {
+        "type": "object",
+        "properties": {
+          "order_id": {"type": "integer"},
+          "status": {"type": "string"}
+        }
+      },
+      "FoodCreateInput": {
+        "type": "object",
+        "properties": {
+          "group_id": {"type": "integer"},
+          "name": {"type": "string"},
+          "description": {"type": "string"},
+          "images": {"type": "string"},
+          "price": {"type": "number"},
+          "tags": {"type": "array", "items": {"type": "string"}}
+        }
+      },
+      "WishCreateInput": {
+        "type": "object",
+        "properties": {
+          "title": {"type": "string"},
+          "content": {"type": "string"},
+          "point_cost": {"type": "integer"},
+          "images": {"type": "string"}
+        }
+      },
+      "NewInvitationInput": {
+        "type": "object",
+        "properties": {
+          "to_username": {"type": "string"}
+        }
+      },
+      "ConfirmInvitationInput": {
+        "type": "object",
+        "properties": {
+          "accept": {"type": "boolean"}
+        }
+      },
+      "UnbindRequestInput": {
+        "type": "object",
+        "properties": {
+          "reason": {"type": "string"}
+        }
+      },
+      "BindUserDirectlyInput": {
+        "type": "object",
+        "properties": {
+          "user_id": {"type": "integer"}
+        }
+      },
+      "GroupUpdateInput": {
+        "type": "object",
+        "properties": {
+          "group_name": {"type": "string"}
+        }
+      },
+      "GroupPointConfigUpdateInput": {
+        "type": "object",
+        "properties": {
+          "sign_reward_daily": {"type": "integer"},
+          "sign_reward_consecutive": {"type": "integer"},
+          "order_point_percent": {"type": "integer"}
+        }
+      },
+      "MemorialDayCreate": {
+        "type": "object",
+        "properties": {
+          "title": {"type": "string"},
+          "date": {"type": "string", "format": "date"},
+          "memorial_type": {"type": "string"}
+        }
+      }
+    },
+    "securitySchemes": {
+      "cookie_auth": {
+        "type": "apiKey",
+        "in": "cookie",
+        "name": "token"
+      }
+    }
+  }
+}
