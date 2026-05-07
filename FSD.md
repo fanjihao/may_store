@@ -27,6 +27,8 @@
 - **admin**：后台管理、运营配置、数据统计
 - **couple_space**：情侣空间、纪念日管理
 - **dashboard**：数据看板、订单统计、积分旅程（可合并至 user 模块）
+- **game_ws**：WebSocket 实时通信，支持微信小程序连接
+- **swagger**：OpenAPI 文档与 Swagger UI
 - **wx**：微信公众平台集成（外部服务，移入 infrastructure/external）
 - **utils/middleware**：通用工具、日志、鉴权、限流、审计
 
@@ -346,9 +348,85 @@
 
 ---
 
-## 5️⃣ 关键业务流程（文本表达）
+## 5️⃣ WebSocket 实时通信架构
 
-### 5.1 完成订单全链路
+### 5.1 技术选型
+
+- **HTTP API**: ntex (端口 9831) - RESTful API 服务
+- **WebSocket**: tokio-tungstenite (端口 9832) - 独立 WebSocket 服务
+
+### 5.2 消息格式
+
+WebSocket 使用 JSON 消息信封格式：
+```json
+{
+  "type": "消息类型",
+  "data": { /* 消息数据 */ }
+}
+```
+
+### 5.3 消息类型
+
+| 消息类型 | 方向 | 说明 |
+|---------|------|------|
+| `auth` | 客户端→服务端 | 认证消息，包含 JWT token |
+| `auth_resp` | 服务端→客户端 | 认证响应 |
+| `ping` | 客户端→服务端 | 心跳请求 |
+| `pong` | 服务端→客户端 | 心跳响应 |
+| `notification` | 服务端→客户端 | 通知推送 |
+| `order_update` | 服务端→客户端 | 订单状态变更 |
+| `error` | 服务端→客户端 | 错误消息 |
+
+### 5.4 连接流程
+
+1. 客户端连接 `ws://host:9832`
+2. 发送认证消息: `{"type": "auth", "data": {"token": "jwt_token"}}`
+3. 服务器响应: `{"type": "auth_resp", "data": {"success": true, "userId": 123}}`
+4. 客户端定期发送心跳: `{"type": "ping", "data": {}}`
+5. 服务器响应: `{"type": "pong", "data": {}}`
+
+### 5.5 微信小程序连接示例
+
+```javascript
+// 连接 WebSocket
+wx.connectSocket({
+  url: 'ws://127.0.0.1:9832'
+});
+
+// 监听消息
+wx.onSocketMessage((res) => {
+  const msg = JSON.parse(res.data);
+  console.log('收到消息:', msg);
+});
+
+// 发送认证
+wx.sendSocketMessage({
+  data: JSON.stringify({
+    type: 'auth',
+    data: { token: 'your_jwt_token' }
+  })
+});
+
+// 发送心跳
+setInterval(() => {
+  wx.sendSocketMessage({
+    data: JSON.stringify({ type: 'ping', data: {} })
+  });
+}, 30000);
+```
+
+### 5.6 连接管理
+
+- 全局 `ConnectionManager` 管理所有活跃连接
+- 支持用户在线状态查询
+- 支持广播消息
+- 支持定向消息发送
+
+---
+
+## 6️⃣ 关键业务流程（文本表达）
+
+### 6.1 完成订单全链路
 
 1. 用户 A 创建订单 → OrderCreatedEvent
 2. 用户 B 接单 → OrderAcceptedEvent
@@ -359,7 +437,7 @@
    - 自动发布足迹（footprint）
    - 检查成就（如连续完成、优质服务等）
 
-### 5.2 签到流程
+### 6.2 签到流程
 
 1. 用户签到 → SignInEvent
 2. Worker 消费 SignInEvent：
@@ -367,7 +445,7 @@
    - 若连续签到，发放 diamond
    - 检查成就（如连续签到）
 
-### 5.3 扩容流程
+### 6.3 扩容流程
 
 1. 用户申请扩容 → 校验 group diamond 足够
 2. 扣除 diamond，写入 diamond_flow
@@ -376,33 +454,40 @@
 
 ---
 
-## 6️⃣ 技术实现建议（Rust/PostgreSQL）
+## 7️⃣ 技术实现建议（Rust/PostgreSQL）
 
-### 6.1 Worker 实现
+### 7.1 Worker 实现
 
 - 独立进程/线程定时扫描 event_log（pending），按类型分发 handler
 - 消费用事务包裹，处理成功后 status=done，失败重试
 - 支持多实例并发消费，event_log 可加行级锁（FOR UPDATE SKIP LOCKED）
 
-### 6.2 事务控制
+### 7.2 事务控制
 
 - 订单、经济、事件写入同一事务，保证一致性
 - 事件消费也用事务，防止部分成功
 
-### 6.3 Redis 用途
+### 7.3 Redis 用途
 
 - 可选：用于分布式锁（如高并发接单）、幂等 key 缓存、排行榜缓存
 - 不是强依赖，MVP 阶段可用 PostgreSQL 乐观锁/唯一约束
 
-### 6.4 高并发一致性
+### 7.4 高并发一致性
 
 - 订单接单/完成用乐观锁或 SQL 条件更新
 - 经济变动用流水+事务，余额通过流水聚合
 - 事件消费幂等，防止重复发放
 
+### 7.5 WebSocket 实现
+
+- 使用 tokio-tungstenite 库实现独立 WebSocket 服务器
+- WebSocket 运行在独立端口（9832），与 HTTP API（9831）分离
+- 全局 ConnectionManager 管理连接状态
+- 支持 JWT Token 认证
+
 ---
 
-## 7️⃣ 设计说明与落地性
+## 8️⃣ 设计说明与落地性
 
 - **分层解耦**：便于维护、扩展、测试
 - **事件驱动**：解耦业务，提升可扩展性与异步能力
@@ -413,9 +498,9 @@
 
 ---
 
-## 8️⃣ 项目落地与启动建议
+## 9️⃣ 项目落地与启动建议
 
-### 8.1 项目启动建议（从0到1）
+### 9.1 项目启动建议（从0到1）
 
 1. 明确 MVP 范围，优先实现核心业务（用户、分组、订单、经济、足迹、成就、事件、心愿、签到、通知、上传）。
 2. 采用分层+模块化目录结构，领域模型优先。
@@ -426,11 +511,11 @@
 7. 预留扩展点（extra/JSONB、事件、配置表）。
 8. 代码规范、测试、文档同步推进。
 
-### 8.2 目录结构建议（Rust 项目）
+### 9.2 目录结构建议（Rust 项目）
 
 ```
 src/
-  api/            # API 层（REST/GraphQL/WS）
+  api/            # API 层（REST/GraphQL/WebSocket）
     orders/        # 订单路由
     wishes/        # 心愿路由
     users/         # 用户路由
@@ -442,6 +527,8 @@ src/
     couple_space/  # 情侣空间路由
     upload/        # 文件上传路由
     admin/         # 后台管理路由
+    game_ws/       # WebSocket 实时通信
+    swagger/       # OpenAPI 文档路由
   application/    # 应用服务层
     order_service.rs
     wish_service.rs
@@ -476,7 +563,7 @@ src/
   main.rs         # 启动入口
 ```
 
-### 8.3 未来扩展建议
+### 9.3 未来扩展建议
 
 - 活动系统、AI推荐、第三方集成、数据分析等可独立新模块。
 - 规则、配置、扩展字段、事件机制均支持热插拔。
