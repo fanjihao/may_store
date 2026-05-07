@@ -47,6 +47,7 @@ pub struct FoodRecord {
 #[derive(Debug, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct FoodCreateInput {
+    pub group_id: i64,
     pub name: String,
     pub description: Option<String>,
     pub images: Vec<String>,

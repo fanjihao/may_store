@@ -62,12 +62,12 @@ pub struct IngredientOut {
 #[derive(Debug, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct BatchIngredientSortInput {
-    pub sorts: Vec<IngredientSortItem>,
+    pub items: Vec<IngredientSortItem>,
 }
 
 #[derive(Debug, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct IngredientSortItem {
-    pub id: i64,
+    pub ingredient_id: i64,
     pub sort: i32,
 }

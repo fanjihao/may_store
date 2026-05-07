@@ -8,7 +8,8 @@ use crate::errors::CustomError;
 
 pub const TOKEN_SECRET_KEY: &[u8] = b"maystore";
 
-#[derive(Debug, Clone)]
+/// 应用状态 - 包含所有共享资源
+#[derive(Clone)]
 pub struct AppState {
     pub db_pool: Pool<Postgres>,
     pub redis_cache: Arc<RedisCache>,
@@ -26,11 +27,13 @@ pub async fn init_app_state() -> Result<Arc<AppState>, CustomError> {
         }
     };
 
+    let db_pool = PgPoolOptions::new()
+        .max_connections(10)
+        .connect(&db_url)
+        .await?;
+
     let app_state = Arc::new(AppState {
-        db_pool: PgPoolOptions::new()
-            .max_connections(10)
-            .connect(&db_url)
-            .await?,
+        db_pool,
         redis_cache,
     });
 

@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum EventType {
+    Unknown,           // 未知事件（用于错误处理）
     OrderCreated,      // 订单创建
     OrderAccepted,     // 订单被接受
     OrderCompleted,    // 订单完成
@@ -24,6 +25,7 @@ impl EventType {
     /// 获取事件类型的字符串表示
     pub fn as_str(&self) -> &'static str {
         match self {
+            EventType::Unknown => "UnknownEvent",
             EventType::OrderCreated => "OrderCreatedEvent",
             EventType::OrderAccepted => "OrderAcceptedEvent",
             EventType::OrderCompleted => "OrderCompletedEvent",
@@ -39,6 +41,7 @@ impl EventType {
     /// 从字符串解析事件类型
     pub fn from_str(s: &str) -> Option<Self> {
         match s {
+            "UnknownEvent" => Some(EventType::Unknown),
             "OrderCreatedEvent" => Some(EventType::OrderCreated),
             "OrderAcceptedEvent" => Some(EventType::OrderAccepted),
             "OrderCompletedEvent" => Some(EventType::OrderCompleted),

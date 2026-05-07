@@ -6,7 +6,7 @@ use utoipa::ToSchema;
 use sqlx::Type;
 
 /// 用户角色枚举
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, ToSchema, Type)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, ToSchema, Type, PartialEq)]
 #[sqlx(type_name = "user_role_enum", rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum UserRole {
     /// 点单方

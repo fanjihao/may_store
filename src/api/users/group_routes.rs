@@ -126,7 +126,7 @@ pub async fn confirm_invitation(
     security(("cookie_auth" = []))
 )]
 pub async fn cancel_invitation(
-    _: UserToken,
+    token: UserToken,
     id: Path<(i64,)>,
     state: State<Arc<AppState>>,
 ) -> Result<impl Responder, CustomError> {

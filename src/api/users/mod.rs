@@ -144,7 +144,7 @@ pub async fn is_register(
     security(("cookie_auth" = []))
 )]
 pub async fn change_info(
-    _: UserToken,
+    token: UserToken,
     data: Json<ProfileUpdateInput>,
     state: State<Arc<AppState>>,
 ) -> Result<impl Responder, CustomError> {
