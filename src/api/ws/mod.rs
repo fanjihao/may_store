@@ -10,7 +10,7 @@ use tokio::net::TcpListener;
 use tokio_tungstenite::{accept_async, tungstenite::Message};
 use futures_util::{SinkExt, StreamExt};
 
-use crate::api::game_ws::connection::ConnectionManager;
+use crate::api::ws::connection::ConnectionManager;
 
 /// WebSocket 全局连接管理器
 static CONNECTION_MANAGER: once_cell::sync::OnceCell<Arc<ConnectionManager>> = once_cell::sync::OnceCell::new();
@@ -136,7 +136,7 @@ async fn process_messages(
                 let text = text.to_string();
                 log::debug!("收到消息 from {}: {}", peer_addr, text);
 
-                if let Ok(envelope) = serde_json::from_str::<crate::api::game_ws::messages::WsEnvelope>(&text) {
+                if let Ok(envelope) = serde_json::from_str::<crate::api::ws::messages::WsEnvelope>(&text) {
                     match envelope.msg_type.as_str() {
                         "ping" => {
                             let _ = ws_stream.send(Message::Text(r#"{"type":"pong","data":{}}"#.into())).await;
@@ -146,7 +146,7 @@ async fn process_messages(
                                 match verify_token(token).await {
                                     Ok(uid) => {
                                         user_id = Some(uid);
-                                        manager.add_connection(uid, crate::api::game_ws::connection::ConnectionInfo {
+                                        manager.add_connection(uid, crate::api::ws::connection::ConnectionInfo {
                                             user_id: Some(uid),
                                             connected_at: chrono::Utc::now(),
                                             authenticated: true,

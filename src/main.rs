@@ -42,8 +42,8 @@ async fn main() -> Result<(), CustomError> {
 
     // 启动 WebSocket 服务器（独立端口 9832）
     let ws_handle = tokio::spawn(async {
-        use api::game_ws;
-        if let Err(e) = game_ws::start_websocket_server("0.0.0.0:9832").await {
+        use api::ws;
+        if let Err(e) = ws::start_websocket_server("0.0.0.0:9832").await {
             log::error!("WebSocket 服务器错误: {}", e);
         }
     });

@@ -27,7 +27,7 @@
 - **admin**：后台管理、运营配置、数据统计
 - **couple_space**：情侣空间、纪念日管理
 - **dashboard**：数据看板、订单统计、积分旅程（可合并至 user 模块）
-- **game_ws**：WebSocket 实时通信，支持微信小程序连接
+- **ws**：WebSocket 实时通信，支持微信小程序连接
 - **swagger**：OpenAPI 文档与 Swagger UI
 - **wx**：微信公众平台集成（外部服务，移入 infrastructure/external）
 - **utils/middleware**：通用工具、日志、鉴权、限流、审计
@@ -527,7 +527,7 @@ src/
     couple_space/  # 情侣空间路由
     upload/        # 文件上传路由
     admin/         # 后台管理路由
-    game_ws/       # WebSocket 实时通信
+    ws/           # WebSocket 实时通信
     swagger/       # OpenAPI 文档路由
   application/    # 应用服务层
     order_service.rs
