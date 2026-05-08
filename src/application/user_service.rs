@@ -93,7 +93,7 @@ impl UserService {
             Some(r) => r,
             None => {
                 if input.weixin_code.is_some() {
-                    return Err(CustomError::NotFound(account));
+                    return Err(CustomError::UserNotFound(account));
                 } else {
                     return Err(CustomError::BadRequest("账号不存在".into()));
                 }

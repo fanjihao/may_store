@@ -33,6 +33,10 @@ pub enum CustomError {
     #[serde(rename = "not_found")]
     NotFound(String),
 
+    /// 428 User Not Found - 用户未注册（微信静默登录场景）
+    #[serde(rename = "user_not_found")]
+    UserNotFound(String),
+
     /// 409 Conflict - 数据冲突（如重复添加）
     #[serde(rename = "conflict")]
     Conflict(String),
@@ -83,6 +87,7 @@ impl CustomError {
             Self::Unauthorized(_) => StatusCode::UNAUTHORIZED,
             Self::Forbidden(_) => StatusCode::FORBIDDEN,
             Self::NotFound(_) => StatusCode::NOT_FOUND,
+            Self::UserNotFound(_) => StatusCode::PRECONDITION_FAILED,
             Self::Conflict(_) => StatusCode::CONFLICT,
             Self::InternalServerError(_) => StatusCode::INTERNAL_SERVER_ERROR,
         }
@@ -109,6 +114,7 @@ impl WebResponseError for CustomError {
             Self::Unauthorized(msg) => msg.clone(),
             Self::Forbidden(msg) => msg.clone(),
             Self::NotFound(msg) => msg.clone(),
+            Self::UserNotFound(msg) => msg.clone(),
             Self::Conflict(msg) => msg.clone(),
             Self::InternalServerError(msg) => msg.clone(),
         };
@@ -133,6 +139,7 @@ impl fmt::Display for CustomError {
             Self::Unauthorized(msg) => write!(f, "{msg}"),
             Self::Forbidden(msg) => write!(f, "{msg}"),
             Self::NotFound(msg) => write!(f, "{msg}"),
+            Self::UserNotFound(msg) => write!(f, "{msg}"),
             Self::Conflict(msg) => write!(f, "{msg}"),
             Self::InternalServerError(msg) => write!(f, "{msg}"),
         }
