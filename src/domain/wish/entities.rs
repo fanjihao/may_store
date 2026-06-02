@@ -157,6 +157,27 @@ pub struct WishFeedbackInput {
     pub images: Option<Vec<String>>,
 }
 
+/// 心愿报价输入 (FSD v2)
+#[derive(Debug, Deserialize, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct WishQuoteInput {
+    pub cost: i32,
+}
+
+/// 心愿设置履约期限输入 (FSD v2)
+#[derive(Debug, Deserialize, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct WishDeadlineInput {
+    pub deadline_hours: i32,
+}
+
+/// 心愿拒绝/关闭输入 (FSD v2)
+#[derive(Debug, Deserialize, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct WishRejectInput {
+    pub reason: Option<String>,
+}
+
 /// 心愿输出
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]

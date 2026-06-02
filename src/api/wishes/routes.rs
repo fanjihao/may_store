@@ -8,7 +8,10 @@ use ntex::web::{
 };
 use std::sync::Arc;
 
-use crate::domain::wish::{WishCursor, WishCreateInput, WishFeedbackInput, WishOut, WishQuery, WishUpdateInput};
+use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
+
+use crate::domain::wish::{WishCursor, WishCreateInput, WishFeedbackInput, WishOut, WishQuery, WishUpdateInput, WishQuoteInput, WishDeadlineInput, WishRejectInput};
 use crate::application::wish_service::WishService;
 use crate::{
     config::AppState,
@@ -22,11 +25,13 @@ pub fn configure(cfg: &mut ServiceConfig) {
     cfg.service(
         web::scope("/wishes")
             .route("", web::get().to(list_wishes))
-            .route("", web::post().to(create_wish))
             .route("/{id}", web::get().to(get_wish))
-            .route("/{id}", web::put().to(update_wish))
-            .route("/{id}", web::delete().to(delete_wish))
-            .route("/{id}/redeem", web::post().to(redeem_wish))
+            // FSD v2: 心愿协商与选择接口
+            .route("/{id}/quote", web::post().to(wish_quote))
+            .route("/{id}/deadline", web::post().to(wish_deadline))
+            .route("/{id}/confirm-agreement", web::post().to(wish_confirm_agreement))
+            .route("/{id}/reject", web::post().to(wish_reject))
+            .route("/{id}/select", web::post().to(wish_select))
             .route("/{id}/feedback", web::put().to(submit_feedback)),
     );
 }
@@ -200,4 +205,137 @@ pub async fn submit_feedback(
         WishService::submit_feedback(&state.db_pool, user_token.user_id, *id, &data.into_inner())
             .await?;
     Ok(HttpResponse::Ok().json(&WishOut::from_record(rec, feedback)))
+}
+
+// ============== FSD v2 心愿协商与选择接口 ==============
+
+/// 协商报价 - 发起人或履约人报价或还价
+/// POST /api/wishes/{id}/quote
+#[utoipa::path(
+    post,
+    path = "/wishes/{id}/quote",
+    tag = "心愿",
+    params(("id" = i64, Path, description = "心愿ID")),
+    request_body = WishQuoteInput,
+    responses(
+        (status = 200, description = "报价成功"),
+        (status = 400, description = "心愿状态不允许报价"),
+        (status = 404, description = "心愿不存在")
+    ),
+    security(("cookie_auth" = []))
+)]
+pub async fn wish_quote(
+    user_token: UserToken,
+    state: State<Arc<AppState>>,
+    id: Path<i64>,
+    body: Json<WishQuoteInput>,
+) -> Result<impl Responder, CustomError> {
+    let wish_id = *id;
+    let input = body.into_inner();
+    let out = WishService::quote_wish(&state.db_pool, user_token.user_id, wish_id, &input).await?;
+    Ok(HttpResponse::Ok().json(&out))
+}
+
+/// 协商履约期限 - 发起人或履约人设置履约期限
+/// POST /api/wishes/{id}/deadline
+#[utoipa::path(
+    post,
+    path = "/wishes/{id}/deadline",
+    tag = "心愿",
+    params(("id" = i64, Path, description = "心愿ID")),
+    request_body = WishDeadlineInput,
+    responses(
+        (status = 200, description = "设置成功"),
+        (status = 400, description = "心愿状态不允许设置期限"),
+        (status = 404, description = "心愿不存在")
+    ),
+    security(("cookie_auth" = []))
+)]
+pub async fn wish_deadline(
+    user_token: UserToken,
+    state: State<Arc<AppState>>,
+    id: Path<i64>,
+    body: Json<WishDeadlineInput>,
+) -> Result<impl Responder, CustomError> {
+    let wish_id = *id;
+    let input = body.into_inner();
+    let out = WishService::set_deadline(&state.db_pool, user_token.user_id, wish_id, &input).await?;
+    Ok(HttpResponse::Ok().json(&out))
+}
+
+/// 双方线上确认积分和期限 - 心愿进入 CREATED 状态
+/// POST /api/wishes/{id}/confirm-agreement
+#[utoipa::path(
+    post,
+    path = "/wishes/{id}/confirm-agreement",
+    tag = "心愿",
+    params(("id" = i64, Path, description = "心愿ID")),
+    responses(
+        (status = 200, description = "确认成功，心愿进入心愿池"),
+        (status = 400, description = "心愿状态不允许确认"),
+        (status = 404, description = "心愿不存在")
+    ),
+    security(("cookie_auth" = []))
+)]
+pub async fn wish_confirm_agreement(
+    user_token: UserToken,
+    state: State<Arc<AppState>>,
+    id: Path<i64>,
+) -> Result<impl Responder, CustomError> {
+    let wish_id = *id;
+    let out = WishService::confirm_agreement(&state.db_pool, user_token.user_id, wish_id).await?;
+    Ok(HttpResponse::Ok().json(&out))
+}
+
+/// 拒绝或关闭协商
+/// POST /api/wishes/{id}/reject
+#[utoipa::path(
+    post,
+    path = "/wishes/{id}/reject",
+    tag = "心愿",
+    params(("id" = i64, Path, description = "心愿ID")),
+    request_body = WishRejectInput,
+    responses(
+        (status = 200, description = "操作成功"),
+        (status = 400, description = "心愿状态不允许此操作"),
+        (status = 404, description = "心愿不存在")
+    ),
+    security(("cookie_auth" = []))
+)]
+pub async fn wish_reject(
+    user_token: UserToken,
+    state: State<Arc<AppState>>,
+    id: Path<i64>,
+    body: Json<WishRejectInput>,
+) -> Result<impl Responder, CustomError> {
+    let wish_id = *id;
+    let input = body.into_inner();
+    let out = WishService::reject_wish(&state.db_pool, user_token.user_id, wish_id, &input).await?;
+    Ok(HttpResponse::Ok().json(&out))
+}
+
+/// 选择心愿并冻结积分
+/// POST /api/wishes/{id}/select
+///
+/// 发起人选择心愿，冻结其爱心积分
+#[utoipa::path(
+    post,
+    path = "/wishes/{id}/select",
+    tag = "心愿",
+    params(("id" = i64, Path, description = "心愿ID")),
+    responses(
+        (status = 200, description = "选择成功，积分已冻结"),
+        (status = 400, description = "积分不足或心愿状态不允许"),
+        (status = 404, description = "心愿不存在")
+    ),
+    security(("cookie_auth" = []))
+)]
+pub async fn wish_select(
+    user_token: UserToken,
+    state: State<Arc<AppState>>,
+    id: Path<i64>,
+) -> Result<impl Responder, CustomError> {
+    let wish_id = *id;
+    let out = WishService::select_wish(&state.db_pool, user_token.user_id, wish_id).await?;
+    Ok(HttpResponse::Ok().json(&out))
 }

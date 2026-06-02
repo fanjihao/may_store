@@ -1,5 +1,5 @@
 // API 层 - 订单路由
-// 处理订单相关的 HTTP 请求
+// FSD.latest.md compliant - 仅保留 FSD 核心 API
 
 use ntex::web::{
     self,
@@ -8,11 +8,14 @@ use ntex::web::{
 };
 use std::sync::Arc;
 
+use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
+
 use crate::application::order_service::OrderService as AppOrderService;
 use crate::config::AppState;
 use crate::domain::order::{
     OrderCreateInput, OrderOutNew, OrderQuery, OrderRatingCreateInput, OrderRatingOut,
-    OrderStatistics, OrderStatusUpdateInput,
+    OrderStatus, OrderStatusUpdateInput,
 };
 use crate::middlewares::auth::UserToken;
 use crate::errors::CustomError;
@@ -24,14 +27,11 @@ pub fn configure(cfg: &mut ServiceConfig) {
         web::scope("/orders")
             .route("", web::post().to(create_order))
             .route("", web::get().to(get_orders))
-            .route("/team-today", web::get().to(get_team_today_orders))
-            .route("/status", web::put().to(update_order_status))
             .route("/{id}", web::get().to(get_order_detail))
-            .route("/{id}", web::delete().to(delete_order)),
-    )
-    .service(
-        web::scope("/orders-statistics")
-            .route("/{groupId}", web::get().to(get_order_statistics)),
+            // FSD v2: 独立接单/完成/确认接口
+            .route("/{id}/accept", web::post().to(accept_order))
+            .route("/{id}/complete", web::post().to(complete_order))
+            .route("/{id}/confirm", web::post().to(confirm_order)),
     )
     .service(
         web::scope("/orders-rating")
@@ -74,26 +74,6 @@ pub async fn get_orders(
 
 #[utoipa::path(
     get,
-    path = "/orders/team-today",
-    tag = "订单",
-    params(("group_id" = i64, Query)),
-    responses((status = 200, body = Vec<OrderOutNew>))
-)]
-pub async fn get_team_today_orders(
-    token: UserToken,
-    state: State<Arc<AppState>>,
-    query: Query<crate::domain::order::TeamTodayOrdersQuery>,
-) -> Result<impl Responder, CustomError> {
-    let orders = AppOrderService::get_team_today_orders(
-        &state.db_pool,
-        token.user_id,
-        &query.into_inner(),
-    ).await?;
-    Ok(HttpResponse::Ok().json(&orders))
-}
-
-#[utoipa::path(
-    get,
     path = "/orders/{id}",
     tag = "订单",
     params(("id" = i64, Path)),
@@ -106,57 +86,6 @@ pub async fn get_order_detail(
 ) -> Result<impl Responder, CustomError> {
     let out = AppOrderService::get_order_by_id(&state.db_pool, *id).await?;
     Ok(HttpResponse::Ok().json(&out))
-}
-
-#[utoipa::path(
-    get,
-    path = "/orders-statistics/{groupId}",
-    tag = "订单",
-    params(("groupId" = i64, Path)),
-    responses((status = 200, body = OrderStatistics))
-)]
-pub async fn get_order_statistics(
-    state: State<Arc<AppState>>,
-    group_id: Path<i64>,
-) -> Result<impl Responder, CustomError> {
-    let count = AppOrderService::get_order_statistics(&state.db_pool, *group_id).await?;
-    Ok(HttpResponse::Ok().json(&count))
-}
-
-#[utoipa::path(
-    put,
-    path = "/orders/status",
-    tag = "订单",
-    request_body = OrderStatusUpdateInput,
-    responses((status = 200, body = OrderOutNew))
-)]
-pub async fn update_order_status(
-    user_token: UserToken,
-    state: State<Arc<AppState>>,
-    data: Json<OrderStatusUpdateInput>,
-) -> Result<impl Responder, CustomError> {
-    let out = AppOrderService::update_order_status(
-        &state.db_pool,
-        user_token.user_id,
-        &data.into_inner(),
-    ).await?;
-    Ok(HttpResponse::Ok().json(&out))
-}
-
-#[utoipa::path(
-    delete,
-    path = "/orders/{id}",
-    tag = "订单",
-    params(("id" = i64, Path)),
-    responses((status = 200, description = "订单删除成功"))
-)]
-pub async fn delete_order(
-    user_token: UserToken,
-    state: State<Arc<AppState>>,
-    id: Path<i64>,
-) -> Result<impl Responder, CustomError> {
-    AppOrderService::delete_order(&state.db_pool, user_token.user_id, *id).await?;
-    Ok(HttpResponse::Ok().json(&serde_json::json!({"status": "ok"})))
 }
 
 #[utoipa::path(
@@ -196,4 +125,116 @@ pub async fn get_order_rating(
 ) -> Result<impl Responder, CustomError> {
     let out = AppOrderService::get_order_rating(&state.db_pool, user_token.user_id, *order_id).await?;
     Ok(HttpResponse::Ok().json(&out))
+}
+
+// ============== FSD v2 独立接口: 接单/完成/确认 ==============
+
+/// 接单 - Seller 接受订单
+/// POST /api/orders/{id}/accept
+#[utoipa::path(
+    post,
+    path = "/orders/{id}/accept",
+    tag = "订单",
+    params(("id" = i64, Path, description = "订单ID")),
+    responses(
+        (status = 200, description = "接单成功"),
+        (status = 400, description = "订单状态不允许接单"),
+        (status = 404, description = "订单不存在")
+    ),
+    security(("cookie_auth" = []))
+)]
+pub async fn accept_order(
+    user_token: UserToken,
+    state: State<Arc<AppState>>,
+    order_id: Path<i64>,
+) -> Result<impl Responder, CustomError> {
+    let id = *order_id;
+    let input = OrderStatusUpdateInput {
+        order_id: id,
+        to_status: OrderStatus::Accepted,
+        remark: None,
+        points_reward: None,
+    };
+    let out = AppOrderService::update_order_status(&state.db_pool, user_token.user_id, &input).await?;
+    Ok(HttpResponse::Ok().json(&out))
+}
+
+/// 完成订单 - Seller 完成任务制作/履约
+/// POST /api/orders/{id}/complete
+#[utoipa::path(
+    post,
+    path = "/orders/{id}/complete",
+    tag = "订单",
+    params(("id" = i64, Path, description = "订单ID")),
+    responses(
+        (status = 200, description = "完成成功"),
+        (status = 400, description = "订单状态不允许完成"),
+        (status = 404, description = "订单不存在")
+    ),
+    security(("cookie_auth" = []))
+)]
+pub async fn complete_order(
+    user_token: UserToken,
+    state: State<Arc<AppState>>,
+    order_id: Path<i64>,
+) -> Result<impl Responder, CustomError> {
+    let id = *order_id;
+    let input = OrderStatusUpdateInput {
+        order_id: id,
+        to_status: OrderStatus::ProductionCompleted,
+        remark: None,
+        points_reward: None,
+    };
+    let out = AppOrderService::update_order_status(&state.db_pool, user_token.user_id, &input).await?;
+    Ok(HttpResponse::Ok().json(&out))
+}
+
+/// 确认订单 - Buyer 确认履约质量
+/// POST /api/orders/{id}/confirm
+#[utoipa::path(
+    post,
+    path = "/orders/{id}/confirm",
+    tag = "订单",
+    params(("id" = i64, Path, description = "订单ID")),
+    request_body = OrderConfirmInput,
+    responses(
+        (status = 200, description = "确认成功"),
+        (status = 400, description = "订单状态不允许确认"),
+        (status = 404, description = "订单不存在")
+    ),
+    security(("cookie_auth" = []))
+)]
+pub async fn confirm_order(
+    user_token: UserToken,
+    state: State<Arc<AppState>>,
+    order_id: Path<i64>,
+    body: Json<OrderConfirmInput>,
+) -> Result<impl Responder, CustomError> {
+    let id = *order_id;
+    let input = body.into_inner();
+    let to_status = if input.is_complete {
+        OrderStatus::ConfirmedCompleted
+    } else {
+        OrderStatus::ConfirmedIncomplete
+    };
+    let out = AppOrderService::update_order_status(
+        &state.db_pool,
+        user_token.user_id,
+        &OrderStatusUpdateInput {
+            order_id: id,
+            to_status,
+            remark: input.remark,
+            points_reward: None,
+        },
+    )
+    .await?;
+    Ok(HttpResponse::Ok().json(&out))
+}
+
+/// 订单确认输入
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct OrderConfirmInput {
+    pub is_complete: bool,
+    pub remark: Option<String>,
 }
