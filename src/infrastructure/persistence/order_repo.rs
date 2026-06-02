@@ -1,15 +1,17 @@
 // 基础设施层 - PostgreSQL 订单仓储实现
 // 实现 domain::order::OrderRepository trait
 
-use sqlx::{PgPool, Row};
+use sqlx::PgPool;
 use crate::domain::order::{OrderRepository, OrderItemRepository, OrderRecord, OrderItemRecord};
 use crate::errors::CustomError;
 
 /// PostgreSQL 订单仓储
+#[allow(dead_code)]
 pub struct PostgresOrderRepository {
     pool: PgPool,
 }
 
+#[allow(dead_code)]
 impl PostgresOrderRepository {
     pub fn new(pool: PgPool) -> Self {
         Self { pool }

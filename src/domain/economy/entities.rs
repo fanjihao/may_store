@@ -7,6 +7,7 @@ use sqlx::FromRow;
 use utoipa::ToSchema;
 
 /// 用户组内爱心积分账户 - 按user_id+group_id独立计算
+#[allow(dead_code)]
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct UserGroupPoints {
@@ -19,6 +20,7 @@ pub struct UserGroupPoints {
 }
 
 /// 爱心积分流水 - 所有积分变动必须写流水
+#[allow(dead_code)]
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct LovePointTransaction {
@@ -39,6 +41,7 @@ pub struct LovePointTransaction {
 }
 
 /// 组经验流水 - 含等级变化
+#[allow(dead_code)]
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct GroupExpTransaction {
@@ -58,6 +61,7 @@ pub struct GroupExpTransaction {
 }
 
 /// 组钻石流水
+#[allow(dead_code)]
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct DiamondTransaction {
@@ -75,6 +79,7 @@ pub struct DiamondTransaction {
 }
 
 /// 每日奖励上限统计
+#[allow(dead_code)]
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct DailyRewardCounter {
@@ -91,6 +96,7 @@ pub struct DailyRewardCounter {
 }
 
 /// 用户钻石账户 (legacy - 保留兼容)
+#[allow(dead_code)]
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct UserDiamond {
@@ -104,6 +110,7 @@ pub struct UserDiamond {
 }
 
 /// 钻石流水记录 (legacy - 保留兼容)
+#[allow(dead_code)]
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct DiamondFlow {

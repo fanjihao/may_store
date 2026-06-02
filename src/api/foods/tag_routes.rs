@@ -20,6 +20,7 @@ use crate::{
 };
 
 /// 配置标签路由
+#[allow(dead_code)]
 pub fn configure(cfg: &mut ServiceConfig) {
     cfg.service(
         web::scope("/food_tags")

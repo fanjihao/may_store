@@ -2,11 +2,9 @@
 // 包含订单创建、状态流转、评分等业务用例
 // 使用 domain::order 和 infrastructure::event 模块
 
-use chrono::{DateTime, Datelike, Duration, Local, TimeZone, Utc};
+use chrono::{DateTime, Datelike, Local, TimeZone, Utc};
 use sqlx::{PgPool, Row};
-use std::sync::Arc;
 
-use crate::config::AppState;
 use crate::domain::event::{types::*, EventType};
 use crate::domain::order::{
     GroupInfoSimple, OrderCreateInput, OrderCursor, OrderItemOut, OrderItemRecord, OrderOutNew,
@@ -1185,6 +1183,7 @@ impl OrderService {
 }
 
 /// 群组积分配置（用于订单服务）
+#[allow(dead_code)]
 #[derive(Debug, Clone, sqlx::FromRow)]
 pub struct GroupPointConfigOut {
     pub group_id: i64,

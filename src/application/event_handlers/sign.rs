@@ -7,6 +7,7 @@ use crate::errors::CustomError;
 
 /// 处理签到事件
 /// 当用户签到时触发，发放相应奖励并更新连续签到天数
+#[allow(dead_code)]
 pub async fn handle_sign_in(
     db: &PgPool,
     payload: &SignInPayload,

@@ -8,7 +8,7 @@ use crate::{
     config::AppState,
     errors::CustomError,
     middlewares::auth::UserToken,
-    domain::sign_in::{SignInResponse, SignInfoResponse, DailyCheckinOut},
+    domain::sign_in::entities::{SignInResponse, SignInfoResponse, DailyCheckinOut},
     application::sign_in_service::SignService,
 };
 

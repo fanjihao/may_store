@@ -5,9 +5,11 @@ use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
 /// 积分值对象
+#[allow(dead_code)]
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, ToSchema)]
 pub struct Point(pub i32);
 
+#[allow(dead_code)]
 impl Point {
     pub fn new(v: i32) -> Self {
         Point(v)
@@ -27,9 +29,11 @@ impl Point {
 }
 
 /// 钻石值对象
+#[allow(dead_code)]
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, ToSchema)]
 pub struct Diamond(pub i32);
 
+#[allow(dead_code)]
 impl Diamond {
     pub fn new(v: i32) -> Self {
         Diamond(v)

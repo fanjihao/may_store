@@ -48,6 +48,7 @@ pub enum EventType {
 }
 
 impl EventType {
+    #[allow(dead_code)]
     pub fn as_str(&self) -> &'static str {
         match self {
             EventType::Unknown => "UnknownEvent",
@@ -83,6 +84,7 @@ impl EventType {
         }
     }
 
+    #[allow(dead_code)]
     pub fn from_str(s: &str) -> Option<Self> {
         match s {
             "UnknownEvent" => Some(EventType::Unknown),
@@ -123,6 +125,7 @@ impl EventType {
 // ============== FSD事件Payload定义 ==============
 
 /// 订单创建事件 Payload
+#[allow(dead_code)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct OrderCreatedPayload {
@@ -134,6 +137,7 @@ pub struct OrderCreatedPayload {
 }
 
 /// 订单被接受事件 Payload
+#[allow(dead_code)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct OrderAcceptedPayload {
@@ -145,6 +149,7 @@ pub struct OrderAcceptedPayload {
 }
 
 /// 订单完成事件 Payload
+#[allow(dead_code)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct OrderCompletedPayload {
@@ -157,6 +162,7 @@ pub struct OrderCompletedPayload {
 }
 
 /// 订单确认完成事件 Payload
+#[allow(dead_code)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct OrderConfirmedCompletedPayload {
@@ -170,6 +176,7 @@ pub struct OrderConfirmedCompletedPayload {
 }
 
 /// 订单确认未完成事件 Payload
+#[allow(dead_code)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct OrderConfirmedIncompletePayload {
@@ -181,6 +188,7 @@ pub struct OrderConfirmedIncompletePayload {
 }
 
 /// 订单风控检测事件 Payload
+#[allow(dead_code)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct OrderRiskDetectedPayload {
@@ -193,6 +201,7 @@ pub struct OrderRiskDetectedPayload {
 }
 
 /// 心愿创建事件 Payload
+#[allow(dead_code)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct WishCreatedPayload {
@@ -204,6 +213,7 @@ pub struct WishCreatedPayload {
 }
 
 /// 心愿协商事件 Payload
+#[allow(dead_code)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct WishNegotiatingPayload {
@@ -217,6 +227,7 @@ pub struct WishNegotiatingPayload {
 }
 
 /// 心愿双方确认事件 Payload
+#[allow(dead_code)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct WishAgreementConfirmedPayload {
@@ -230,6 +241,7 @@ pub struct WishAgreementConfirmedPayload {
 }
 
 /// 心愿选择事件 Payload - 发起人选择心愿并冻结积分
+#[allow(dead_code)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct WishSelectedPayload {
@@ -243,6 +255,7 @@ pub struct WishSelectedPayload {
 }
 
 /// 心愿打卡提交事件 Payload
+#[allow(dead_code)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct WishFeedbackSubmittedPayload {
@@ -254,6 +267,7 @@ pub struct WishFeedbackSubmittedPayload {
 }
 
 /// 心愿完成事件 Payload - 打卡完成，积分正式扣减
+#[allow(dead_code)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct WishFinishedPayload {
@@ -266,6 +280,7 @@ pub struct WishFinishedPayload {
 }
 
 /// 心愿逾期事件 Payload - 履约人逾期，积分退还
+#[allow(dead_code)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct WishExpiredPayload {
@@ -278,6 +293,7 @@ pub struct WishExpiredPayload {
 }
 
 /// 心愿质量奖励事件 Payload
+#[allow(dead_code)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct WishQualityRewardedPayload {
@@ -290,6 +306,7 @@ pub struct WishQualityRewardedPayload {
 }
 
 /// 心愿关闭事件 Payload
+#[allow(dead_code)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct WishClosedPayload {
@@ -302,6 +319,7 @@ pub struct WishClosedPayload {
 }
 
 /// 爱心积分获得事件 Payload
+#[allow(dead_code)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LovePointEarnedPayload {
@@ -314,6 +332,7 @@ pub struct LovePointEarnedPayload {
 }
 
 /// 爱心积分冻结事件 Payload
+#[allow(dead_code)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LovePointFrozenPayload {
@@ -326,6 +345,7 @@ pub struct LovePointFrozenPayload {
 }
 
 /// 爱心积分解冻事件 Payload
+#[allow(dead_code)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LovePointUnfrozenPayload {
@@ -338,6 +358,7 @@ pub struct LovePointUnfrozenPayload {
 }
 
 /// 爱心积分扣减事件 Payload
+#[allow(dead_code)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LovePointDeductedPayload {
@@ -350,6 +371,7 @@ pub struct LovePointDeductedPayload {
 }
 
 /// 组经验获得事件 Payload
+#[allow(dead_code)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GroupExpEarnedPayload {
@@ -363,6 +385,7 @@ pub struct GroupExpEarnedPayload {
 }
 
 /// 组等级提升事件 Payload
+#[allow(dead_code)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GroupLevelUpPayload {
@@ -373,6 +396,7 @@ pub struct GroupLevelUpPayload {
 }
 
 /// 组钻石获得事件 Payload
+#[allow(dead_code)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DiamondEarnedPayload {
@@ -384,6 +408,7 @@ pub struct DiamondEarnedPayload {
 }
 
 /// 角色互换事件 Payload
+#[allow(dead_code)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RoleSwappedPayload {
@@ -412,6 +437,7 @@ pub struct SignInPayload {
 // ============== 兼容旧事件Payload ==============
 
 /// 订单评价事件 Payload
+#[allow(dead_code)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct OrderReviewedPayload {
@@ -423,6 +449,7 @@ pub struct OrderReviewedPayload {
 }
 
 /// 足迹发布事件 Payload
+#[allow(dead_code)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct FootprintPublishedPayload {
@@ -433,6 +460,7 @@ pub struct FootprintPublishedPayload {
 }
 
 /// 心愿完成事件 Payload (旧版兼容)
+#[allow(dead_code)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct WishFulfilledPayload {
@@ -443,6 +471,7 @@ pub struct WishFulfilledPayload {
 }
 
 /// 钻石消耗事件 Payload
+#[allow(dead_code)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DiamondConsumedPayload {
@@ -454,6 +483,7 @@ pub struct DiamondConsumedPayload {
 }
 
 /// 积分变动事件 Payload
+#[allow(dead_code)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PointChangedPayload {

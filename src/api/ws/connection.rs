@@ -6,6 +6,7 @@ use std::sync::Arc;
 use tokio::sync::{broadcast, RwLock};
 
 /// WebSocket 连接信息
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct ConnectionInfo {
     /// 用户 ID
@@ -28,6 +29,7 @@ impl Default for ConnectionInfo {
 
 /// WebSocket 连接管理器
 /// 使用 user_id -> ConnectionInfo 的映射管理连接
+#[allow(dead_code)]
 pub struct ConnectionManager {
     /// 用户连接映射: user_id -> connection info
     users: Arc<RwLock<HashMap<i64, ConnectionInfo>>>,
@@ -35,8 +37,10 @@ pub struct ConnectionManager {
     broadcast_tx: broadcast::Sender<String>,
 }
 
+#[allow(dead_code)]
 impl ConnectionManager {
     /// 创建新的连接管理器
+    #[allow(dead_code)]
     pub fn new() -> Self {
         let (broadcast_tx, _) = broadcast::channel(1000);
         Self {

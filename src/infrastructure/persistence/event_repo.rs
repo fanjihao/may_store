@@ -6,10 +6,12 @@ use crate::domain::event::{EventRepository, EventLogRecord, EventType};
 use crate::errors::CustomError;
 
 /// PostgreSQL 事件仓储
+#[allow(dead_code)]
 pub struct PostgresEventRepository {
     pool: PgPool,
 }
 
+#[allow(dead_code)]
 impl PostgresEventRepository {
     pub fn new(pool: PgPool) -> Self {
         Self { pool }

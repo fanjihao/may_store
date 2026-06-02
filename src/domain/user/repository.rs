@@ -6,6 +6,7 @@ use super::entities::UserRecord;
 
 /// 用户仓储接口（领域层定义，基础设施实现）
 /// 定义用户的查询和操作能力，不依赖具体数据库实现
+#[allow(dead_code)]
 pub trait UserRepository: Send + Sync {
     /// 根据ID查询用户
     async fn find_by_id(&self, user_id: i64) -> Result<Option<UserRecord>, CustomError>;
@@ -27,6 +28,7 @@ pub trait UserRepository: Send + Sync {
 }
 
 /// 用户更新数据
+#[allow(dead_code)]
 #[derive(Debug, Default)]
 pub struct UserUpdateData {
     pub nick_name: Option<String>,

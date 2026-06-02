@@ -1,19 +1,20 @@
 // 应用服务层 - 足迹服务
 // 包含足迹创建、发布、容量管理等业务用例
 
-use chrono::{DateTime, NaiveDate, Utc};
+use chrono::Utc;
 use sqlx::{PgPool, Row};
 use crate::domain::footprint::{
-    CapacityExpandInput, DraftConfirmInput, FootprintOverview, RecordCreateInput,
+    DraftConfirmInput, FootprintOverview, RecordCreateInput,
     RecordOut, RecordQuery, RecordUpdateInput, RecordGroup, FootprintRecord,
 };
-use crate::domain::user::GroupPointConfig;
 use crate::errors::CustomError;
 use crate::models::pagination::CursorPage;
 
 /// 足迹应用服务
+#[allow(dead_code)]
 pub struct FootprintService;
 
+#[allow(dead_code)]
 impl FootprintService {
     /// 创建足迹
     pub async fn create_record(

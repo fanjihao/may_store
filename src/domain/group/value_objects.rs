@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
 /// 组角色枚举 - 直接映射到buyer_user_id/seller_user_id
+#[allow(dead_code)]
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, ToSchema, PartialEq, Eq)]
 pub enum GroupRole {
     /// 下单人 (Buyer)
@@ -14,6 +15,7 @@ pub enum GroupRole {
 }
 
 /// 组状态枚举
+#[allow(dead_code)]
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, ToSchema, PartialEq, Eq)]
 pub enum GroupStatus {
     /// 活跃
@@ -23,6 +25,7 @@ pub enum GroupStatus {
 }
 
 /// 组类型枚举
+#[allow(dead_code)]
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, ToSchema, PartialEq, Eq)]
 pub enum GroupType {
     /// 固定双人组
@@ -34,6 +37,7 @@ pub enum GroupType {
 }
 
 /// 组配置值对象
+#[allow(dead_code)]
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct GroupSettings {
@@ -80,6 +84,7 @@ impl Default for GroupSettings {
 }
 
 /// 组等级值对象
+#[allow(dead_code)]
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct GroupLevel {

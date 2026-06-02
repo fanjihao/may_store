@@ -14,6 +14,7 @@ pub struct CursorPage<T> {
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema, IntoParams)]
 #[into_params(parameter_in = Query)]
 #[serde(rename_all = "camelCase")]
+#[allow(dead_code)]
 pub struct CursorQuery {
     pub cursor: Option<String>,
     pub limit: Option<i64>,

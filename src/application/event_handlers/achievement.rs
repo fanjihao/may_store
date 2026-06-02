@@ -6,10 +6,12 @@ use crate::domain::event::EventType;
 use crate::errors::CustomError;
 
 /// 成就检查服务
+#[allow(dead_code)]
 pub struct AchievementService;
 
 /// 检查并更新用户成就
 /// 根据不同事件类型检查对应的成就规则，满足条件则解锁成就
+#[allow(dead_code)]
 impl AchievementService {
     /// 处理成就检查入口
     pub async fn check_achievements(

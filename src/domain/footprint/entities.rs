@@ -70,6 +70,7 @@ pub struct RecordCreateInput {
 }
 
 /// 足迹更新输入
+#[allow(dead_code)]
 #[derive(Debug, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct RecordUpdateInput {
@@ -82,6 +83,7 @@ pub struct RecordUpdateInput {
 }
 
 /// 草稿确认输入
+#[allow(dead_code)]
 #[derive(Debug, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct DraftConfirmInput {
@@ -92,6 +94,7 @@ pub struct DraftConfirmInput {
 }
 
 /// 容量扩展输入
+#[allow(dead_code)]
 #[derive(Debug, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct CapacityExpandInput {
@@ -100,6 +103,7 @@ pub struct CapacityExpandInput {
 }
 
 /// 足迹游标分页
+#[allow(dead_code)]
 #[derive(Debug, Deserialize, Serialize)]
 pub struct RecordCursor {
     pub record_time: DateTime<Utc>,

@@ -6,10 +6,12 @@ use crate::domain::user::{UserRepository, UserRecord, UserUpdateData};
 use crate::errors::CustomError;
 
 /// PostgreSQL 用户仓储
+#[allow(dead_code)]
 pub struct PostgresUserRepository {
     pool: PgPool,
 }
 
+#[allow(dead_code)]
 impl PostgresUserRepository {
     pub fn new(pool: PgPool) -> Self {
         Self { pool }

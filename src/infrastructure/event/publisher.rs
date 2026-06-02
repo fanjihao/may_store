@@ -9,8 +9,10 @@ use crate::infrastructure::event::log::EventLogQuery;
 use crate::errors::CustomError;
 
 /// 事件发布器
+#[allow(dead_code)]
 pub struct EventPublisher;
 
+#[allow(dead_code)]
 impl EventPublisher {
     /// 发布事件到 event_log 表
     pub async fn publish<T: serde::Serialize>(

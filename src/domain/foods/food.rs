@@ -5,8 +5,6 @@ use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
 use utoipa::ToSchema;
 
-use super::super::user::UserRole;
-
 /// 菜品状态枚举
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, ToSchema, sqlx::Type)]
 #[sqlx(type_name = "food_status_enum", rename_all = "SCREAMING_SNAKE_CASE")]
@@ -44,6 +42,7 @@ pub struct FoodRecord {
 }
 
 /// 菜品创建输入
+#[allow(dead_code)]
 #[derive(Debug, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct FoodCreateInput {
@@ -56,6 +55,7 @@ pub struct FoodCreateInput {
 }
 
 /// 菜品更新输入
+#[allow(dead_code)]
 #[derive(Debug, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct FoodUpdateInput {
@@ -126,6 +126,7 @@ pub struct FoodMarkActionInput {
 }
 
 /// 盲盒抽取输入
+#[allow(dead_code)]
 #[derive(Debug, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct BlindBoxDrawInput {

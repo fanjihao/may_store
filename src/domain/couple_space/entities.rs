@@ -46,6 +46,7 @@ pub struct MemorialDayQuery {
 }
 
 /// 纪念日游标
+#[allow(dead_code)]
 #[derive(Debug, Deserialize, Serialize)]
 pub struct MemorialDayCursor {
     pub date: NaiveDate,

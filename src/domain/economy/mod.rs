@@ -4,5 +4,4 @@
 pub mod value_objects;
 pub mod entities;
 
-pub use value_objects::*;
 pub use entities::*;

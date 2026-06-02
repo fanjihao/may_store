@@ -111,6 +111,7 @@ pub enum RiskStatus {
 }
 
 /// 订单状态转换规则 - FSD定义
+#[allow(dead_code)]
 impl OrderStatus {
     /// 判断当前状态是否可以转换到目标状态
     pub fn can_transition(self, to: OrderStatus) -> bool {

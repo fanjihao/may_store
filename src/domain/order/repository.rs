@@ -6,6 +6,7 @@ use super::entities::{OrderRecord, OrderItemRecord};
 
 /// 订单仓储接口（领域层定义，基础设施实现）
 /// 定义订单的查询和操作能力，不依赖具体数据库实现
+#[allow(dead_code)]
 pub trait OrderRepository: Send + Sync {
     /// 根据ID查询订单
     async fn find_by_id(&self, order_id: i64) -> Result<Option<OrderRecord>, CustomError>;
@@ -27,6 +28,7 @@ pub trait OrderRepository: Send + Sync {
 }
 
 /// 订单项仓储接口
+#[allow(dead_code)]
 pub trait OrderItemRepository: Send + Sync {
     /// 根据订单ID查询订单项
     async fn find_by_order_id(&self, order_id: i64) -> Result<Vec<OrderItemRecord>, CustomError>;

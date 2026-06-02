@@ -99,6 +99,7 @@ pub struct UserPublic {
 }
 
 /// 用户Token（用于认证）
+#[allow(dead_code)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct UserToken {
@@ -124,6 +125,7 @@ pub struct ProfileUpdateInput {
 }
 
 /// 甜言蜜语记录
+#[allow(dead_code)]
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct SweetTalkRecord {

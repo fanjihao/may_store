@@ -7,6 +7,7 @@ use sqlx::FromRow;
 use utoipa::ToSchema;
 
 /// 组记录 - FSD v2版本
+#[allow(dead_code)]
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct GroupRecord {
@@ -34,6 +35,7 @@ pub struct GroupRecord {
 }
 
 /// 组内成员记录
+#[allow(dead_code)]
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct GroupMemberRecord {
@@ -46,6 +48,7 @@ pub struct GroupMemberRecord {
 }
 
 /// 组简要信息
+#[allow(dead_code)]
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct GroupSimpleInfo {
@@ -58,6 +61,7 @@ pub struct GroupSimpleInfo {
 }
 
 /// 组详细信息
+#[allow(dead_code)]
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct GroupDetailInfo {
@@ -77,6 +81,7 @@ pub struct GroupDetailInfo {
 }
 
 /// 履约统计信息
+#[allow(dead_code)]
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct FulfillmentStats {
@@ -90,6 +95,7 @@ pub struct FulfillmentStats {
 }
 
 /// 组退出结清检查结果
+#[allow(dead_code)]
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct SettlementCheckResult {

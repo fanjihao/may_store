@@ -65,6 +65,7 @@ pub struct WishRecord {
 }
 
 /// 心愿协商记录
+#[allow(dead_code)]
 #[derive(Debug, Clone, FromRow)]
 pub struct WishNegotiationRecord {
     pub id: i64,
@@ -80,6 +81,7 @@ pub struct WishNegotiationRecord {
 }
 
 /// 心愿打卡记录
+#[allow(dead_code)]
 #[derive(Debug, Clone, FromRow)]
 pub struct WishCheckinRecord {
     pub id: i64,
@@ -92,6 +94,7 @@ pub struct WishCheckinRecord {
 }
 
 /// 心愿反馈记录（数据库记录格式）
+#[allow(dead_code)]
 #[derive(Debug, Clone, FromRow)]
 pub struct WishFeedbackRecord {
     pub feedback_id: i64,

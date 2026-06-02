@@ -38,6 +38,7 @@ pub enum WishStatus {
 }
 
 /// 心愿协商动作枚举
+#[allow(dead_code)]
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, ToSchema, Type, PartialEq, Eq)]
 #[sqlx(type_name = "wish_negotiation_action_enum", rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum WishNegotiationAction {
@@ -72,6 +73,7 @@ pub enum WishQualityStatus {
 }
 
 /// 心愿状态转换规则 - FSD定义
+#[allow(dead_code)]
 impl WishStatus {
     /// 判断当前状态是否可以转换到目标状态
     pub fn can_transition(self, to: WishStatus) -> bool {

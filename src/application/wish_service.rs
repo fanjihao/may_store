@@ -6,8 +6,8 @@ use sqlx::{PgPool, Row};
 use sqlx::types::Json;
 
 use crate::domain::wish::{
-    WishCreateInput, WishFeedbackInput, WishOut, WishQuery, WishRecord,
-    WishFeedbackRecord, WishFeedbackOut, WishStatus, WishUpdateInput,
+    WishCreateInput, WishFeedbackInput, WishRecord,
+    WishFeedbackRecord, WishStatus, WishUpdateInput,
 };
 use crate::domain::event::{EventType, WishFulfilledPayload};
 use crate::errors::CustomError;

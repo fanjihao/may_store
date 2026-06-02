@@ -4,11 +4,13 @@ use redis::{AsyncCommands, Client};
 use serde_json;
 
 // 定义Redis缓存服务
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct RedisCache {
     client: Client,
 }
 
+#[allow(dead_code)]
 impl RedisCache {
     pub fn new(redis_url: &str) -> Result<Self, redis::RedisError> {
         let client = Client::open(redis_url)?;

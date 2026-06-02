@@ -8,8 +8,10 @@ use crate::errors::CustomError;
 use crate::models::pagination::CursorPage;
 
 /// 菜品服务
+#[allow(dead_code)]
 pub struct FoodService;
 
+#[allow(dead_code)]
 impl FoodService {
     /// 创建菜品
     pub async fn create_food(
@@ -433,8 +435,10 @@ impl IngredientService {
 }
 
 /// 标签服务
+#[allow(dead_code)]
 pub struct TagService;
 
+#[allow(dead_code)]
 impl TagService {
     pub async fn create_tag(
         db: &PgPool,

@@ -3,7 +3,6 @@
 
 use ntex::web::{self, HttpResponse, ServiceConfig, types::Path};
 use crate::errors::CustomError;
-use crate::domain::group::{GroupDetailInfo, FulfillmentStats, SettlementCheckResult};
 
 /// 配置双人组路由
 pub fn configure(cfg: &mut ServiceConfig) {

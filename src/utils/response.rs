@@ -10,6 +10,7 @@ pub struct ApiResponse<T> {
 }
 
 impl<T: Serialize> ApiResponse<T> {
+    #[allow(dead_code)]
     pub fn success(data: T) -> HttpResponse {
         HttpResponse::Ok().json(&Self {
             code: 200,
@@ -20,6 +21,7 @@ impl<T: Serialize> ApiResponse<T> {
 }
 
 impl ApiResponse<()> {
+    #[allow(dead_code)]
     pub fn ok() -> HttpResponse {
         HttpResponse::Ok().json(&Self {
             code: 200,

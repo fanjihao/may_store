@@ -1,12 +1,13 @@
 // 应用服务层 - 情侣空间服务
 
-use chrono::{DateTime, NaiveDate, Utc};
+use chrono::NaiveDate;
 use sqlx::{PgPool, Row};
 use crate::domain::couple_space::{MemorialDay, MemorialDayCreate, MemorialDayQuery, MemorialDayUpdate};
 use crate::errors::CustomError;
 
 pub struct MemorialDayService;
 
+#[allow(dead_code)]
 impl MemorialDayService {
     /// 获取纪念日列表
     pub async fn list_memorial_days(

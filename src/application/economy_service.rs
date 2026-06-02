@@ -2,7 +2,7 @@
 // FSD.latest.md compliant - 爱心积分/组经验/组钻石流水管理
 // 所有经济变动必须写流水，禁止直接改余额
 
-use chrono::{DateTime, Utc, NaiveDate};
+use chrono::Utc;
 use sqlx::PgPool;
 use crate::domain::economy::*;
 use crate::errors::CustomError;
@@ -13,8 +13,10 @@ use crate::errors::CustomError;
 /// - 使用幂等键防止重复发放
 /// - 检查每日上限
 /// - 记录trace_id用于链路追踪
+#[allow(dead_code)]
 pub struct EconomyService;
 
+#[allow(dead_code)]
 impl EconomyService {
     /// 冻结爱心积分 - 心愿选择时调用
     /// 生成FREEZE流水，减少available，增加frozen

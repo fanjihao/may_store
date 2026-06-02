@@ -28,6 +28,7 @@ pub struct EventLog {
     pub processed_at: Option<DateTime<Utc>>,
 }
 
+#[allow(dead_code)]
 impl EventLog {
     /// 获取事件类型枚举
     pub fn event_type_enum(&self) -> Option<EventType> {
@@ -36,8 +37,10 @@ impl EventLog {
 }
 
 /// 事件日志查询
+#[allow(dead_code)]
 pub struct EventLogQuery;
 
+#[allow(dead_code)]
 impl EventLogQuery {
     /// 获取待处理事件
     pub async fn fetch_pending_events(

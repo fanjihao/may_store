@@ -1,3 +1,4 @@
+#[allow(dead_code)]
 pub fn validate_username(username: &str) -> Result<(), &'static str> {
     if username.len() < 2 || username.len() > 30 {
         return Err("用户名长度必须在2到30个字符之间");
@@ -12,6 +13,7 @@ pub fn validate_username(username: &str) -> Result<(), &'static str> {
     Ok(())
 }
 
+#[allow(dead_code)]
 pub fn validate_nickname(nickname: &str) -> Result<(), &'static str> {
     if nickname.len() > 30 {
         return Err("昵称长度不能超过30个字符");

@@ -4,7 +4,3 @@
 pub mod user_repo;
 pub mod order_repo;
 pub mod event_repo;
-
-pub use user_repo::PostgresUserRepository;
-pub use order_repo::PostgresOrderRepository;
-pub use event_repo::PostgresEventRepository;

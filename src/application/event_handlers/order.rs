@@ -7,6 +7,7 @@ use crate::errors::CustomError;
 
 /// 处理订单创建事件
 /// 当新订单创建时触发，用于记录日志或发送通知
+#[allow(dead_code)]
 pub async fn handle_order_created(
     db: &PgPool,
     payload: &OrderCreatedPayload,
@@ -35,6 +36,7 @@ pub async fn handle_order_created(
 
 /// 处理订单完成事件
 /// 当订单被确认完成时触发，发放积分奖励，检查成就
+#[allow(dead_code)]
 pub async fn handle_order_completed(
     db: &PgPool,
     payload: &OrderCompletedPayload,

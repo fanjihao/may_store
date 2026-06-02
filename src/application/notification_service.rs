@@ -2,12 +2,12 @@
 // 包含微信推送等通知业务用例
 
 use crate::config::AppState;
-use crate::domain::event::EventType;
 use crate::errors::CustomError;
 use sqlx::{PgPool, Row};
 use std::sync::Arc;
 
 /// 通知类型枚举
+#[allow(dead_code)]
 #[derive(Debug, Clone, Copy)]
 pub enum NotificationType {
     /// 订单创建通知
@@ -24,8 +24,10 @@ pub enum NotificationType {
 
 /// 通知服务
 /// 负责向用户推送各类通知消息（微信模板消息、系统通知等）
+#[allow(dead_code)]
 pub struct NotificationService;
 
+#[allow(dead_code)]
 impl NotificationService {
     /// 发送订单通知
     /// 根据订单状态变化向相关用户发送微信推送

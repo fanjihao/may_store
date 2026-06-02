@@ -17,6 +17,7 @@ pub struct WxSubscriptionTemplateOut {
 }
 
 /// 获取激活的订阅模板列表
+#[allow(dead_code)]
 pub async fn get_active_templates(pool: &PgPool) -> Result<Vec<WxSubscriptionTemplateOut>, sqlx::Error> {
     sqlx::query_as!(
         WxSubscriptionTemplateOut,
@@ -30,6 +31,7 @@ pub async fn get_active_templates(pool: &PgPool) -> Result<Vec<WxSubscriptionTem
 }
 
 /// 微信签名验证
+#[allow(dead_code)]
 pub fn verify_signature(token: &str, timestamp: &str, nonce: &str, signature: &str) -> bool {
     use crypto::digest::Digest;
     use crypto::sha1::Sha1;

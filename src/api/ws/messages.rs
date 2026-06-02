@@ -4,6 +4,7 @@
 use serde::{Deserialize, Serialize};
 
 /// WebSocket 消息类型枚举
+#[allow(dead_code)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", content = "data")]
 pub enum WsMessageType {
@@ -26,12 +27,14 @@ pub enum WsMessageType {
 }
 
 /// 认证数据
+#[allow(dead_code)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WsAuthData {
     pub token: String,
 }
 
 /// 认证响应数据
+#[allow(dead_code)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WsAuthRespData {
     pub success: bool,
@@ -40,6 +43,7 @@ pub struct WsAuthRespData {
 }
 
 /// 通知数据
+#[allow(dead_code)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WsNotificationData {
     pub id: i64,
@@ -49,6 +53,7 @@ pub struct WsNotificationData {
 }
 
 /// 订单状态变更数据
+#[allow(dead_code)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WsOrderUpdateData {
     pub order_id: i64,
@@ -57,6 +62,7 @@ pub struct WsOrderUpdateData {
 }
 
 /// 错误数据
+#[allow(dead_code)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WsErrorData {
     pub code: i32,
@@ -73,6 +79,7 @@ pub struct WsEnvelope {
     pub data: serde_json::Value,
 }
 
+#[allow(dead_code)]
 impl WsEnvelope {
     /// 创建心跳 pong 消息
     pub fn pong() -> Self {

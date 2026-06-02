@@ -3,14 +3,14 @@
 
 use std::sync::Arc;
 use argon2::{Argon2, PasswordHash, PasswordHasher, PasswordVerifier};
-use chrono::{Duration, Utc};
+use chrono::Utc;
 use jsonwebtoken::{encode, EncodingKey, Header};
 use password_hash::SaltString;
 use rand::thread_rng;
-use sqlx::{PgPool, Row};
+use sqlx::Row;
 use crate::config::{AppState, TOKEN_SECRET_KEY};
 use crate::domain::user::{
-    LoginInput, RegisterInput, UserPublic, ProfileUpdateInput, IsRegisterQuery, IsRegisterResponse, LoginResponse, UserInfoResponse, RoleSwitchInput, RoleSwitchResult,
+    LoginInput, RegisterInput, UserPublic, ProfileUpdateInput, IsRegisterResponse, LoginResponse, UserInfoResponse, RoleSwitchInput, RoleSwitchResult,
     InvitationListOut, NewInvitationInput, ConfirmInvitationInput, InvitationRequestOut,
     UnbindRequestInput, GroupInfoOut, BindUserDirectlyInput, GroupUpdateInput,
     GroupPointConfig, GroupPointConfigUpdateInput, UserRole, Gender, LoginMethod,

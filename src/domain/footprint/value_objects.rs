@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
 /// 足迹记录状态
+#[allow(dead_code)]
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, ToSchema, PartialEq)]
 pub enum RecordStatus {
     /// 草稿
@@ -13,6 +14,7 @@ pub enum RecordStatus {
     Official = 0,
 }
 
+#[allow(dead_code)]
 impl RecordStatus {
     pub fn is_draft(&self) -> bool {
         *self == RecordStatus::Draft

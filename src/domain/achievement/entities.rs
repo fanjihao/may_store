@@ -7,6 +7,7 @@ use sqlx::FromRow;
 use utoipa::ToSchema;
 
 /// 成就定义记录
+#[allow(dead_code)]
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct AchievementDefinition {
@@ -21,6 +22,7 @@ pub struct AchievementDefinition {
 }
 
 /// 用户成就记录
+#[allow(dead_code)]
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct UserAchievement {

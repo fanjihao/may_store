@@ -5,6 +5,7 @@ use crate::errors::CustomError;
 use super::types::EventType;
 
 /// 事件日志记录
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct EventLogRecord {
     pub id: i64,
@@ -17,6 +18,7 @@ pub struct EventLogRecord {
 }
 
 /// 事件仓储接口
+#[allow(dead_code)]
 pub trait EventRepository: Send + Sync {
     /// 保存事件日志
     async fn save(&self, event: &EventLogRecord) -> Result<i64, CustomError>;
