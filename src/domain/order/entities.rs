@@ -1,12 +1,13 @@
 // 领域层 - 订单实体
 // 包含订单记录结构和 DTO
+// FSD.latest.md compliant
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 use sqlx::FromRow;
 
-use super::OrderStatus;
+use super::{OrderStatus, OrderType, PointGrantStatus, ExpGrantStatus, RiskStatus};
 
 /// 订单记录 - 从数据库查询得到的订单完整信息
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema, FromRow)]
@@ -27,6 +28,45 @@ pub struct OrderRecord {
     pub updated_at: DateTime<Utc>,
     #[serde(default)]
     pub is_guest: bool,
+    // FSD v2 fields
+    #[sqlx(default)]
+    pub type_: Option<OrderType>,
+    #[sqlx(default)]
+    pub creator_role_snapshot: Option<String>,
+    #[sqlx(default)]
+    pub assignee_id: Option<i64>,
+    #[sqlx(default)]
+    pub assignee_role_snapshot: Option<String>,
+    #[sqlx(default)]
+    pub guest_user_id: Option<i64>,
+    #[sqlx(default)]
+    pub guest_invite_id: Option<i64>,
+    #[sqlx(default)]
+    pub guest_remark: Option<String>,
+    #[sqlx(default)]
+    pub guest_mark_tags: Option<serde_json::Value>,
+    #[sqlx(default)]
+    pub point_grant_status: Option<PointGrantStatus>,
+    #[sqlx(default)]
+    pub exp_grant_status: Option<ExpGrantStatus>,
+    #[sqlx(default)]
+    pub risk_status: Option<RiskStatus>,
+    #[sqlx(default)]
+    pub risk_detail: Option<serde_json::Value>,
+    #[sqlx(default)]
+    pub title: Option<String>,
+    #[sqlx(default)]
+    pub content: Option<String>,
+    #[sqlx(default)]
+    pub deadline: Option<DateTime<Utc>>,
+    #[sqlx(default)]
+    pub version: Option<i32>,
+    #[sqlx(default)]
+    pub accepted_at: Option<DateTime<Utc>>,
+    #[sqlx(default)]
+    pub completed_at: Option<DateTime<Utc>>,
+    #[sqlx(default)]
+    pub confirmed_at: Option<DateTime<Utc>>,
 }
 
 /// 订单项记录

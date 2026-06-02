@@ -10,4 +10,5 @@ pub mod user_service;      // 用户服务
 pub mod food_service;      // 菜品服务
 pub mod dashboard_service; // 看板服务
 pub mod couple_space_service; // 情侣空间服务
+pub mod economy_service;   // 经济系统服务 - FSD v2
 pub mod event_handlers;    // 事件处理器

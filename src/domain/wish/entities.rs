@@ -1,5 +1,6 @@
 // 领域层 - 心愿实体
 // 包含心愿记录、反馈等数据库记录和 DTO
+// FSD.latest.md compliant - 7状态模型
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -7,9 +8,9 @@ use sqlx::types::Json;
 use sqlx::FromRow;
 use utoipa::ToSchema;
 
-use super::WishStatus;
+use super::{WishStatus, WishQualityStatus};
 
-/// 心愿记录
+/// 心愿记录 - FSD v2版本
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct WishRecord {
@@ -24,6 +25,70 @@ pub struct WishRecord {
     pub claim_cost: Option<i32>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
+    // FSD v2 fields
+    #[sqlx(default)]
+    pub requester_id: Option<i64>,
+    #[sqlx(default)]
+    pub fulfiller_id: Option<i64>,
+    #[sqlx(default)]
+    pub creator_role_snapshot: Option<String>,
+    #[sqlx(default)]
+    pub initial_cost: Option<i32>,
+    #[sqlx(default)]
+    pub final_cost: Option<i32>,
+    #[sqlx(default)]
+    pub fulfillment_deadline_hours: Option<i32>,
+    #[sqlx(default)]
+    pub selected_by: Option<i64>,
+    #[sqlx(default)]
+    pub selected_at: Option<DateTime<Utc>>,
+    #[sqlx(default)]
+    pub fulfillment_due_at: Option<DateTime<Utc>>,
+    #[sqlx(default)]
+    pub fulfilled_at: Option<DateTime<Utc>>,
+    #[sqlx(default)]
+    pub expired_at: Option<DateTime<Utc>>,
+    #[sqlx(default)]
+    pub quality_review_status: Option<WishQualityStatus>,
+    #[sqlx(default)]
+    pub quality_reviewer_id: Option<i64>,
+    #[sqlx(default)]
+    pub quality_remark: Option<String>,
+    #[sqlx(default)]
+    pub diamond_reward: Option<i32>,
+    #[sqlx(default)]
+    pub finished_at: Option<DateTime<Utc>>,
+    #[sqlx(default)]
+    pub closed_at: Option<DateTime<Utc>>,
+    #[sqlx(default)]
+    pub version: Option<i32>,
+}
+
+/// 心愿协商记录
+#[derive(Debug, Clone, FromRow)]
+pub struct WishNegotiationRecord {
+    pub id: i64,
+    pub wish_id: i64,
+    pub group_id: i64,
+    pub operator_id: i64,
+    pub operator_role_snapshot: Option<String>,
+    pub action: String,
+    pub cost: Option<i32>,
+    pub deadline_hours: Option<i32>,
+    pub remark: Option<String>,
+    pub created_at: DateTime<Utc>,
+}
+
+/// 心愿打卡记录
+#[derive(Debug, Clone, FromRow)]
+pub struct WishCheckinRecord {
+    pub id: i64,
+    pub wish_id: i64,
+    pub user_id: i64,
+    pub content: Option<String>,
+    pub location: Option<String>,
+    pub images: Option<Json<Vec<String>>>,
+    pub created_at: DateTime<Utc>,
 }
 
 /// 心愿反馈记录（数据库记录格式）

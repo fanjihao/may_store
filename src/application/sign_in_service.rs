@@ -117,6 +117,7 @@ impl SignService {
             sign_date: today.to_string(),
             consecutive_days,
             diamonds_earned,
+            trace_id: None,
         };
         let _ = EventPublisher::publish(
             db,
@@ -319,6 +320,7 @@ impl SignService {
             sign_date: today.to_string(),
             consecutive_days,
             diamonds_earned,
+            trace_id: None,
         };
         let _ = EventPublisher::publish(
             db,

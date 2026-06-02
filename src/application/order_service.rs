@@ -7,16 +7,15 @@ use sqlx::{PgPool, Row};
 use std::sync::Arc;
 
 use crate::config::AppState;
+use crate::domain::event::{types::*, EventType};
 use crate::domain::order::{
     GroupInfoSimple, OrderCreateInput, OrderCursor, OrderItemOut, OrderItemRecord, OrderOutNew,
-    OrderQuery, OrderRatingCreateInput, OrderRatingOut, OrderRecord,
-    OrderStatus, OrderStatusHistoryOut, OrderStatusUpdateInput,
-    OrderStatistics, TeamTodayOrdersQuery,
+    OrderQuery, OrderRatingCreateInput, OrderRatingOut, OrderRecord, OrderStatistics, OrderStatus,
+    OrderStatusHistoryOut, OrderStatusUpdateInput, TeamTodayOrdersQuery,
 };
-use crate::domain::event::{EventType, types::*};
-use crate::infrastructure::event::publisher::EventPublisher;
 use crate::errors::CustomError;
-use crate::models::pagination::{CursorPage, decode_cursor, encode_cursor};
+use crate::infrastructure::event::publisher::EventPublisher;
+use crate::models::pagination::{decode_cursor, encode_cursor, CursorPage};
 
 /// 订单应用服务
 pub struct OrderService;
@@ -118,7 +117,7 @@ impl OrderService {
         )
         .bind(rec.order_id)
         .bind::<Option<OrderStatus>>(None)
-        .bind(OrderStatus::PendingAccept)
+        .bind(OrderStatus::Created)
         .bind(user_id)
         .execute(&mut *tx)
         .await?;
@@ -165,12 +164,15 @@ impl OrderService {
                 order_id: rec.order_id,
                 user_id,
                 group_id: rec.group_id,
+                order_type: "NORMAL".to_string(),
+                trace_id: None,
             },
             Some(user_id),
             rec.group_id,
             Some("order"),
             Some(rec.order_id),
-        ).await;
+        )
+        .await;
 
         Ok(OrderOutNew {
             order_id: rec.order_id,
@@ -301,6 +303,26 @@ impl OrderService {
                 created_at: row.get("created_at"),
                 updated_at: row.get("updated_at"),
                 is_guest: row.get("is_guest"),
+                // FSD v2 new fields - use defaults
+                type_: None,
+                creator_role_snapshot: None,
+                assignee_id: None,
+                assignee_role_snapshot: None,
+                guest_user_id: None,
+                guest_invite_id: None,
+                guest_remark: None,
+                guest_mark_tags: None,
+                point_grant_status: None,
+                exp_grant_status: None,
+                risk_status: None,
+                risk_detail: None,
+                title: None,
+                content: None,
+                deadline: None,
+                version: None,
+                accepted_at: None,
+                completed_at: None,
+                confirmed_at: None,
             };
             let group_id: Option<i64> = row.get("group_id");
             let group_name: Option<String> = row.try_get("group_name").ok();
@@ -444,7 +466,7 @@ impl OrderService {
         qb.push(" AND o.goal_time <= ");
         qb.push_bind(end_of_day);
         qb.push(" AND o.status = ");
-        qb.push_bind(OrderStatus::PendingAccept);
+        qb.push_bind(OrderStatus::Created);
         qb.push(" ORDER BY o.goal_time ASC");
 
         let orders_rows = qb.build().fetch_all(db).await?;
@@ -466,6 +488,26 @@ impl OrderService {
                 created_at: row.get("created_at"),
                 updated_at: row.get("updated_at"),
                 is_guest: row.get("is_guest"),
+                // FSD v2 new fields
+                type_: None,
+                creator_role_snapshot: None,
+                assignee_id: None,
+                assignee_role_snapshot: None,
+                guest_user_id: None,
+                guest_invite_id: None,
+                guest_remark: None,
+                guest_mark_tags: None,
+                point_grant_status: None,
+                exp_grant_status: None,
+                risk_status: None,
+                risk_detail: None,
+                title: None,
+                content: None,
+                deadline: None,
+                version: None,
+                accepted_at: None,
+                completed_at: None,
+                confirmed_at: None,
             };
 
             let group_id: Option<i64> = row.get("group_id");
@@ -565,7 +607,14 @@ impl OrderService {
         .fetch_optional(db)
         .await?;
 
-        let (order, group_name, db_receiver_nick_name, db_receiver_avatar, creator_nick_name, creator_avatar) = match row {
+        let (
+            order,
+            group_name,
+            db_receiver_nick_name,
+            db_receiver_avatar,
+            creator_nick_name,
+            creator_avatar,
+        ) = match row {
             Some(r) => (
                 OrderRecord {
                     order_id: r.get("order_id"),
@@ -582,6 +631,26 @@ impl OrderService {
                     created_at: r.get("created_at"),
                     updated_at: r.get("updated_at"),
                     is_guest: r.get("is_guest"),
+                    // FSD v2 fields
+                    type_: r.try_get("type").ok().flatten(),
+                    creator_role_snapshot: r.try_get("creator_role_snapshot").ok().flatten(),
+                    assignee_id: r.try_get("assignee_id").ok().flatten(),
+                    assignee_role_snapshot: r.try_get("assignee_role_snapshot").ok().flatten(),
+                    guest_user_id: r.try_get("guest_user_id").ok().flatten(),
+                    guest_invite_id: r.try_get("guest_invite_id").ok().flatten(),
+                    guest_remark: r.try_get("guest_remark").ok().flatten(),
+                    guest_mark_tags: r.try_get("guest_mark_tags").ok().flatten(),
+                    point_grant_status: r.try_get("point_grant_status").ok().flatten(),
+                    exp_grant_status: r.try_get("exp_grant_status").ok().flatten(),
+                    risk_status: r.try_get("risk_status").ok().flatten(),
+                    risk_detail: r.try_get("risk_detail").ok().flatten(),
+                    title: r.try_get("title").ok().flatten(),
+                    content: r.try_get("content").ok().flatten(),
+                    deadline: r.try_get("deadline").ok().flatten(),
+                    version: r.try_get("version").ok().flatten(),
+                    accepted_at: r.try_get("accepted_at").ok().flatten(),
+                    completed_at: r.try_get("completed_at").ok().flatten(),
+                    confirmed_at: r.try_get("confirmed_at").ok().flatten(),
                 },
                 r.try_get::<String, _>("group_name").ok(),
                 r.try_get("db_receiver_nick_name").ok(),
@@ -754,8 +823,8 @@ impl OrderService {
         order.last_status_change_at = Some(Utc::now());
 
         // 订单完成时处理
-        if matches!(input.to_status, OrderStatus::ConfirmedFinished)
-            && !matches!(from_status, OrderStatus::ConfirmedFinished)
+        if matches!(input.to_status, OrderStatus::ConfirmedCompleted)
+            && !matches!(from_status, OrderStatus::ConfirmedCompleted)
         {
             // 更新菜品完成统计
             let items: Vec<(i64, i32)> =
@@ -782,12 +851,13 @@ impl OrderService {
         // 计算积分变动
         let pt_cfg = Self::get_group_point_config(&mut *tx, order.group_id).await;
         let points_delta = match input.to_status {
-            OrderStatus::BreederClosed => Some(pt_cfg.breeder_closed_points),
-            OrderStatus::ConfirmedFinished => Some(
-                input.points_reward
+            OrderStatus::Cancelled => Some(pt_cfg.breeder_closed_points),
+            OrderStatus::ConfirmedCompleted => Some(
+                input
+                    .points_reward
                     .unwrap_or(order.points_reward.max(pt_cfg.confirmed_finished_points)),
             ),
-            OrderStatus::ConfirmedUnfinished => Some(pt_cfg.confirmed_unfinished_points),
+            OrderStatus::ConfirmedIncomplete => Some(pt_cfg.confirmed_unfinished_points),
             OrderStatus::Timeout => Some(pt_cfg.timeout_points),
             _ => None,
         };
@@ -918,11 +988,7 @@ impl OrderService {
     }
 
     /// 删除订单
-    pub async fn delete_order(
-        db: &PgPool,
-        user_id: i64,
-        order_id: i64,
-    ) -> Result<(), CustomError> {
+    pub async fn delete_order(db: &PgPool, user_id: i64, order_id: i64) -> Result<(), CustomError> {
         let row = sqlx::query("SELECT user_id FROM orders WHERE order_id=$1")
             .bind(order_id)
             .fetch_optional(db)
@@ -982,7 +1048,7 @@ impl OrderService {
             return Err(CustomError::BadRequest("订单不存在".into()));
         };
         let status: OrderStatus = or.get("status");
-        if status != OrderStatus::ConfirmedFinished {
+        if status != OrderStatus::ConfirmedCompleted {
             return Err(CustomError::BadRequest("仅完成的订单可评分".into()));
         }
         let o_user_id: i64 = or.get("user_id");
@@ -1096,7 +1162,10 @@ impl OrderService {
         }
     }
 
-    async fn get_group_point_config<'a, E>(executor: E, group_id: Option<i64>) -> GroupPointConfigOut
+    async fn get_group_point_config<'a, E>(
+        executor: E,
+        group_id: Option<i64>,
+    ) -> GroupPointConfigOut
     where
         E: sqlx::Executor<'a, Database = sqlx::Postgres>,
     {
