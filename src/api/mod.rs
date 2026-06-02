@@ -2,12 +2,15 @@
 // FSD.latest.md compliant - 仅保留 FSD 核心模块
 
 pub mod admin;
-pub mod orders;
-pub mod swagger;
-pub mod ws;
-pub mod wishes;
+pub mod auth;        // 微信登录 - FSD v2
+pub mod economy;    // 经济查询 - FSD v2
 pub mod groups;     // 双人组管理 - FSD v2
 pub mod kitchens;   // 主人家厨房 - FSD v2
+pub mod orders;
+pub mod swagger;
+pub mod users;      // 用户基础信息
+pub mod ws;
+pub mod wishes;
 
 use ntex::web::ServiceConfig;
 
@@ -15,9 +18,12 @@ use ntex::web::ServiceConfig;
 pub fn configure(cfg: &mut ServiceConfig) {
     swagger::configure(cfg);
     ws::configure(cfg);
+    auth::configure(cfg);
+    economy::configure(cfg);
     orders::configure(cfg);
     wishes::configure(cfg);
-    groups::configure(cfg);    // FSD v2
-    kitchens::configure(cfg);  // FSD v2
+    groups::configure(cfg);
+    kitchens::configure(cfg);
+    users::configure(cfg);
     admin::configure(cfg);
 }

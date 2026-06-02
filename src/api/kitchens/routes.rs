@@ -1,8 +1,14 @@
 // API - 主人家厨房路由
 // FSD.latest.md compliant - 做客系统
 
-use ntex::web::{self, HttpResponse, ServiceConfig, types::Path};
+use chrono::Utc;
+use ntex::web::{self, HttpResponse, ServiceConfig, types::{Path, Json, State}};
+use std::sync::Arc;
+use sqlx::Row;
+
+use crate::config::AppState;
 use crate::errors::CustomError;
+use crate::middlewares::auth::UserToken;
 
 /// 配置做客厨房路由
 pub fn configure(cfg: &mut ServiceConfig) {
@@ -10,7 +16,7 @@ pub fn configure(cfg: &mut ServiceConfig) {
         web::scope("/api/kitchens/invitations")
             .route("/{invite_code}", web::get().to(access_kitchen))
             .route("/{invite_code}/foods", web::get().to(get_kitchen_foods))
-            .route("/{invite_code}/orders", web::post().to(create_guest_order))
+            .route("/{invite_code}/orders", web::post().to(create_guest_order)),
     );
 }
 
@@ -20,10 +26,67 @@ pub fn configure(cfg: &mut ServiceConfig) {
 /// 做客用户必须使用长期账号，通过邀请链接访问主人家厨房
 /// 返回厨房信息和邀请有效期
 async fn access_kitchen(
+    state: State<Arc<AppState>>,
     invite_code: Path<String>,
 ) -> Result<HttpResponse, CustomError> {
-    let _ = invite_code.into_inner();
-    Err(CustomError::internal("access_kitchen not implemented".to_string()))
+    let db = &state.db_pool;
+    let code = invite_code.into_inner();
+
+    // 查找邀请
+    let invite = sqlx::query_as::<_, (i64, chrono::DateTime<chrono::Utc>, i64, i64)>(
+        r#"SELECT gi.group_id, gi.expires_at, gi.max_uses, gi.used_count
+           FROM group_invitations gi
+           WHERE gi.invite_code = $1 AND gi.revoked = false"#
+    )
+    .bind(&code)
+    .fetch_optional(db)
+    .await?;
+
+    let (group_id, expires_at, max_uses, used_count) = match invite {
+        Some(inv) => inv,
+        None => return Err(CustomError::NotFound("邀请码不存在或已失效".into())),
+    };
+
+    // 检查是否过期
+    if Utc::now() > expires_at {
+        return Err(CustomError::BadRequest("邀请码已过期".into()));
+    }
+
+    // 检查是否已用完
+    if used_count >= max_uses {
+        return Err(CustomError::BadRequest("邀请码已用完".into()));
+    }
+
+    // 获取主人家组信息
+    let group_row = sqlx::query(
+        r#"SELECT g.group_id, g.group_name, g.buyer_user_id, g.seller_user_id,
+                  buyer.nick_name as buyer_nick, buyer.avatar as buyer_avatar,
+                  seller.nick_name as seller_nick, seller.avatar as seller_avatar
+           FROM association_groups g
+           LEFT JOIN users buyer ON buyer.user_id = g.buyer_user_id
+           LEFT JOIN users seller ON seller.user_id = g.seller_user_id
+           WHERE g.group_id = $1"#
+    )
+    .bind(group_id)
+    .fetch_optional(db)
+    .await?;
+
+    let row = match group_row {
+        Some(r) => r,
+        None => return Err(CustomError::NotFound("组不存在".into())),
+    };
+
+    Ok(HttpResponse::Ok().json(&serde_json::json!({
+        "groupId": row.get::<i64, _>("group_id"),
+        "groupName": row.get::<String, _>("group_name"),
+        "buyerNickName": row.get::<Option<String>, _>("buyer_nick"),
+        "sellerNickName": row.get::<Option<String>, _>("seller_nick"),
+        "buyerAvatar": row.get::<Option<String>, _>("buyer_avatar"),
+        "sellerAvatar": row.get::<Option<String>, _>("seller_avatar"),
+        "inviteCode": code,
+        "expiresAt": expires_at,
+        "status": "ok"
+    })))
 }
 
 /// 查看主人家厨房菜单
@@ -32,10 +95,48 @@ async fn access_kitchen(
 /// 做客用户可查看主人家厨房菜单
 /// 仅返回授权范围内的菜单
 async fn get_kitchen_foods(
+    state: State<Arc<AppState>>,
     invite_code: Path<String>,
 ) -> Result<HttpResponse, CustomError> {
-    let _ = invite_code.into_inner();
-    Err(CustomError::internal("get_kitchen_foods not implemented".to_string()))
+    let db = &state.db_pool;
+    let code = invite_code.into_inner();
+
+    // 验证邀请码
+    let group_id: i64 = sqlx::query_scalar(
+        r#"SELECT gi.group_id FROM group_invitations gi
+           WHERE gi.invite_code = $1 AND gi.revoked = false
+           AND gi.expires_at > NOW() AND gi.used_count < gi.max_uses"#
+    )
+    .bind(&code)
+    .fetch_optional(db)
+    .await?
+    .ok_or_else(|| CustomError::NotFound("邀请码无效或已过期".into()))?;
+
+    // 获取主人家菜品
+    let foods = sqlx::query(
+        r#"SELECT food_id, group_id, name, description, images, tags, ingredients, steps, status
+           FROM foods WHERE group_id=$1 AND status='ACTIVE'
+           ORDER BY created_at DESC"#
+    )
+    .bind(group_id)
+    .fetch_all(db)
+    .await?;
+
+    let result: Vec<serde_json::Value> = foods.into_iter().map(|r| {
+        serde_json::json!({
+            "foodId": r.get::<i64, _>("food_id"),
+            "groupId": r.get::<i64, _>("group_id"),
+            "name": r.get::<String, _>("name"),
+            "description": r.get::<Option<String>, _>("description"),
+            "images": r.get::<Option<serde_json::Value>, _>("images"),
+            "tags": r.get::<Option<serde_json::Value>, _>("tags"),
+            "ingredients": r.get::<Option<serde_json::Value>, _>("ingredients"),
+            "steps": r.get::<Option<serde_json::Value>, _>("steps"),
+            "status": r.get::<String, _>("status")
+        })
+    }).collect();
+
+    Ok(HttpResponse::Ok().json(&result))
 }
 
 /// 创建做客订单
@@ -45,8 +146,73 @@ async fn get_kitchen_foods(
 /// 由主人家Seller完成
 /// 做客用户不获得主人组爱心积分
 async fn create_guest_order(
+    token: UserToken,
+    state: State<Arc<AppState>>,
     invite_code: Path<String>,
+    body: Json<GuestOrderInput>,
 ) -> Result<HttpResponse, CustomError> {
-    let _ = invite_code.into_inner();
-    Err(CustomError::internal("create_guest_order not implemented".to_string()))
+    let db = &state.db_pool;
+    let code = invite_code.into_inner();
+    let input = body.into_inner();
+
+    // 验证邀请码并获取主人家组
+    let invite_row = sqlx::query_as::<_, (i64, i64)>(
+        r#"SELECT gi.group_id, gi.id
+           FROM group_invitations gi
+           WHERE gi.invite_code = $1 AND gi.revoked = false
+           AND gi.expires_at > NOW() AND gi.used_count < gi.max_uses"#
+    )
+    .bind(&code)
+    .fetch_optional(db)
+    .await?
+    .ok_or_else(|| CustomError::NotFound("邀请码无效或已过期".into()))?;
+
+    let (group_id, invite_id) = invite_row;
+
+    // 获取主人家Seller
+    let seller_id: Option<i64> = sqlx::query_scalar(
+        "SELECT seller_user_id FROM association_groups WHERE group_id=$1"
+    )
+    .bind(group_id)
+    .fetch_one(db)
+    .await?;
+
+    // 创建做客订单
+    let order_id = idgenerator::IdInstance::next_id();
+
+    sqlx::query(
+        r#"INSERT INTO orders (order_id, group_id, type, creator_id, assignee_id, creator_role_snapshot, status, title, content, guest_user_id, guest_invite_id, guest_remark, created_at)
+           VALUES ($1, $2, 'GUEST', $3, $4, 'BUYER', 'CREATED', $5, $6, $7, $8, $9, NOW())"#
+    )
+    .bind(order_id)
+    .bind(group_id)
+    .bind(token.user_id)
+    .bind(seller_id)
+    .bind(&input.title)
+    .bind(&input.content)
+    .bind(token.user_id)
+    .bind(invite_id)
+    .bind(&input.guest_remark)
+    .execute(db)
+    .await?;
+
+    // 增加邀请已使用次数
+    sqlx::query("UPDATE group_invitations SET used_count = used_count + 1 WHERE id = $1")
+        .bind(invite_id)
+        .execute(db)
+        .await?;
+
+    Ok(HttpResponse::Created().json(&serde_json::json!({
+        "orderId": order_id,
+        "status": "ok"
+    })))
+}
+
+/// 做客订单输入
+#[derive(Debug, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GuestOrderInput {
+    pub title: String,
+    pub content: String,
+    pub guest_remark: Option<String>,
 }

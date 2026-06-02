@@ -2,7 +2,7 @@
 // FSD.latest.md compliant endpoints
 
 use chrono::Utc;
-use ntex::web::{self, HttpResponse, ServiceConfig, types::{Path, State}};
+use ntex::web::{self, HttpResponse, ServiceConfig, types::{Path, State, Json}};
 use std::sync::Arc;
 use sqlx::Row;
 
@@ -20,6 +20,11 @@ pub fn configure(cfg: &mut ServiceConfig) {
             .route("/{group_id}/swap-role", web::post().to(swap_role))
             .route("/{group_id}/settlement-check", web::get().to(settlement_check))
             .route("/{group_id}/fulfillment-stats", web::get().to(fulfillment_stats))
+            // FSD v2: 额外端点
+            .route("/{group_id}/invite", web::post().to(create_invite))
+            .route("/{group_id}/foods", web::get().to(list_foods))
+            .route("/{group_id}/orders", web::post().to(create_group_order))
+            .route("/{group_id}/wishes", web::post().to(create_group_wish))
     );
 }
 
@@ -456,4 +461,276 @@ async fn fulfillment_stats(
     }
 
     Ok(HttpResponse::Ok().json(&stats_map))
+}
+
+// ============== FSD v2 额外端点 ==============
+
+/// 创建邀请链接
+/// POST /api/groups/{group_id}/invite
+///
+/// 生成邀请码，供受邀用户加入组
+async fn create_invite(
+    token: UserToken,
+    state: State<Arc<AppState>>,
+    group_id: Path<i64>,
+) -> Result<HttpResponse, CustomError> {
+    let db = &state.db_pool;
+    let gid = group_id.into_inner();
+
+    // 检查用户是否是组成员
+    let is_member: bool = sqlx::query_scalar::<_, bool>(
+        "SELECT EXISTS(SELECT 1 FROM association_group_members WHERE group_id=$1 AND user_id=$2)"
+    )
+    .bind(gid)
+    .bind(token.user_id)
+    .fetch_one(db)
+    .await?;
+
+    if !is_member {
+        return Err(CustomError::Forbidden("无权访问该组".into()));
+    }
+
+    // 检查组是否已满2人
+    let member_count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM association_group_members WHERE group_id=$1 AND member_status='ACTIVE'"
+    )
+    .bind(gid)
+    .fetch_one(db)
+    .await?;
+
+    if member_count >= 2 {
+        return Err(CustomError::BadRequest("组已满2人，无法邀请新成员".into()));
+    }
+
+    // 生成邀请码
+    let invite_code = format!("{:08x}", rand::random::<u32>());
+    let expires_at = Utc::now() + chrono::Duration::days(7);
+
+    sqlx::query(
+        r#"INSERT INTO group_invitations (group_id, invite_code, created_by, expires_at, max_uses, used_count)
+           VALUES ($1, $2, $3, $4, 1, 0)"#
+    )
+    .bind(gid)
+    .bind(&invite_code)
+    .bind(token.user_id)
+    .bind(expires_at)
+    .execute(db)
+    .await?;
+
+    Ok(HttpResponse::Created().json(&serde_json::json!({
+        "inviteCode": invite_code,
+        "expiresAt": expires_at,
+        "status": "ok"
+    })))
+}
+
+/// 获取组内菜品列表
+/// GET /api/groups/{group_id}/foods
+async fn list_foods(
+    token: UserToken,
+    state: State<Arc<AppState>>,
+    group_id: Path<i64>,
+) -> Result<HttpResponse, CustomError> {
+    let db = &state.db_pool;
+    let gid = group_id.into_inner();
+
+    // 检查用户是否是组成员
+    let is_member: bool = sqlx::query_scalar::<_, bool>(
+        "SELECT EXISTS(SELECT 1 FROM association_group_members WHERE group_id=$1 AND user_id=$2)"
+    )
+    .bind(gid)
+    .bind(token.user_id)
+    .fetch_one(db)
+    .await?;
+
+    if !is_member {
+        return Err(CustomError::Forbidden("无权访问该组".into()));
+    }
+
+    // 获取组内菜品
+    let foods = sqlx::query(
+        r#"SELECT food_id, group_id, name, description, images, tags, ingredients, steps, status, created_by
+           FROM foods WHERE group_id=$1 AND status='ACTIVE'
+           ORDER BY created_at DESC"#
+    )
+    .bind(gid)
+    .fetch_all(db)
+    .await?;
+
+    let result: Vec<serde_json::Value> = foods.into_iter().map(|r| {
+        serde_json::json!({
+            "foodId": r.get::<i64, _>("food_id"),
+            "groupId": r.get::<i64, _>("group_id"),
+            "name": r.get::<String, _>("name"),
+            "description": r.get::<Option<String>, _>("description"),
+            "images": r.get::<Option<serde_json::Value>, _>("images"),
+            "tags": r.get::<Option<serde_json::Value>, _>("tags"),
+            "ingredients": r.get::<Option<serde_json::Value>, _>("ingredients"),
+            "steps": r.get::<Option<serde_json::Value>, _>("steps"),
+            "status": r.get::<String, _>("status"),
+            "createdBy": r.get::<i64, _>("created_by")
+        })
+    }).collect();
+
+    Ok(HttpResponse::Ok().json(&result))
+}
+
+/// 在组内创建订单
+/// POST /api/groups/{group_id}/orders
+///
+/// Buyer 创建本组订单
+async fn create_group_order(
+    token: UserToken,
+    state: State<Arc<AppState>>,
+    group_id: Path<i64>,
+    body: Json<GroupOrderInput>,
+) -> Result<HttpResponse, CustomError> {
+    let db = &state.db_pool;
+    let gid = group_id.into_inner();
+    let input = body.into_inner();
+
+    // 检查用户是否是组成员
+    let is_member: bool = sqlx::query_scalar::<_, bool>(
+        "SELECT EXISTS(SELECT 1 FROM association_group_members WHERE group_id=$1 AND user_id=$2)"
+    )
+    .bind(gid)
+    .bind(token.user_id)
+    .fetch_one(db)
+    .await?;
+
+    if !is_member {
+        return Err(CustomError::Forbidden("无权访问该组".into()));
+    }
+
+    // 检查用户角色是否为 BUYER
+    let user_role: Option<String> = sqlx::query_scalar(
+        "SELECT role_in_group FROM association_group_members WHERE group_id=$1 AND user_id=$2"
+    )
+    .bind(gid)
+    .bind(token.user_id)
+    .fetch_one(db)
+    .await?;
+
+    if user_role.as_deref() != Some("BUYER") {
+        return Err(CustomError::Forbidden("只有Buyer可以创建订单".into()));
+    }
+
+    // 获取当前组Seller
+    let seller_id: Option<i64> = sqlx::query_scalar(
+        "SELECT seller_user_id FROM association_groups WHERE group_id=$1"
+    )
+    .bind(gid)
+    .fetch_one(db)
+    .await?;
+
+    // 创建订单
+    let order_id = idgenerator::IdInstance::next_id();
+
+    sqlx::query(
+        r#"INSERT INTO orders (order_id, group_id, type, creator_id, assignee_id, creator_role_snapshot, status, title, content, deadline, created_at)
+           VALUES ($1, $2, 'NORMAL', $3, $4, 'BUYER', 'CREATED', $5, $6, $7, NOW())"#
+    )
+    .bind(order_id)
+    .bind(gid)
+    .bind(token.user_id)
+    .bind(seller_id)
+    .bind(&input.title)
+    .bind(&input.content)
+    .bind(input.deadline)
+    .execute(db)
+    .await?;
+
+    Ok(HttpResponse::Created().json(&serde_json::json!({
+        "orderId": order_id,
+        "status": "ok"
+    })))
+}
+
+/// 在组内创建心愿
+/// POST /api/groups/{group_id}/wishes
+///
+/// 组成员创建心愿，创建后发起人为 requester_id，另一成员为 fulfiller_id
+async fn create_group_wish(
+    token: UserToken,
+    state: State<Arc<AppState>>,
+    group_id: Path<i64>,
+    body: Json<GroupWishInput>,
+) -> Result<HttpResponse, CustomError> {
+    let db = &state.db_pool;
+    let gid = group_id.into_inner();
+    let input = body.into_inner();
+
+    // 检查用户是否是组成员
+    let is_member: bool = sqlx::query_scalar::<_, bool>(
+        "SELECT EXISTS(SELECT 1 FROM association_group_members WHERE group_id=$1 AND user_id=$2)"
+    )
+    .bind(gid)
+    .bind(token.user_id)
+    .fetch_one(db)
+    .await?;
+
+    if !is_member {
+        return Err(CustomError::Forbidden("无权访问该组".into()));
+    }
+
+    // 获取组内另一成员作为默认履约人
+    let other_member: Option<i64> = sqlx::query_scalar(
+        "SELECT user_id FROM association_group_members WHERE group_id=$1 AND user_id!=$2 LIMIT 1"
+    )
+    .bind(gid)
+    .bind(token.user_id)
+    .fetch_one(db)
+    .await?;
+
+    let fulfiller_id = other_member.unwrap_or(0);
+
+    // 获取用户当前角色快照
+    let user_role: Option<String> = sqlx::query_scalar(
+        "SELECT role_in_group FROM association_group_members WHERE group_id=$1 AND user_id=$2"
+    )
+    .bind(gid)
+    .bind(token.user_id)
+    .fetch_one(db)
+    .await?;
+
+    // 创建心愿
+    let wish_id = idgenerator::IdInstance::next_id();
+
+    sqlx::query(
+        r#"INSERT INTO wishes (wish_id, group_id, created_by, requester_id, fulfiller_id, creator_role_snapshot, wish_name, wish_cost, initial_cost, status, created_at)
+           VALUES ($1, $2, $3, $3, $4, $5, $6, $7, $7, 'DRAFT', NOW())"#
+    )
+    .bind(wish_id)
+    .bind(gid)
+    .bind(token.user_id)
+    .bind(fulfiller_id)
+    .bind(&user_role)
+    .bind(&input.name)
+    .bind(input.initial_cost)
+    .execute(db)
+    .await?;
+
+    Ok(HttpResponse::Created().json(&serde_json::json!({
+        "wishId": wish_id,
+        "status": "ok"
+    })))
+}
+
+// ============== FSD v2 请求结构体 ==============
+
+/// 组内创建订单输入
+#[derive(Debug, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GroupOrderInput {
+    pub title: String,
+    pub content: String,
+    pub deadline: Option<chrono::DateTime<chrono::Utc>>,
+}
+
+/// 组内创建心愿输入
+#[derive(Debug, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GroupWishInput {
+    pub name: String,
+    pub initial_cost: i32,
 }

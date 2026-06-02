@@ -1,16 +1,13 @@
 // API 层 - 用户模块
-// 处理用户注册、登录、组管理等 HTTP 请求
+// FSD.latest.md compliant - 用户基础信息
 
 use ntex::web::{self, ServiceConfig};
 use std::sync::Arc;
 
 use crate::config::AppState;
 
-pub mod group_routes;
-
 /// 配置用户相关路由
 pub fn configure(cfg: &mut ServiceConfig) {
-    // 用户相关路由
     cfg.service(web::scope("/register").route("", web::post().to(register)))
         .service(web::scope("/login").route("", web::post().to(login)))
         .service(web::scope("/getInfoByUsername").route("", web::get().to(get_user_info)))
@@ -18,12 +15,8 @@ pub fn configure(cfg: &mut ServiceConfig) {
             web::scope("/users")
                 .route("", web::get().to(get_current_info))
                 .route("", web::post().to(change_info))
-                .route("/is-register", web::get().to(is_register))
-                .route("/role-switch", web::post().to(switch_role)),
+                .route("/is-register", web::get().to(is_register)),
         );
-
-    // 组相关路由
-    group_routes::configure(cfg);
 }
 
 // ========== 用户 Handler 函数 ==========
@@ -37,7 +30,7 @@ use crate::{
     errors::CustomError,
     domain::user::{
         UserPublic, LoginInput, ProfileUpdateInput, RegisterInput, LoginResponse,
-        UserInfoResponse, IsRegisterQuery, IsRegisterResponse, RoleSwitchInput, RoleSwitchResult,
+        UserInfoResponse, IsRegisterQuery, IsRegisterResponse,
     },
     middlewares::auth::UserToken,
     application::user_service::UserService,
@@ -150,21 +143,4 @@ pub async fn change_info(
 ) -> Result<impl Responder, CustomError> {
     let res = UserService::change_info(data.into_inner(), &state).await?;
     Ok(Json(res))
-}
-
-#[utoipa::path(
-    post,
-    path="/users/role-switch",
-    tag="用户",
-    request_body=RoleSwitchInput,
-    responses((status=200, body=RoleSwitchResult)),
-    security(("cookie_auth"=[]))
-)]
-pub async fn switch_role(
-    token: UserToken,
-    state: State<Arc<AppState>>,
-    body: Json<RoleSwitchInput>,
-) -> Result<impl Responder, CustomError> {
-    let res = UserService::switch_role(token.user_id, body.into_inner(), &state).await?;
-    Ok(HttpResponse::Ok().json(&res))
 }
