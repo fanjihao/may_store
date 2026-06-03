@@ -1,17 +1,14 @@
 // 应用服务层 - 签到事件处理器
 // 处理 SignInEvent，发放签到奖励，更新连续签到状态
 
-use sqlx::{PgPool, Row};
 use crate::domain::event::types::SignInPayload;
 use crate::errors::CustomError;
+use sqlx::{PgPool, Row};
 
 /// 处理签到事件
 /// 当用户签到时触发，发放相应奖励并更新连续签到天数
 #[allow(dead_code)]
-pub async fn handle_sign_in(
-    db: &PgPool,
-    payload: &SignInPayload,
-) -> Result<(), CustomError> {
+pub async fn handle_sign_in(db: &PgPool, payload: &SignInPayload) -> Result<(), CustomError> {
     let user_id = payload.user_id;
     let diamonds = payload.diamonds_earned;
     let consecutive_days = payload.consecutive_days;
@@ -47,11 +44,12 @@ pub async fn handle_sign_in(
             .await?;
 
         // 记录组的钻石流水
-        let new_balance: i32 = sqlx::query("SELECT diamond FROM association_groups WHERE group_id = $1")
-            .bind(gid)
-            .fetch_one(db)
-            .await?
-            .get(0);
+        let new_balance: i32 =
+            sqlx::query("SELECT diamond FROM association_groups WHERE group_id = $1")
+                .bind(gid)
+                .fetch_one(db)
+                .await?
+                .get(0);
 
         sqlx::query(
             "INSERT INTO group_diamond_flow (group_id, amount, balance, scene) VALUES ($1, $2, $3, 'sign')"
@@ -64,13 +62,12 @@ pub async fn handle_sign_in(
 
         // 4. 检查是否双方都已签到，额外奖励
         let today = chrono::Local::now().date_naive();
-        let group_member_count: i32 = sqlx::query(
-            "SELECT COUNT(*) FROM association_group_members WHERE group_id = $1"
-        )
-        .bind(gid)
-        .fetch_one(db)
-        .await?
-        .get(0);
+        let group_member_count: i32 =
+            sqlx::query("SELECT COUNT(*) FROM association_group_members WHERE group_id = $1")
+                .bind(gid)
+                .fetch_one(db)
+                .await?
+                .get(0);
 
         if group_member_count == 2 {
             // 获取该组今日签到人数
@@ -86,11 +83,13 @@ pub async fn handle_sign_in(
             if signed_today == 2 {
                 // 双方都已签到，额外奖励组钻石
                 let bonus: i32 = 5; // 额外奖励5钻石
-                sqlx::query("UPDATE association_groups SET diamond = diamond + $1 WHERE group_id = $2")
-                    .bind(bonus)
-                    .bind(gid)
-                    .execute(db)
-                    .await?;
+                sqlx::query(
+                    "UPDATE association_groups SET diamond = diamond + $1 WHERE group_id = $2",
+                )
+                .bind(bonus)
+                .bind(gid)
+                .execute(db)
+                .await?;
 
                 eprintln!(
                     "Group {} both members signed today, bonus {} diamonds awarded",

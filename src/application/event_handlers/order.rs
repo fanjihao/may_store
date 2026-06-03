@@ -1,9 +1,9 @@
 // 应用服务层 - 订单事件处理器
 // 处理订单创建、订单完成等事件，触发经济联动和成就检查
 
-use sqlx::{PgPool, Row};
 use crate::domain::event::types::{OrderCompletedPayload, OrderCreatedPayload};
 use crate::errors::CustomError;
+use sqlx::{PgPool, Row};
 
 /// 处理订单创建事件
 /// 当新订单创建时触发，用于记录日志或发送通知
@@ -29,7 +29,10 @@ pub async fn handle_order_created(
     }
 
     // 2. 记录订单创建日志
-    println!("Order created: order_id={}, user_id={}, group_id={:?}", order_id, user_id, group_id);
+    println!(
+        "Order created: order_id={}, user_id={}, group_id={:?}",
+        order_id, user_id, group_id
+    );
 
     Ok(())
 }
@@ -96,11 +99,12 @@ pub async fn handle_order_completed(
     // 5. 如果有组，额外发放钻石奖励
     if let Some(gid) = group_id {
         // 获取组的钻石余额
-        let current_diamond: Option<i32> = sqlx::query("SELECT diamond FROM association_groups WHERE group_id = $1")
-            .bind(gid)
-            .fetch_optional(db)
-            .await?
-            .map(|r| r.get(0));
+        let current_diamond: Option<i32> =
+            sqlx::query("SELECT diamond FROM association_groups WHERE group_id = $1")
+                .bind(gid)
+                .fetch_optional(db)
+                .await?
+                .map(|r| r.get(0));
 
         if let Some(current) = current_diamond {
             let diamond_reward: i32 = 5; // 完成订单奖励5钻石
@@ -122,17 +126,24 @@ pub async fn handle_order_completed(
             .execute(db)
             .await?;
 
-            println!("Order {} completed, group {} received {} diamonds reward",
-                order_id, gid, diamond_reward);
+            println!(
+                "Order {} completed, group {} received {} diamonds reward",
+                order_id, gid, diamond_reward
+            );
         }
     }
 
     // 6. 发布足迹（事件驱动，自动发布）
-    println!("Order completed: order_id={}, assignee_id={}, base_points={}",
-        order_id, assignee_id, base_points);
+    println!(
+        "Order completed: order_id={}, assignee_id={}, base_points={}",
+        order_id, assignee_id, base_points
+    );
 
     // 7. 检查成就（简化版）
-    println!("Checking achievements for user {} after order completion", assignee_id);
+    println!(
+        "Checking achievements for user {} after order completion",
+        assignee_id
+    );
 
     Ok(())
 }

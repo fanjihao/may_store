@@ -4,20 +4,23 @@
 pub mod connection;
 pub mod messages;
 
-use std::sync::Arc;
+use futures_util::{SinkExt, StreamExt};
 use ntex::web::{self, ServiceConfig};
+use std::sync::Arc;
 use tokio::net::TcpListener;
 use tokio_tungstenite::{accept_async, tungstenite::Message};
-use futures_util::{SinkExt, StreamExt};
 
 use crate::api::ws::connection::ConnectionManager;
 
 /// WebSocket 全局连接管理器
-static CONNECTION_MANAGER: once_cell::sync::OnceCell<Arc<ConnectionManager>> = once_cell::sync::OnceCell::new();
+static CONNECTION_MANAGER: once_cell::sync::OnceCell<Arc<ConnectionManager>> =
+    once_cell::sync::OnceCell::new();
 
 /// 获取全局连接管理器
 pub fn get_connection_manager() -> Arc<ConnectionManager> {
-    CONNECTION_MANAGER.get_or_init(|| Arc::new(ConnectionManager::new())).clone()
+    CONNECTION_MANAGER
+        .get_or_init(|| Arc::new(ConnectionManager::new()))
+        .clone()
 }
 
 /// 配置 WebSocket 路由（HTTP 端点）
@@ -128,7 +131,9 @@ async fn process_messages(
     let mut user_id: Option<i64> = None;
 
     // 发送连接成功消息
-    let _ = ws_stream.send(Message::Text(r#"{"type":"connected","data":{}}"#.into())).await;
+    let _ = ws_stream
+        .send(Message::Text(r#"{"type":"connected","data":{}}"#.into()))
+        .await;
 
     while let Some(msg) = ws_stream.next().await {
         match msg {
@@ -136,21 +141,31 @@ async fn process_messages(
                 let text = text.to_string();
                 log::debug!("收到消息 from {}: {}", peer_addr, text);
 
-                if let Ok(envelope) = serde_json::from_str::<crate::api::ws::messages::WsEnvelope>(&text) {
+                if let Ok(envelope) =
+                    serde_json::from_str::<crate::api::ws::messages::WsEnvelope>(&text)
+                {
                     match envelope.msg_type.as_str() {
                         "ping" => {
-                            let _ = ws_stream.send(Message::Text(r#"{"type":"pong","data":{}}"#.into())).await;
+                            let _ = ws_stream
+                                .send(Message::Text(r#"{"type":"pong","data":{}}"#.into()))
+                                .await;
                         }
                         "auth" => {
-                            if let Some(token) = envelope.data.get("token").and_then(|t| t.as_str()) {
+                            if let Some(token) = envelope.data.get("token").and_then(|t| t.as_str())
+                            {
                                 match verify_token(token).await {
                                     Ok(uid) => {
                                         user_id = Some(uid);
-                                        manager.add_connection(uid, crate::api::ws::connection::ConnectionInfo {
-                                            user_id: Some(uid),
-                                            connected_at: chrono::Utc::now(),
-                                            authenticated: true,
-                                        }).await;
+                                        manager
+                                            .add_connection(
+                                                uid,
+                                                crate::api::ws::connection::ConnectionInfo {
+                                                    user_id: Some(uid),
+                                                    connected_at: chrono::Utc::now(),
+                                                    authenticated: true,
+                                                },
+                                            )
+                                            .await;
                                         let _ = ws_stream.send(Message::Text(format!(
                                             r#"{{"type":"auth_resp","data":{{"success":true,"userId":{}}}}}"#,
                                             uid
@@ -198,17 +213,20 @@ async fn process_messages(
 
 /// 验证 JWT Token
 async fn verify_token(token: &str) -> Result<i64, String> {
-    use jsonwebtoken::{decode, Algorithm, DecodingKey, Validation};
     use crate::config::TOKEN_SECRET_KEY;
+    use jsonwebtoken::{decode, Algorithm, DecodingKey, Validation};
 
     let validation = Validation::new(Algorithm::HS256);
     let token_data = decode::<serde_json::Value>(
         token,
         &DecodingKey::from_secret(TOKEN_SECRET_KEY),
         &validation,
-    ).map_err(|e| format!("Token 验证失败: {}", e))?;
+    )
+    .map_err(|e| format!("Token 验证失败: {}", e))?;
 
-    let user_id = token_data.claims.get("user_id")
+    let user_id = token_data
+        .claims
+        .get("user_id")
         .and_then(|v| v.as_i64())
         .ok_or("Token 中缺少 user_id".to_string())?;
 

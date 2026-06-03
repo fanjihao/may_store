@@ -1,10 +1,14 @@
 // API - 经济查询路由
 // FSD.latest.md compliant - 积分/钻石/经验流水查询
 
-use ntex::web::{self, HttpResponse, ServiceConfig, types::{Path, Query, State}};
+use ntex::web::{
+    self,
+    types::{Path, Query, State},
+    HttpResponse, ServiceConfig,
+};
 use serde::{Deserialize, Serialize};
-use utoipa::ToSchema;
 use std::sync::Arc;
+use utoipa::ToSchema;
 
 use crate::config::AppState;
 use crate::errors::CustomError;
@@ -20,12 +24,68 @@ pub fn configure(cfg: &mut ServiceConfig) {
     );
 }
 
+/// 积分响应
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct PointsResponse {
+    pub user_id: i64,
+    pub group_id: i64,
+    pub available_love_point: i64,
+    pub frozen_love_point: i64,
+    pub status: String,
+}
+
+/// 积分流水项
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct TransactionItem {
+    pub id: i64,
+    pub user_id: i64,
+    pub group_id: i64,
+    #[serde(rename = "type")]
+    pub type_: String,
+    pub amount: i64,
+    pub available_before: i64,
+    pub available_after: i64,
+    pub frozen_before: i64,
+    pub frozen_after: i64,
+    pub biz_type: String,
+    pub biz_id: i64,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+}
+
+/// 组经验响应
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct GroupExpResponse {
+    pub group_id: i64,
+    pub level: i32,
+    pub exp: i64,
+    pub exp_for_next_level: i32,
+    pub exp_to_next_level: i64,
+    pub status: String,
+}
+
 /// 获取用户组内积分
 /// GET /api/groups/{group_id}/points?user_id=xxx
 ///
 /// 返回:
 /// - available_love_point: 可用爱心积分
 /// - frozen_love_point: 冻结爱心积分
+#[utoipa::path(
+    get,
+    path = "/api/groups/{group_id}/points",
+    tag = "经济查询",
+    params(
+        ("group_id" = i64, Path, description = "组ID"),
+        PointsQuery
+    ),
+    responses(
+        (status = 200, description = "获取成功", body = PointsResponse),
+        (status = 403, description = "无权访问该组")
+    ),
+    security(("cookie_auth" = []))
+)]
 async fn get_points(
     token: UserToken,
     state: State<Arc<AppState>>,
@@ -38,7 +98,7 @@ async fn get_points(
 
     // 检查用户是否是组成员
     let is_member: bool = sqlx::query_scalar::<_, bool>(
-        "SELECT EXISTS(SELECT 1 FROM association_group_members WHERE group_id=$1 AND user_id=$2)"
+        "SELECT EXISTS(SELECT 1 FROM association_group_members WHERE group_id=$1 AND user_id=$2)",
     )
     .bind(gid)
     .bind(user_id)
@@ -71,6 +131,20 @@ async fn get_points(
 
 /// 获取积分流水
 /// GET /api/groups/{group_id}/transactions?user_id=xxx&type=EARN&cursor=xxx&limit=20
+#[utoipa::path(
+    get,
+    path = "/api/groups/{group_id}/transactions",
+    tag = "经济查询",
+    params(
+        ("group_id" = i64, Path, description = "组ID"),
+        TransactionsQuery
+    ),
+    responses(
+        (status = 200, description = "获取成功", body = Vec<TransactionItem>),
+        (status = 403, description = "无权访问该组")
+    ),
+    security(("cookie_auth" = []))
+)]
 async fn get_transactions(
     token: UserToken,
     state: State<Arc<AppState>>,
@@ -85,7 +159,7 @@ async fn get_transactions(
 
     // 检查用户是否是组成员
     let is_member: bool = sqlx::query_scalar::<_, bool>(
-        "SELECT EXISTS(SELECT 1 FROM association_group_members WHERE group_id=$1 AND user_id=$2)"
+        "SELECT EXISTS(SELECT 1 FROM association_group_members WHERE group_id=$1 AND user_id=$2)",
     )
     .bind(gid)
     .bind(user_id)
@@ -126,22 +200,23 @@ async fn get_transactions(
         .await?
     };
 
-    let result: Vec<serde_json::Value> = transactions.into_iter().map(|t| {
-        serde_json::json!({
-            "id": t.id,
-            "userId": t.user_id,
-            "groupId": t.group_id,
-            "type": t.type_,
-            "amount": t.amount,
-            "availableBefore": t.available_before,
-            "availableAfter": t.available_after,
-            "frozenBefore": t.frozen_before,
-            "frozenAfter": t.frozen_after,
-            "bizType": t.biz_type,
-            "bizId": t.biz_id,
-            "createdAt": t.created_at
+    let result: Vec<TransactionItem> = transactions
+        .into_iter()
+        .map(|t| TransactionItem {
+            id: t.id,
+            user_id: t.user_id,
+            group_id: t.group_id,
+            type_: t.type_,
+            amount: t.amount,
+            available_before: t.available_before,
+            available_after: t.available_after,
+            frozen_before: t.frozen_before,
+            frozen_after: t.frozen_after,
+            biz_type: t.biz_type,
+            biz_id: t.biz_id,
+            created_at: t.created_at,
         })
-    }).collect();
+        .collect();
 
     Ok(HttpResponse::Ok().json(&result))
 }
@@ -153,6 +228,19 @@ async fn get_transactions(
 /// - level: 组等级
 /// - exp: 当前经验
 /// - exp_to_next_level: 到下一级还需经验
+#[utoipa::path(
+    get,
+    path = "/api/groups/{group_id}/exp",
+    tag = "经济查询",
+    params(
+        ("group_id" = i64, Path, description = "组ID")
+    ),
+    responses(
+        (status = 200, description = "获取成功", body = GroupExpResponse),
+        (status = 403, description = "无权访问该组")
+    ),
+    security(("cookie_auth" = []))
+)]
 async fn get_group_exp(
     token: UserToken,
     state: State<Arc<AppState>>,
@@ -163,7 +251,7 @@ async fn get_group_exp(
 
     // 检查用户是否是组成员
     let is_member: bool = sqlx::query_scalar::<_, bool>(
-        "SELECT EXISTS(SELECT 1 FROM association_group_members WHERE group_id=$1 AND user_id=$2)"
+        "SELECT EXISTS(SELECT 1 FROM association_group_members WHERE group_id=$1 AND user_id=$2)",
     )
     .bind(gid)
     .bind(token.user_id)
@@ -175,12 +263,11 @@ async fn get_group_exp(
     }
 
     // 查询组经验信息
-    let exp_info: Option<(i32, i64)> = sqlx::query_as(
-        "SELECT level, exp FROM association_groups WHERE group_id=$1"
-    )
-    .bind(gid)
-    .fetch_optional(db)
-    .await?;
+    let exp_info: Option<(i32, i64)> =
+        sqlx::query_as("SELECT level, exp FROM association_groups WHERE group_id=$1")
+            .bind(gid)
+            .fetch_optional(db)
+            .await?;
 
     let (level, exp) = exp_info.unwrap_or((1, 0));
 
@@ -200,18 +287,21 @@ async fn get_group_exp(
 
 // ============== FSD v2 结构体 ==============
 
-#[derive(Debug, Deserialize, ToSchema)]
+#[derive(Debug, Deserialize, ToSchema, utoipa::IntoParams)]
 #[serde(rename_all = "camelCase")]
 pub struct PointsQuery {
     pub user_id: Option<i64>,
 }
 
-#[derive(Debug, Deserialize, ToSchema)]
+#[derive(Debug, Deserialize, ToSchema, utoipa::IntoParams)]
 #[serde(rename_all = "camelCase")]
 pub struct TransactionsQuery {
     pub user_id: Option<i64>,
-    pub tx_type: Option<String>,  // EARN, FREEZE, UNFREEZE, DEDUCT, ADJUST
+    #[param(default)]
+    pub tx_type: Option<String>, // EARN, FREEZE, UNFREEZE, DEDUCT, ADJUST
+    #[allow(dead_code)]
     pub cursor: Option<String>,
+    #[param(default = 20)]
     pub limit: Option<i32>,
 }
 

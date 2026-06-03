@@ -1,9 +1,11 @@
 // 应用服务层 - 情侣空间服务
 
+use crate::domain::couple_space::{
+    MemorialDay, MemorialDayCreate, MemorialDayQuery, MemorialDayUpdate,
+};
+use crate::errors::CustomError;
 use chrono::NaiveDate;
 use sqlx::{PgPool, Row};
-use crate::domain::couple_space::{MemorialDay, MemorialDayCreate, MemorialDayQuery, MemorialDayUpdate};
-use crate::errors::CustomError;
 
 pub struct MemorialDayService;
 
@@ -18,13 +20,12 @@ impl MemorialDayService {
         let limit = query.limit.unwrap_or(50).min(100);
 
         // 获取用户的情侣用户ID
-        let couple_user_id: Option<i64> = sqlx::query(
-            "SELECT partner_user_id FROM couple_relations WHERE user_id = $1 LIMIT 1"
-        )
-        .bind(user_id as i64)
-        .fetch_optional(db)
-        .await?
-        .map(|r| r.get("partner_user_id"));
+        let couple_user_id: Option<i64> =
+            sqlx::query("SELECT partner_user_id FROM couple_relations WHERE user_id = $1 LIMIT 1")
+                .bind(user_id as i64)
+                .fetch_optional(db)
+                .await?
+                .map(|r| r.get("partner_user_id"));
 
         let couple_uid = match couple_user_id {
             Some(id) => id,
@@ -36,7 +37,7 @@ impl MemorialDayService {
              FROM memorial_days \
              WHERE user_id = $1 OR user_id = $2 \
              ORDER BY date DESC \
-             LIMIT $3"
+             LIMIT $3",
         )
         .bind(user_id as i64)
         .bind(couple_uid)
@@ -44,7 +45,8 @@ impl MemorialDayService {
         .fetch_all(db)
         .await?;
 
-        let days: Vec<MemorialDay> = rows.into_iter()
+        let days: Vec<MemorialDay> = rows
+            .into_iter()
             .map(|r| MemorialDay {
                 id: r.get("id"),
                 user_id: r.get("user_id"),
@@ -67,25 +69,27 @@ impl MemorialDayService {
         input: &MemorialDayCreate,
     ) -> Result<MemorialDay, CustomError> {
         // 获取用户的情侣用户ID
-        let couple_user_id: Option<i64> = sqlx::query(
-            "SELECT partner_user_id FROM couple_relations WHERE user_id = $1 LIMIT 1"
-        )
-        .bind(user_id as i64)
-        .fetch_optional(db)
-        .await?
-        .map(|r| r.get("partner_user_id"));
+        let couple_user_id: Option<i64> =
+            sqlx::query("SELECT partner_user_id FROM couple_relations WHERE user_id = $1 LIMIT 1")
+                .bind(user_id as i64)
+                .fetch_optional(db)
+                .await?
+                .map(|r| r.get("partner_user_id"));
 
         let couple_uid = match couple_user_id {
             Some(id) => id,
             None => return Err(CustomError::NotFound("未找到情侣关系".into())),
         };
 
-        let day_type = input.day_type.clone().unwrap_or_else(|| "custom".to_string());
+        let day_type = input
+            .day_type
+            .clone()
+            .unwrap_or_else(|| "custom".to_string());
 
         let row = sqlx::query(
             "INSERT INTO memorial_days (user_id, couple_user_id, name, date, day_type) \
              VALUES ($1, $2, $3, $4, $5) \
-             RETURNING id, user_id, couple_user_id, name, date, day_type, created_at, updated_at"
+             RETURNING id, user_id, couple_user_id, name, date, day_type, created_at, updated_at",
         )
         .bind(user_id as i64)
         .bind(couple_uid)
@@ -131,7 +135,7 @@ impl MemorialDayService {
              date = COALESCE($3, date), \
              day_type = COALESCE($4, day_type) \
              WHERE id = $1 \
-             RETURNING id, user_id, couple_user_id, name, date, day_type, created_at, updated_at"
+             RETURNING id, user_id, couple_user_id, name, date, day_type, created_at, updated_at",
         )
         .bind(id)
         .bind(&input.name)
@@ -185,7 +189,7 @@ impl MemorialDayService {
     ) -> Result<Option<MemorialDay>, CustomError> {
         // 获取用户的情侣用户ID和在一起日期
         let couple_info: Option<(i64, NaiveDate)> = sqlx::query_as(
-            "SELECT partner_user_id, start_date FROM couple_relations WHERE user_id = $1"
+            "SELECT partner_user_id, start_date FROM couple_relations WHERE user_id = $1",
         )
         .bind(user_id as i64)
         .fetch_optional(db)
@@ -199,7 +203,7 @@ impl MemorialDayService {
         // 查找是否已有"在一起"纪念日
         let existing_row = sqlx::query(
             "SELECT id, user_id, couple_user_id, name, date, day_type, created_at, updated_at \
-             FROM memorial_days WHERE user_id = $1 AND day_type = 'anniversary' LIMIT 1"
+             FROM memorial_days WHERE user_id = $1 AND day_type = 'anniversary' LIMIT 1",
         )
         .bind(user_id as i64)
         .fetch_optional(db)
@@ -222,7 +226,7 @@ impl MemorialDayService {
         let row = sqlx::query(
             "INSERT INTO memorial_days (user_id, couple_user_id, name, date, day_type) \
              VALUES ($1, $2, '在一起', $3, 'anniversary') \
-             RETURNING id, user_id, couple_user_id, name, date, day_type, created_at, updated_at"
+             RETURNING id, user_id, couple_user_id, name, date, day_type, created_at, updated_at",
         )
         .bind(user_id as i64)
         .bind(couple_uid)

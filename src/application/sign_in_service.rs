@@ -1,15 +1,17 @@
 // 应用服务层 - 签到服务
 // 包含签到、连续签到奖励等业务用例
 
-use chrono::{Local, NaiveDate};
-use sqlx::Row;
-use std::sync::Arc;
 use crate::config::AppState;
-use crate::domain::sign_in::entities::{SignInfoResponse, SignInResponse, DailyCheckinOut, SignRecordOut};
 use crate::domain::event::{EventType, SignInPayload};
+use crate::domain::sign_in::entities::{
+    DailyCheckinOut, SignInResponse, SignInfoResponse, SignRecordOut,
+};
 use crate::domain::user::GroupPointConfig;
 use crate::errors::CustomError;
 use crate::infrastructure::event::publisher::EventPublisher;
+use chrono::{Local, NaiveDate};
+use sqlx::Row;
+use std::sync::Arc;
 
 /// 签到应用服务
 pub struct SignService;
@@ -25,7 +27,7 @@ impl SignService {
 
         // 检查今日是否已签到
         let existing: Option<(i64,)> = sqlx::query_as(
-            "SELECT sign_id FROM sign_records WHERE user_id = $1 AND sign_date = $2"
+            "SELECT sign_id FROM sign_records WHERE user_id = $1 AND sign_date = $2",
         )
         .bind(user_id as i64)
         .bind(today)
@@ -127,7 +129,8 @@ impl SignService {
             group_id,
             Some("sign"),
             Some(sign_id),
-        ).await;
+        )
+        .await;
 
         let message = if consecutive_days >= 7 {
             "太棒了！连续签到7天！".to_string()
@@ -173,13 +176,14 @@ impl SignService {
         // 获取最近签到记录
         let recent_rows = sqlx::query(
             "SELECT sign_id, user_id, sign_date, consecutive_days, diamonds_earned, created_at \
-             FROM sign_records WHERE user_id = $1 ORDER BY sign_date DESC LIMIT 7"
+             FROM sign_records WHERE user_id = $1 ORDER BY sign_date DESC LIMIT 7",
         )
         .bind(user_id as i64)
         .fetch_all(db)
         .await?;
 
-        let recent_records: Vec<SignRecordOut> = recent_rows.into_iter()
+        let recent_records: Vec<SignRecordOut> = recent_rows
+            .into_iter()
             .map(|r| SignRecordOut {
                 sign_id: r.get("sign_id"),
                 user_id: r.get("user_id"),
@@ -201,11 +205,12 @@ impl SignService {
         let consecutive_days = last_sign.map(|(_, cd)| cd).unwrap_or(0);
         let last_sign_date = last_sign.map(|(d, _)| d);
 
-        let total_sign_days: i32 = sqlx::query("SELECT COUNT(*) FROM sign_records WHERE user_id = $1")
-            .bind(user_id as i64)
-            .fetch_one(db)
-            .await?
-            .get(0);
+        let total_sign_days: i32 =
+            sqlx::query("SELECT COUNT(*) FROM sign_records WHERE user_id = $1")
+                .bind(user_id as i64)
+                .fetch_one(db)
+                .await?
+                .get(0);
 
         Ok(SignInfoResponse {
             today_signed,
@@ -228,7 +233,7 @@ impl SignService {
 
         // 检查今日是否已签到
         let existing: Option<(i64,)> = sqlx::query_as(
-            "SELECT sign_id FROM sign_records WHERE user_id = $1 AND sign_date = $2"
+            "SELECT sign_id FROM sign_records WHERE user_id = $1 AND sign_date = $2",
         )
         .bind(user_id as i64)
         .bind(today)
@@ -330,7 +335,8 @@ impl SignService {
             group_id,
             Some("sign"),
             Some(sign_id),
-        ).await;
+        )
+        .await;
 
         Ok(DailyCheckinOut {
             diamonds_earned,

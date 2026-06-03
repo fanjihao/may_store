@@ -8,11 +8,11 @@ use ntex::web::{
 };
 use std::sync::Arc;
 
-use serde::{Deserialize, Serialize};
-use utoipa::ToSchema;
-
-use crate::domain::wish::{WishCursor, WishCreateInput, WishFeedbackInput, WishOut, WishQuery, WishUpdateInput, WishQuoteInput, WishDeadlineInput, WishRejectInput};
 use crate::application::wish_service::WishService;
+use crate::domain::wish::{
+    WishCreateInput, WishCursor, WishDeadlineInput, WishFeedbackInput, WishOut, WishQuery,
+    WishQuoteInput, WishRejectInput, WishUpdateInput,
+};
 use crate::{
     config::AppState,
     errors::CustomError,
@@ -29,7 +29,10 @@ pub fn configure(cfg: &mut ServiceConfig) {
             // FSD v2: 心愿协商与选择接口
             .route("/{id}/quote", web::post().to(wish_quote))
             .route("/{id}/deadline", web::post().to(wish_deadline))
-            .route("/{id}/confirm-agreement", web::post().to(wish_confirm_agreement))
+            .route(
+                "/{id}/confirm-agreement",
+                web::post().to(wish_confirm_agreement),
+            )
             .route("/{id}/reject", web::post().to(wish_reject))
             .route("/{id}/select", web::post().to(wish_select))
             .route("/{id}/feedback", web::put().to(submit_feedback)),
@@ -259,7 +262,8 @@ pub async fn wish_deadline(
 ) -> Result<impl Responder, CustomError> {
     let wish_id = *id;
     let input = body.into_inner();
-    let out = WishService::set_deadline(&state.db_pool, user_token.user_id, wish_id, &input).await?;
+    let out =
+        WishService::set_deadline(&state.db_pool, user_token.user_id, wish_id, &input).await?;
     Ok(HttpResponse::Ok().json(&out))
 }
 

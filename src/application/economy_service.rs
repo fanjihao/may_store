@@ -2,10 +2,10 @@
 // FSD.latest.md compliant - 爱心积分/组经验/组钻石流水管理
 // 所有经济变动必须写流水，禁止直接改余额
 
-use chrono::Utc;
-use sqlx::PgPool;
 use crate::domain::economy::*;
 use crate::errors::CustomError;
+use chrono::Utc;
+use sqlx::PgPool;
 
 /// 经济服务 - 处理所有积分、钻石、经验的变动
 /// 核心原则:
@@ -31,12 +31,11 @@ impl EconomyService {
         trace_id: Option<&str>,
     ) -> Result<UserGroupPoints, CustomError> {
         // 检查幂等键是否已使用
-        let existing: Option<LovePointTransaction> = sqlx::query_as(
-            "SELECT * FROM love_point_transactions WHERE idempotency_key = $1"
-        )
-        .bind(idempotency_key)
-        .fetch_optional(db)
-        .await?;
+        let existing: Option<LovePointTransaction> =
+            sqlx::query_as("SELECT * FROM love_point_transactions WHERE idempotency_key = $1")
+                .bind(idempotency_key)
+                .fetch_optional(db)
+                .await?;
 
         if existing.is_some() {
             // 幂等返回 - 已处理过
@@ -119,12 +118,11 @@ impl EconomyService {
         trace_id: Option<&str>,
     ) -> Result<UserGroupPoints, CustomError> {
         // 检查幂等键
-        let existing: Option<LovePointTransaction> = sqlx::query_as(
-            "SELECT * FROM love_point_transactions WHERE idempotency_key = $1"
-        )
-        .bind(idempotency_key)
-        .fetch_optional(db)
-        .await?;
+        let existing: Option<LovePointTransaction> =
+            sqlx::query_as("SELECT * FROM love_point_transactions WHERE idempotency_key = $1")
+                .bind(idempotency_key)
+                .fetch_optional(db)
+                .await?;
 
         if existing.is_some() {
             return Self::get_user_group_points(db, user_id, group_id).await;
@@ -202,12 +200,11 @@ impl EconomyService {
         idempotency_key: &str,
         trace_id: Option<&str>,
     ) -> Result<UserGroupPoints, CustomError> {
-        let existing: Option<LovePointTransaction> = sqlx::query_as(
-            "SELECT * FROM love_point_transactions WHERE idempotency_key = $1"
-        )
-        .bind(idempotency_key)
-        .fetch_optional(db)
-        .await?;
+        let existing: Option<LovePointTransaction> =
+            sqlx::query_as("SELECT * FROM love_point_transactions WHERE idempotency_key = $1")
+                .bind(idempotency_key)
+                .fetch_optional(db)
+                .await?;
 
         if existing.is_some() {
             return Self::get_user_group_points(db, user_id, group_id).await;
@@ -283,12 +280,11 @@ impl EconomyService {
         idempotency_key: &str,
         trace_id: Option<&str>,
     ) -> Result<UserGroupPoints, CustomError> {
-        let existing: Option<LovePointTransaction> = sqlx::query_as(
-            "SELECT * FROM love_point_transactions WHERE idempotency_key = $1"
-        )
-        .bind(idempotency_key)
-        .fetch_optional(db)
-        .await?;
+        let existing: Option<LovePointTransaction> =
+            sqlx::query_as("SELECT * FROM love_point_transactions WHERE idempotency_key = $1")
+                .bind(idempotency_key)
+                .fetch_optional(db)
+                .await?;
 
         if existing.is_some() {
             return Self::get_user_group_points(db, user_id, group_id).await;
@@ -359,33 +355,31 @@ impl EconomyService {
         idempotency_key: &str,
         trace_id: Option<&str>,
     ) -> Result<(i64, i32), CustomError> {
-        let existing: Option<GroupExpTransaction> = sqlx::query_as(
-            "SELECT * FROM group_exp_transactions WHERE idempotency_key = $1"
-        )
-        .bind(idempotency_key)
-        .fetch_optional(db)
-        .await?;
+        let existing: Option<GroupExpTransaction> =
+            sqlx::query_as("SELECT * FROM group_exp_transactions WHERE idempotency_key = $1")
+                .bind(idempotency_key)
+                .fetch_optional(db)
+                .await?;
 
         if existing.is_some() {
             // 获取当前等级
-            let group: (i64, i32) = sqlx::query_as(
-                "SELECT exp, level FROM association_groups WHERE group_id = $1"
-            )
-            .bind(group_id)
-            .fetch_one(db)
-            .await?;
+            let group: (i64, i32) =
+                sqlx::query_as("SELECT exp, level FROM association_groups WHERE group_id = $1")
+                    .bind(group_id)
+                    .fetch_one(db)
+                    .await?;
             return Ok(group);
         }
 
         // 获取组当前信息
         let group: (i64, i32, i64) = sqlx::query_as(
-            "SELECT exp, level, diamond FROM association_groups WHERE group_id = $1"
+            "SELECT exp, level, diamond FROM association_groups WHERE group_id = $1",
         )
         .bind(group_id)
         .fetch_one(db)
         .await?;
 
-        let (current_exp, current_level, current_diamond) = group;
+        let (current_exp, current_level, _current_diamond) = group;
         let exp_before = current_exp;
         let level_before = current_level;
 
@@ -453,35 +447,32 @@ impl EconomyService {
         idempotency_key: &str,
         trace_id: Option<&str>,
     ) -> Result<i64, CustomError> {
-        let existing: Option<DiamondTransaction> = sqlx::query_as(
-            "SELECT * FROM diamond_transactions WHERE idempotency_key = $1"
-        )
-        .bind(idempotency_key)
-        .fetch_optional(db)
-        .await?;
+        let existing: Option<DiamondTransaction> =
+            sqlx::query_as("SELECT * FROM diamond_transactions WHERE idempotency_key = $1")
+                .bind(idempotency_key)
+                .fetch_optional(db)
+                .await?;
 
         if existing.is_some() {
-            let group: (i64,) = sqlx::query_as(
-                "SELECT diamond FROM association_groups WHERE group_id = $1"
-            )
-            .bind(group_id)
-            .fetch_one(db)
-            .await?;
+            let group: (i64,) =
+                sqlx::query_as("SELECT diamond FROM association_groups WHERE group_id = $1")
+                    .bind(group_id)
+                    .fetch_one(db)
+                    .await?;
             return Ok(group.0);
         }
 
-        let group: (i64,) = sqlx::query_as(
-            "SELECT diamond FROM association_groups WHERE group_id = $1"
-        )
-        .bind(group_id)
-        .fetch_one(db)
-        .await?;
+        let group: (i64,) =
+            sqlx::query_as("SELECT diamond FROM association_groups WHERE group_id = $1")
+                .bind(group_id)
+                .fetch_one(db)
+                .await?;
 
         let balance_before = group.0;
         let balance_after = balance_before + amount as i64;
 
         sqlx::query(
-            "UPDATE association_groups SET diamond = $1, updated_at = NOW() WHERE group_id = $2"
+            "UPDATE association_groups SET diamond = $1, updated_at = NOW() WHERE group_id = $2",
         )
         .bind(balance_after)
         .bind(group_id)
@@ -525,11 +516,12 @@ impl EconomyService {
 
     /// 检查每日奖励上限
     /// 返回是否可以发放奖励，以及当前已发放数量
+    #[allow(dead_code)]
     pub async fn check_daily_reward_limit(
         db: &PgPool,
         user_id: i64,
         group_id: i64,
-        order_type: &str, // "NORMAL" or "GUEST"
+        _order_type: &str, // "NORMAL" or "GUEST"
     ) -> Result<DailyRewardCounter, CustomError> {
         let today = Utc::now().date_naive();
 
@@ -546,7 +538,7 @@ impl EconomyService {
             Some(c) => Ok(c),
             None => {
                 // 创建新的每日计数器
-                let new_counter = DailyRewardCounter {
+                let _new_counter = DailyRewardCounter {
                     id: 0,
                     stat_date: today,
                     group_id,
@@ -593,13 +585,12 @@ impl EconomyService {
         user_id: i64,
         group_id: i64,
     ) -> Result<UserGroupPoints, CustomError> {
-        let points = sqlx::query_as(
-            "SELECT * FROM user_group_points WHERE user_id = $1 AND group_id = $2"
-        )
-        .bind(user_id)
-        .bind(group_id)
-        .fetch_optional(db)
-        .await?;
+        let points =
+            sqlx::query_as("SELECT * FROM user_group_points WHERE user_id = $1 AND group_id = $2")
+                .bind(user_id)
+                .bind(group_id)
+                .fetch_optional(db)
+                .await?;
 
         match points {
             Some(p) => Ok(p),

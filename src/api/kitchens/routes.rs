@@ -2,9 +2,15 @@
 // FSD.latest.md compliant - 做客系统
 
 use chrono::Utc;
-use ntex::web::{self, HttpResponse, ServiceConfig, types::{Path, Json, State}};
-use std::sync::Arc;
+use ntex::web::{
+    self,
+    types::{Json, Path, State},
+    HttpResponse, ServiceConfig,
+};
+use serde::{Deserialize, Serialize};
 use sqlx::Row;
+use std::sync::Arc;
+use utoipa::ToSchema;
 
 use crate::config::AppState;
 use crate::errors::CustomError;
@@ -20,11 +26,39 @@ pub fn configure(cfg: &mut ServiceConfig) {
     );
 }
 
+/// 访问主人家厨房响应
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct AccessKitchenResponse {
+    pub group_id: i64,
+    pub group_name: String,
+    pub buyer_nick_name: Option<String>,
+    pub seller_nick_name: Option<String>,
+    pub buyer_avatar: Option<String>,
+    pub seller_avatar: Option<String>,
+    pub invite_code: String,
+    pub expires_at: chrono::DateTime<chrono::Utc>,
+    pub status: String,
+}
+
 /// 访问主人家厨房
 /// GET /api/kitchens/invitations/{invite_code}
 ///
 /// 做客用户必须使用长期账号，通过邀请链接访问主人家厨房
 /// 返回厨房信息和邀请有效期
+#[utoipa::path(
+    get,
+    path = "/api/kitchens/invitations/{invite_code}",
+    tag = "做客厨房",
+    params(
+        ("invite_code" = String, Path, description = "邀请码")
+    ),
+    responses(
+        (status = 200, description = "获取成功", body = AccessKitchenResponse),
+        (status = 400, description = "邀请码已过期或已用完"),
+        (status = 404, description = "邀请码不存在或组不存在")
+    )
+)]
 async fn access_kitchen(
     state: State<Arc<AppState>>,
     invite_code: Path<String>,
@@ -36,7 +70,7 @@ async fn access_kitchen(
     let invite = sqlx::query_as::<_, (i64, chrono::DateTime<chrono::Utc>, i64, i64)>(
         r#"SELECT gi.group_id, gi.expires_at, gi.max_uses, gi.used_count
            FROM group_invitations gi
-           WHERE gi.invite_code = $1 AND gi.revoked = false"#
+           WHERE gi.invite_code = $1 AND gi.revoked = false"#,
     )
     .bind(&code)
     .fetch_optional(db)
@@ -65,7 +99,7 @@ async fn access_kitchen(
            FROM association_groups g
            LEFT JOIN users buyer ON buyer.user_id = g.buyer_user_id
            LEFT JOIN users seller ON seller.user_id = g.seller_user_id
-           WHERE g.group_id = $1"#
+           WHERE g.group_id = $1"#,
     )
     .bind(group_id)
     .fetch_optional(db)
@@ -89,11 +123,38 @@ async fn access_kitchen(
     })))
 }
 
+/// 厨房菜品项
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct KitchenFoodItem {
+    pub food_id: i64,
+    pub group_id: i64,
+    pub name: String,
+    pub description: Option<String>,
+    pub images: Option<serde_json::Value>,
+    pub tags: Option<serde_json::Value>,
+    pub ingredients: Option<serde_json::Value>,
+    pub steps: Option<serde_json::Value>,
+    pub status: String,
+}
+
 /// 查看主人家厨房菜单
 /// GET /api/kitchens/invitations/{invite_code}/foods
 ///
 /// 做客用户可查看主人家厨房菜单
 /// 仅返回授权范围内的菜单
+#[utoipa::path(
+    get,
+    path = "/api/kitchens/invitations/{invite_code}/foods",
+    tag = "做客厨房",
+    params(
+        ("invite_code" = String, Path, description = "邀请码")
+    ),
+    responses(
+        (status = 200, description = "获取成功", body = Vec<KitchenFoodItem>),
+        (status = 404, description = "邀请码无效或已过期")
+    )
+)]
 async fn get_kitchen_foods(
     state: State<Arc<AppState>>,
     invite_code: Path<String>,
@@ -105,7 +166,7 @@ async fn get_kitchen_foods(
     let group_id: i64 = sqlx::query_scalar(
         r#"SELECT gi.group_id FROM group_invitations gi
            WHERE gi.invite_code = $1 AND gi.revoked = false
-           AND gi.expires_at > NOW() AND gi.used_count < gi.max_uses"#
+           AND gi.expires_at > NOW() AND gi.used_count < gi.max_uses"#,
     )
     .bind(&code)
     .fetch_optional(db)
@@ -116,27 +177,38 @@ async fn get_kitchen_foods(
     let foods = sqlx::query(
         r#"SELECT food_id, group_id, name, description, images, tags, ingredients, steps, status
            FROM foods WHERE group_id=$1 AND status='ACTIVE'
-           ORDER BY created_at DESC"#
+           ORDER BY created_at DESC"#,
     )
     .bind(group_id)
     .fetch_all(db)
     .await?;
 
-    let result: Vec<serde_json::Value> = foods.into_iter().map(|r| {
-        serde_json::json!({
-            "foodId": r.get::<i64, _>("food_id"),
-            "groupId": r.get::<i64, _>("group_id"),
-            "name": r.get::<String, _>("name"),
-            "description": r.get::<Option<String>, _>("description"),
-            "images": r.get::<Option<serde_json::Value>, _>("images"),
-            "tags": r.get::<Option<serde_json::Value>, _>("tags"),
-            "ingredients": r.get::<Option<serde_json::Value>, _>("ingredients"),
-            "steps": r.get::<Option<serde_json::Value>, _>("steps"),
-            "status": r.get::<String, _>("status")
+    let result: Vec<serde_json::Value> = foods
+        .into_iter()
+        .map(|r| {
+            serde_json::json!({
+                "foodId": r.get::<i64, _>("food_id"),
+                "groupId": r.get::<i64, _>("group_id"),
+                "name": r.get::<String, _>("name"),
+                "description": r.get::<Option<String>, _>("description"),
+                "images": r.get::<Option<serde_json::Value>, _>("images"),
+                "tags": r.get::<Option<serde_json::Value>, _>("tags"),
+                "ingredients": r.get::<Option<serde_json::Value>, _>("ingredients"),
+                "steps": r.get::<Option<serde_json::Value>, _>("steps"),
+                "status": r.get::<String, _>("status")
+            })
         })
-    }).collect();
+        .collect();
 
     Ok(HttpResponse::Ok().json(&result))
+}
+
+/// 创建做客订单响应
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct CreateGuestOrderResponse {
+    pub order_id: i64,
+    pub status: String,
 }
 
 /// 创建做客订单
@@ -145,6 +217,21 @@ async fn get_kitchen_foods(
 /// 做客用户下单，订单归属主人家小组
 /// 由主人家Seller完成
 /// 做客用户不获得主人组爱心积分
+#[utoipa::path(
+    post,
+    path = "/api/kitchens/invitations/{invite_code}/orders",
+    tag = "做客厨房",
+    params(
+        ("invite_code" = String, Path, description = "邀请码")
+    ),
+    request_body = GuestOrderInput,
+    responses(
+        (status = 201, description = "创建成功", body = CreateGuestOrderResponse),
+        (status = 401, description = "未登录"),
+        (status = 404, description = "邀请码无效或已过期")
+    ),
+    security(("cookie_auth" = []))
+)]
 async fn create_guest_order(
     token: UserToken,
     state: State<Arc<AppState>>,
@@ -160,7 +247,7 @@ async fn create_guest_order(
         r#"SELECT gi.group_id, gi.id
            FROM group_invitations gi
            WHERE gi.invite_code = $1 AND gi.revoked = false
-           AND gi.expires_at > NOW() AND gi.used_count < gi.max_uses"#
+           AND gi.expires_at > NOW() AND gi.used_count < gi.max_uses"#,
     )
     .bind(&code)
     .fetch_optional(db)
@@ -170,12 +257,11 @@ async fn create_guest_order(
     let (group_id, invite_id) = invite_row;
 
     // 获取主人家Seller
-    let seller_id: Option<i64> = sqlx::query_scalar(
-        "SELECT seller_user_id FROM association_groups WHERE group_id=$1"
-    )
-    .bind(group_id)
-    .fetch_one(db)
-    .await?;
+    let seller_id: Option<i64> =
+        sqlx::query_scalar("SELECT seller_user_id FROM association_groups WHERE group_id=$1")
+            .bind(group_id)
+            .fetch_one(db)
+            .await?;
 
     // 创建做客订单
     let order_id = idgenerator::IdInstance::next_id();
@@ -209,7 +295,7 @@ async fn create_guest_order(
 }
 
 /// 做客订单输入
-#[derive(Debug, serde::Deserialize)]
+#[derive(Debug, Deserialize, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct GuestOrderInput {
     pub title: String,

@@ -1,11 +1,11 @@
 // 应用服务层 - 菜品服务
 // 包含菜品、标签、食材等业务用例
 
-use sqlx::{PgPool, Row};
 use crate::domain::foods::{food::*, ingredient::*, tag::*};
-use crate::middlewares::auth::UserToken;
 use crate::errors::CustomError;
+use crate::middlewares::auth::UserToken;
 use crate::models::pagination::CursorPage;
+use sqlx::{PgPool, Row};
 
 /// 菜品服务
 #[allow(dead_code)]
@@ -44,7 +44,9 @@ impl FoodService {
         query: &FoodFilterQuery,
     ) -> Result<CursorPage<FoodOut>, CustomError> {
         let limit = query.limit.unwrap_or(50).clamp(1, 200);
-        let group_id = query.group_id.or(token.user.as_ref().and_then(|u| u.group_id));
+        let group_id = query
+            .group_id
+            .or(token.user.as_ref().and_then(|u| u.group_id));
 
         let mut qb = sqlx::QueryBuilder::<sqlx::Postgres>::new(
             "SELECT food_id, group_id, name, description, images, tags, price, status, created_by, created_at, updated_at FROM foods WHERE is_del = 0"
@@ -67,7 +69,8 @@ impl FoodService {
         let rows = qb.build().fetch_all(db).await?;
 
         let has_more = rows.len() > limit as usize;
-        let items: Vec<FoodOut> = rows.into_iter()
+        let items: Vec<FoodOut> = rows
+            .into_iter()
             .take(limit as usize)
             .map(|r| {
                 let tags: Vec<String> = r.get("tags");
@@ -114,7 +117,7 @@ impl FoodService {
         // 检查用户是否标记过
         let (is_liked, is_done) = if let Some(t) = token {
             let marks: Vec<String> = sqlx::query(
-                "SELECT mark_type::text FROM user_food_mark WHERE user_id=$1 AND food_id=$2"
+                "SELECT mark_type::text FROM user_food_mark WHERE user_id=$1 AND food_id=$2",
             )
             .bind(t.user_id as i64)
             .bind(food_id)
@@ -136,9 +139,10 @@ impl FoodService {
     }
 
     /// 更新菜品
+    #[allow(dead_code)]
     pub async fn update_food(
         db: &PgPool,
-        token: &UserToken,
+        _token: &UserToken,
         food_id: i64,
         input: &FoodUpdateInput,
     ) -> Result<FoodOut, CustomError> {
@@ -158,9 +162,10 @@ impl FoodService {
     }
 
     /// 删除菜品
+    #[allow(dead_code)]
     pub async fn delete_food(
         db: &PgPool,
-        token: &UserToken,
+        _token: &UserToken,
         food_id: i64,
     ) -> Result<(), CustomError> {
         sqlx::query("UPDATE foods SET status = 'Deleted' WHERE food_id = $1")
@@ -179,7 +184,7 @@ impl FoodService {
     ) -> Result<(), CustomError> {
         // 检查是否已标记
         let existing: Option<(i64,)> = sqlx::query_as(
-            "SELECT id FROM user_food_mark WHERE user_id=$1 AND food_id=$2 AND mark_type=$3"
+            "SELECT id FROM user_food_mark WHERE user_id=$1 AND food_id=$2 AND mark_type=$3",
         )
         .bind(user_id as i64)
         .bind(food_id)
@@ -191,14 +196,12 @@ impl FoodService {
             return Ok(());
         }
 
-        sqlx::query(
-            "INSERT INTO user_food_mark (user_id, food_id, mark_type) VALUES ($1, $2, $3)"
-        )
-        .bind(user_id as i64)
-        .bind(food_id)
-        .bind(mark_type)
-        .execute(db)
-        .await?;
+        sqlx::query("INSERT INTO user_food_mark (user_id, food_id, mark_type) VALUES ($1, $2, $3)")
+            .bind(user_id as i64)
+            .bind(food_id)
+            .bind(mark_type)
+            .execute(db)
+            .await?;
 
         Ok(())
     }
@@ -210,14 +213,12 @@ impl FoodService {
         food_id: i64,
         mark_type: MarkTypeEnum,
     ) -> Result<(), CustomError> {
-        sqlx::query(
-            "DELETE FROM user_food_mark WHERE user_id=$1 AND food_id=$2 AND mark_type=$3"
-        )
-        .bind(user_id as i64)
-        .bind(food_id)
-        .bind(mark_type)
-        .execute(db)
-        .await?;
+        sqlx::query("DELETE FROM user_food_mark WHERE user_id=$1 AND food_id=$2 AND mark_type=$3")
+            .bind(user_id as i64)
+            .bind(food_id)
+            .bind(mark_type)
+            .execute(db)
+            .await?;
 
         Ok(())
     }
@@ -244,7 +245,8 @@ impl FoodService {
         .await?;
 
         let has_more = rows.len() > limit as usize;
-        let items: Vec<FoodOut> = rows.into_iter()
+        let items: Vec<FoodOut> = rows
+            .into_iter()
             .take(limit as usize)
             .map(|r| FoodOut::from_record(r, true, false))
             .collect();
@@ -258,9 +260,10 @@ impl FoodService {
     }
 
     /// 盲盒抽取
+    #[allow(dead_code)]
     pub async fn draw_blind_box(
         db: &PgPool,
-        token: &UserToken,
+        _token: &UserToken,
         input: &BlindBoxDrawInput,
     ) -> Result<BlindBoxDrawResultOut, CustomError> {
         let rec = sqlx::query_as::<_, FoodRecord>(
@@ -281,12 +284,13 @@ impl FoodService {
 pub struct IngredientService;
 
 impl IngredientService {
+    #[allow(dead_code)]
     pub async fn list_ingredients(
         db: &PgPool,
         group_id: Option<i64>,
         keyword: &str,
         limit: i64,
-        cursor: Option<&str>,
+        _cursor: Option<&str>,
     ) -> Result<CursorPage<IngredientOut>, CustomError> {
         let mut qb = sqlx::QueryBuilder::<sqlx::Postgres>::new(
             "SELECT id, group_id, name, icon, sort, created_at, updated_at FROM ingredients WHERE 1=1"
@@ -309,7 +313,8 @@ impl IngredientService {
         let rows = qb.build().fetch_all(db).await?;
 
         let has_more = rows.len() > limit as usize;
-        let items: Vec<IngredientOut> = rows.into_iter()
+        let items: Vec<IngredientOut> = rows
+            .into_iter()
             .take(limit as usize)
             .map(|r| IngredientOut {
                 id: r.get("id"),
@@ -330,10 +335,7 @@ impl IngredientService {
         })
     }
 
-    pub async fn get_ingredient(
-        db: &PgPool,
-        id: i64,
-    ) -> Result<IngredientOut, CustomError> {
+    pub async fn get_ingredient(db: &PgPool, id: i64) -> Result<IngredientOut, CustomError> {
         let rec = sqlx::query_as::<_, IngredientRecord>(
             "SELECT id, group_id, name, icon, sort, created_at, updated_at FROM ingredients WHERE id = $1"
         )
@@ -404,10 +406,7 @@ impl IngredientService {
         })
     }
 
-    pub async fn delete_ingredient(
-        db: &PgPool,
-        id: i64,
-    ) -> Result<(), CustomError> {
+    pub async fn delete_ingredient(db: &PgPool, id: i64) -> Result<(), CustomError> {
         sqlx::query("DELETE FROM ingredients WHERE id = $1")
             .bind(id)
             .execute(db)
@@ -467,17 +466,16 @@ impl TagService {
 
     pub async fn get_tags(
         db: &PgPool,
-        query: &FoodFilterQuery,
+        _query: &FoodFilterQuery,
     ) -> Result<Vec<FoodTagOut>, CustomError> {
-        let group_id = query.group_id;
-
         let rows = sqlx::query_as::<_, TagRecord>(
             "SELECT id, group_id, name, color, sort, created_at, updated_at FROM tags WHERE is_del = 0 ORDER BY sort ASC"
         )
         .fetch_all(db)
         .await?;
 
-        let items: Vec<FoodTagOut> = rows.into_iter()
+        let items: Vec<FoodTagOut> = rows
+            .into_iter()
             .map(|r| FoodTagOut {
                 id: r.id,
                 group_id: r.group_id,
@@ -518,10 +516,7 @@ impl TagService {
         })
     }
 
-    pub async fn delete_tag(
-        db: &PgPool,
-        id: i64,
-    ) -> Result<(), CustomError> {
+    pub async fn delete_tag(db: &PgPool, id: i64) -> Result<(), CustomError> {
         sqlx::query("UPDATE tags SET is_del = 1 WHERE id = $1")
             .bind(id)
             .execute(db)

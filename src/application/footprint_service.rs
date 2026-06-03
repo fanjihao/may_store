@@ -1,14 +1,14 @@
 // 应用服务层 - 足迹服务
 // 包含足迹创建、发布、容量管理等业务用例
 
-use chrono::Utc;
-use sqlx::{PgPool, Row};
 use crate::domain::footprint::{
-    DraftConfirmInput, FootprintOverview, RecordCreateInput,
-    RecordOut, RecordQuery, RecordUpdateInput, RecordGroup, FootprintRecord,
+    DraftConfirmInput, FootprintOverview, FootprintRecord, RecordCreateInput, RecordGroup,
+    RecordOut, RecordQuery, RecordUpdateInput,
 };
 use crate::errors::CustomError;
 use crate::models::pagination::CursorPage;
+use chrono::Utc;
+use sqlx::{PgPool, Row};
 
 /// 足迹应用服务
 #[allow(dead_code)]
@@ -69,7 +69,11 @@ impl FootprintService {
         let draft = draft.ok_or_else(|| CustomError::NotFound("草稿不存在".into()))?;
 
         // 更新内容
-        let images_str = input.images.as_ref().map(|imgs| imgs.join(",")).unwrap_or(draft.images);
+        let images_str = input
+            .images
+            .as_ref()
+            .map(|imgs| imgs.join(","))
+            .unwrap_or(draft.images);
 
         sqlx::query(
             "UPDATE user_record SET images = $2, content = COALESCE($3, content), is_draft = 0 WHERE id = $1"
@@ -122,7 +126,7 @@ impl FootprintService {
         // 扩展容量（每次+10）
         let new_capacity = current_capacity + 10;
         sqlx::query(
-            "UPDATE group_point_configs SET default_footprint_capacity = $2 WHERE group_id = $1"
+            "UPDATE group_point_configs SET default_footprint_capacity = $2 WHERE group_id = $1",
         )
         .bind(group_id)
         .bind(new_capacity)
@@ -139,11 +143,12 @@ impl FootprintService {
         group_id: i64,
     ) -> Result<FootprintOverview, CustomError> {
         // 获取总记录数
-        let total_records: i32 = sqlx::query("SELECT COUNT(*) FROM user_record WHERE group_id = $1 AND is_draft = 0")
-            .bind(group_id)
-            .fetch_one(db)
-            .await?
-            .get(0);
+        let total_records: i32 =
+            sqlx::query("SELECT COUNT(*) FROM user_record WHERE group_id = $1 AND is_draft = 0")
+                .bind(group_id)
+                .fetch_one(db)
+                .await?
+                .get(0);
 
         // 获取足迹容量
         let footprint_capacity: i32 = sqlx::query(
@@ -155,12 +160,13 @@ impl FootprintService {
         .get(0);
 
         // 获取当前记录数
-        let footprint_count: i32 = sqlx::query("SELECT current_count FROM record_group WHERE group_id = $1 LIMIT 1")
-            .bind(group_id)
-            .fetch_optional(db)
-            .await?
-            .map(|r| r.get("current_count"))
-            .unwrap_or(0);
+        let footprint_count: i32 =
+            sqlx::query("SELECT current_count FROM record_group WHERE group_id = $1 LIMIT 1")
+                .bind(group_id)
+                .fetch_optional(db)
+                .await?
+                .map(|r| r.get("current_count"))
+                .unwrap_or(0);
 
         // 获取用户钻石
         let diamond_balance: i32 = sqlx::query("SELECT diamond FROM users WHERE user_id = $1")
@@ -181,7 +187,9 @@ impl FootprintService {
         .await?
         .unwrap_or((Some(0), Some(0)));
 
-        let streak_progress = if streak_days.unwrap_or(0) >= 7 { 1.0 } else {
+        let streak_progress = if streak_days.unwrap_or(0) >= 7 {
+            1.0
+        } else {
             (streak_days.unwrap_or(0) as f32) / 7.0
         };
 
@@ -225,9 +233,10 @@ impl FootprintService {
     }
 
     /// 获取足迹记录
+    #[allow(dead_code)]
     pub async fn get_record(
         db: &PgPool,
-        user_id: i64,
+        _user_id: i64,
         group_id: i64,
         record_id: i64,
     ) -> Result<RecordOut, CustomError> {
@@ -242,12 +251,10 @@ impl FootprintService {
         .ok_or_else(|| CustomError::NotFound("记录不存在".into()))?;
 
         // 获取用户信息
-        let user_row = sqlx::query(
-            "SELECT nick_name, avatar FROM users WHERE user_id = $1"
-        )
-        .bind(rec.user_id)
-        .fetch_optional(db)
-        .await?;
+        let user_row = sqlx::query("SELECT nick_name, avatar FROM users WHERE user_id = $1")
+            .bind(rec.user_id)
+            .fetch_optional(db)
+            .await?;
 
         let (nick_name, avatar) = if let Some(r) = user_row {
             (r.get("nick_name"), r.get("avatar"))
@@ -264,9 +271,10 @@ impl FootprintService {
     }
 
     /// 获取足迹记录列表
+    #[allow(dead_code)]
     pub async fn list_records(
         db: &PgPool,
-        user_id: i64,
+        _user_id: i64,
         group_id: i64,
         record_group_id: Option<i64>,
         query: RecordQuery,
@@ -293,7 +301,8 @@ impl FootprintService {
 
         let has_more = rows.len() > limit as usize;
 
-        let items: Vec<RecordOut> = rows.into_iter()
+        let items: Vec<RecordOut> = rows
+            .into_iter()
             .take(limit as usize)
             .map(|r| {
                 let rec = FootprintRecord {
@@ -337,9 +346,9 @@ impl FootprintService {
         group_id: i64,
         input: RecordCreateInput,
     ) -> Result<i64, CustomError> {
-        let record_time = input.record_time.unwrap_or_else(|| {
-            Utc::now().format("%Y-%m-%d %H:%M:%S").to_string()
-        });
+        let record_time = input
+            .record_time
+            .unwrap_or_else(|| Utc::now().format("%Y-%m-%d %H:%M:%S").to_string());
 
         let images_str = input.images.join(",");
 
@@ -352,11 +361,12 @@ impl FootprintService {
         .await?
         .get(0);
 
-        let current_count: i32 = sqlx::query("SELECT COUNT(*) FROM user_record WHERE group_id = $1 AND is_draft = 0")
-            .bind(group_id)
-            .fetch_one(db)
-            .await?
-            .get(0);
+        let current_count: i32 =
+            sqlx::query("SELECT COUNT(*) FROM user_record WHERE group_id = $1 AND is_draft = 0")
+                .bind(group_id)
+                .fetch_one(db)
+                .await?
+                .get(0);
 
         if current_count >= capacity {
             return Err(CustomError::BadRequest("足迹容量已满，请扩展容量".into()));
@@ -407,7 +417,7 @@ impl FootprintService {
              content = COALESCE($4, content), \
              address = COALESCE($5, address), \
              record_group_id = COALESCE($6, record_group_id) \
-             WHERE id = $1"
+             WHERE id = $1",
         )
         .bind(record_id)
         .bind(&input.title)

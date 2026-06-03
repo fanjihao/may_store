@@ -1,9 +1,9 @@
 // 应用服务层 - 成就事件处理器
 // 检查并解锁用户成就，监听各类事件触发成就判定
 
-use sqlx::{PgPool, Row};
 use crate::domain::event::EventType;
 use crate::errors::CustomError;
+use sqlx::{PgPool, Row};
 
 /// 成就检查服务
 #[allow(dead_code)]
@@ -131,12 +131,17 @@ impl AchievementService {
     }
 
     /// 检查完成订单相关成就
-    async fn check_complete_order_achievement(db: &PgPool, user_id: i64) -> Result<(), CustomError> {
-        let complete_count: i32 = sqlx::query("SELECT COUNT(*) FROM orders WHERE assignee_id = $1 AND status = 'COMPLETED'")
-            .bind(user_id as i64)
-            .fetch_one(db)
-            .await?
-            .get(0);
+    async fn check_complete_order_achievement(
+        db: &PgPool,
+        user_id: i64,
+    ) -> Result<(), CustomError> {
+        let complete_count: i32 = sqlx::query(
+            "SELECT COUNT(*) FROM orders WHERE assignee_id = $1 AND status = 'COMPLETED'",
+        )
+        .bind(user_id as i64)
+        .fetch_one(db)
+        .await?
+        .get(0);
 
         let (achievement_code, _, name) = match complete_count {
             1 => ("first_complete", 1, "首次完成"),
@@ -161,7 +166,10 @@ impl AchievementService {
     }
 
     /// 检查签到连续天数成就
-    async fn check_sign_in_streak_achievement(db: &PgPool, user_id: i64) -> Result<(), CustomError> {
+    async fn check_sign_in_streak_achievement(
+        db: &PgPool,
+        user_id: i64,
+    ) -> Result<(), CustomError> {
         // 获取用户连续签到天数
         let last_sign: Option<(chrono::NaiveDate, i32)> = sqlx::query_as(
             "SELECT sign_date, consecutive_days FROM sign_records WHERE user_id = $1 ORDER BY sign_date DESC LIMIT 1"
@@ -206,13 +214,19 @@ impl AchievementService {
     }
 
     /// 检查心愿达成成就
-    async fn check_wish_fulfilled_achievement(_db: &PgPool, _user_id: i64) -> Result<(), CustomError> {
+    async fn check_wish_fulfilled_achievement(
+        _db: &PgPool,
+        _user_id: i64,
+    ) -> Result<(), CustomError> {
         // 简化实现
         Ok(())
     }
 
     /// 检查钻石消费成就
-    async fn check_diamond_spent_achievement(_db: &PgPool, _user_id: i64) -> Result<(), CustomError> {
+    async fn check_diamond_spent_achievement(
+        _db: &PgPool,
+        _user_id: i64,
+    ) -> Result<(), CustomError> {
         // 简化实现
         Ok(())
     }
@@ -225,13 +239,12 @@ impl AchievementService {
         achievement_name: &str,
     ) -> Result<(), CustomError> {
         // 查找成就ID
-        let achievement_id: Option<i64> = sqlx::query(
-            "SELECT id FROM achievements WHERE code = $1 AND is_active = true"
-        )
-        .bind(achievement_code)
-        .fetch_optional(db)
-        .await?
-        .map(|r| r.get("id"));
+        let achievement_id: Option<i64> =
+            sqlx::query("SELECT id FROM achievements WHERE code = $1 AND is_active = true")
+                .bind(achievement_code)
+                .fetch_optional(db)
+                .await?
+                .map(|r| r.get("id"));
 
         if let Some(aid) = achievement_id {
             // 插入用户成就记录

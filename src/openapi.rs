@@ -1,9 +1,72 @@
-// OpenAPI 文档生成
-// 从外部文件加载 OpenAPI 3.0 JSON 文档
+// OpenAPI 文档自动生成
+// 使用 utoipa 自动从代码生成 OpenAPI 3.0 文档
+
+use utoipa::OpenApi;
+
+#[derive(OpenApi)]
+#[openapi(
+    paths(
+        // Auth
+        crate::api::auth::routes::wechat_login,
+        // Groups
+        crate::api::groups::routes::create_group,
+        crate::api::groups::routes::get_group,
+        crate::api::groups::routes::swap_role,
+        crate::api::groups::routes::settlement_check,
+        crate::api::groups::routes::fulfillment_stats,
+        crate::api::groups::routes::create_invite,
+        crate::api::groups::routes::list_foods,
+        crate::api::groups::routes::create_group_order,
+        crate::api::groups::routes::create_group_wish,
+        // Kitchens
+        crate::api::kitchens::routes::access_kitchen,
+        crate::api::kitchens::routes::get_kitchen_foods,
+        crate::api::kitchens::routes::create_guest_order,
+        // Economy
+        crate::api::economy::routes::get_points,
+        crate::api::economy::routes::get_transactions,
+        crate::api::economy::routes::get_group_exp,
+        // Orders
+        crate::api::orders::routes::create_order,
+        crate::api::orders::routes::get_orders,
+        crate::api::orders::routes::get_order_detail,
+        crate::api::orders::routes::create_order_rating,
+        crate::api::orders::routes::get_order_rating,
+        crate::api::orders::routes::accept_order,
+        crate::api::orders::routes::complete_order,
+        crate::api::orders::routes::confirm_order,
+        // Wishes
+        crate::api::wishes::routes::list_wishes,
+        crate::api::wishes::routes::get_wish,
+        crate::api::wishes::routes::submit_feedback,
+        crate::api::wishes::routes::wish_quote,
+        crate::api::wishes::routes::wish_deadline,
+        crate::api::wishes::routes::wish_confirm_agreement,
+        crate::api::wishes::routes::wish_reject,
+        crate::api::wishes::routes::wish_select,
+        // Admin
+        crate::api::admin::routes::get_stats,
+        crate::api::admin::routes::list_groups,
+        crate::api::admin::routes::list_all_users,
+        crate::api::admin::routes::get_config,
+        crate::api::admin::routes::update_config,
+        crate::api::admin::routes::wish_quality_reward,
+        crate::api::admin::routes::order_reward_review,
+        // Users
+        crate::api::users::register,
+        crate::api::users::login,
+        crate::api::users::get_current_info,
+        crate::api::users::get_user_info,
+        crate::api::users::is_register,
+        crate::api::users::change_info,
+        // WebSocket
+        crate::api::ws::ws_info,
+        crate::api::ws::ws_status,
+    )
+)]
+pub struct ApiDoc;
 
 /// 生成 OpenAPI 3.0 JSON 文档
 pub fn openapi_json() -> String {
-    // 从外部 JSON 文件加载 OpenAPI 文档
-    // 避免在 Rust 代码中处理 $ref 等特殊字符
-    include_str!("openapi.json").to_string()
+    ApiDoc::openapi().to_pretty_json().unwrap_or_default()
 }

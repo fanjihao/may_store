@@ -1,9 +1,9 @@
 // 应用服务层 - 看板服务
 
-use chrono::{Duration, Local, NaiveDate};
-use sqlx::{PgPool, Row};
 use crate::domain::dashboard::*;
 use crate::errors::CustomError;
+use chrono::{Duration, Local, NaiveDate};
+use sqlx::{PgPool, Row};
 
 pub struct DashboardService;
 
@@ -14,14 +14,16 @@ impl DashboardService {
         group_id: i64,
         query: &GroupActivityQuery,
     ) -> Result<Vec<GroupActivityEventOut>, CustomError> {
-        let start_date = query.start_date.unwrap_or_else(|| Local::now().date_naive() - Duration::days(7));
+        let start_date = query
+            .start_date
+            .unwrap_or_else(|| Local::now().date_naive() - Duration::days(7));
         let end_date = query.end_date.unwrap_or_else(|| Local::now().date_naive());
         let limit = query.limit.unwrap_or(50).min(100);
 
         let rows = sqlx::query(
             "SELECT event_type, payload, created_at FROM event_log \
              WHERE group_id = $1 AND created_at >= $2 AND created_at <= $3 \
-             ORDER BY created_at DESC LIMIT $4"
+             ORDER BY created_at DESC LIMIT $4",
         )
         .bind(group_id)
         .bind(start_date)
@@ -30,7 +32,8 @@ impl DashboardService {
         .fetch_all(db)
         .await?;
 
-        let events: Vec<GroupActivityEventOut> = rows.into_iter()
+        let events: Vec<GroupActivityEventOut> = rows
+            .into_iter()
             .map(|r| GroupActivityEventOut {
                 event_type: r.get("event_type"),
                 event_data: r.get("payload"),
@@ -53,13 +56,14 @@ impl DashboardService {
              WHERE o.group_id = $1 AND o.status = 'COMPLETED' \
              GROUP BY f.food_id, f.name \
              ORDER BY order_count DESC \
-             LIMIT 10"
+             LIMIT 10",
         )
         .bind(group_id)
         .fetch_all(db)
         .await?;
 
-        let rankings: Vec<FoodRanking> = rows.into_iter()
+        let rankings: Vec<FoodRanking> = rows
+            .into_iter()
             .map(|r| FoodRanking {
                 food_id: r.get("food_id"),
                 food_name: r.get("name"),
@@ -83,7 +87,7 @@ impl DashboardService {
              FROM orders o \
              JOIN foods f ON o.food_id = f.food_id \
              WHERE o.user_id = $1 AND o.group_id = $2 AND DATE(o.created_at) = $3 \
-             ORDER BY o.created_at DESC"
+             ORDER BY o.created_at DESC",
         )
         .bind(user_id as i64)
         .bind(group_id)
@@ -91,14 +95,17 @@ impl DashboardService {
         .fetch_all(db)
         .await?;
 
-        let orders: Vec<serde_json::Value> = rows.into_iter()
-            .map(|r| serde_json::json!({
-                "orderId": r.get::<i64, _>("order_id"),
-                "foodId": r.get::<i64, _>("food_id"),
-                "foodName": r.get::<String, _>("food_name"),
-                "status": r.get::<String, _>("status"),
-                "createdAt": r.get::<chrono::DateTime<chrono::Utc>, _>("created_at"),
-            }))
+        let orders: Vec<serde_json::Value> = rows
+            .into_iter()
+            .map(|r| {
+                serde_json::json!({
+                    "orderId": r.get::<i64, _>("order_id"),
+                    "foodId": r.get::<i64, _>("food_id"),
+                    "foodName": r.get::<String, _>("food_name"),
+                    "status": r.get::<String, _>("status"),
+                    "createdAt": r.get::<chrono::DateTime<chrono::Utc>, _>("created_at"),
+                })
+            })
             .collect();
 
         Ok(TodayOrdersResponse { orders })
@@ -115,17 +122,20 @@ impl DashboardService {
             .await?
             .get(0);
 
-        let completed_orders: i32 = sqlx::query("SELECT COUNT(*) FROM orders WHERE user_id = $1 AND status = 'COMPLETED'")
-            .bind(user_id as i64)
-            .fetch_one(db)
-            .await?
-            .get(0);
+        let completed_orders: i32 =
+            sqlx::query("SELECT COUNT(*) FROM orders WHERE user_id = $1 AND status = 'COMPLETED'")
+                .bind(user_id as i64)
+                .fetch_one(db)
+                .await?
+                .get(0);
 
-        let pending_orders: i32 = sqlx::query("SELECT COUNT(*) FROM orders WHERE user_id = $1 AND status IN ('CREATED', 'ACCEPTED')")
-            .bind(user_id as i64)
-            .fetch_one(db)
-            .await?
-            .get(0);
+        let pending_orders: i32 = sqlx::query(
+            "SELECT COUNT(*) FROM orders WHERE user_id = $1 AND status IN ('CREATED', 'ACCEPTED')",
+        )
+        .bind(user_id as i64)
+        .fetch_one(db)
+        .await?
+        .get(0);
 
         let total_points: i32 = sqlx::query("SELECT love_point FROM users WHERE user_id = $1")
             .bind(user_id as i64)
@@ -149,13 +159,14 @@ impl DashboardService {
         let rows = sqlx::query(
             "SELECT 'order' as event_type, COALESCE(amount, 0) as points, created_at \
              FROM point_flow WHERE user_id = $1 \
-             ORDER BY created_at DESC LIMIT 50"
+             ORDER BY created_at DESC LIMIT 50",
         )
         .bind(user_id as i64)
         .fetch_all(db)
         .await?;
 
-        let points_history: Vec<PointEvent> = rows.into_iter()
+        let points_history: Vec<PointEvent> = rows
+            .into_iter()
             .map(|r| PointEvent {
                 event_type: r.get("event_type"),
                 points: r.get("points"),
@@ -177,16 +188,14 @@ impl DashboardService {
         let rows = sqlx::query(
             "SELECT DISTINCT DATE(created_at) as order_date FROM orders \
              WHERE group_id = $1 AND created_at >= $2 \
-             ORDER BY order_date"
+             ORDER BY order_date",
         )
         .bind(group_id)
         .bind(week_ago)
         .fetch_all(db)
         .await?;
 
-        let dates: Vec<NaiveDate> = rows.into_iter()
-            .map(|r| r.get("order_date"))
-            .collect();
+        let dates: Vec<NaiveDate> = rows.into_iter().map(|r| r.get("order_date")).collect();
 
         Ok(WeekOrderDatesOut { dates })
     }
@@ -202,20 +211,23 @@ impl DashboardService {
              JOIN foods f ON o.food_id = f.food_id \
              WHERE DATE(o.created_at) = $1 AND o.group_id = COALESCE($2, o.group_id) \
              GROUP BY o.food_id, f.name, f.images \
-             ORDER BY order_count DESC"
+             ORDER BY order_count DESC",
         )
         .bind(query.date)
         .bind(query.group_id)
         .fetch_all(db)
         .await?;
 
-        let foods: Vec<serde_json::Value> = rows.into_iter()
-            .map(|r| serde_json::json!({
-                "foodId": r.get::<i64, _>("food_id"),
-                "name": r.get::<String, _>("name"),
-                "images": r.get::<String, _>("images"),
-                "orderCount": r.get::<i64, _>("order_count"),
-            }))
+        let foods: Vec<serde_json::Value> = rows
+            .into_iter()
+            .map(|r| {
+                serde_json::json!({
+                    "foodId": r.get::<i64, _>("food_id"),
+                    "name": r.get::<String, _>("name"),
+                    "images": r.get::<String, _>("images"),
+                    "orderCount": r.get::<i64, _>("order_count"),
+                })
+            })
             .collect();
 
         Ok(DateFoodsResponse { foods })

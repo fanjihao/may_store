@@ -2,15 +2,15 @@
 // FSD.latest.md compliant - 仅保留 FSD 核心模块
 
 pub mod admin;
-pub mod auth;        // 微信登录 - FSD v2
-pub mod economy;    // 经济查询 - FSD v2
-pub mod groups;     // 双人组管理 - FSD v2
-pub mod kitchens;   // 主人家厨房 - FSD v2
+pub mod auth; // 微信登录 - FSD v2
+pub mod economy; // 经济查询 - FSD v2
+pub mod groups; // 双人组管理 - FSD v2
+pub mod kitchens; // 主人家厨房 - FSD v2
 pub mod orders;
 pub mod swagger;
-pub mod users;      // 用户基础信息
-pub mod ws;
+pub mod users; // 用户基础信息
 pub mod wishes;
+pub mod ws;
 
 use ntex::web::ServiceConfig;
 

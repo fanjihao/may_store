@@ -1,6 +1,8 @@
 // 主入口文件
 // 遵循 FSD (Feature-Sliced Design) 架构
 
+#![allow(dead_code)]
+
 mod api; // API 层 - HTTP 路由和处理器
 mod application; // 应用服务层 - 业务用例编排
 mod domain; // 领域层 - 核心业务逻辑

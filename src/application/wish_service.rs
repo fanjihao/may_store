@@ -3,14 +3,16 @@
 // FSD.latest.md compliant - 7状态模型
 
 use chrono::{DateTime, Duration, Utc};
-use sqlx::{PgPool, Row};
 use sqlx::types::Json;
+use sqlx::{PgPool, Row};
 
-use crate::domain::wish::{
-    WishCreateInput, WishFeedbackInput, WishQuoteInput, WishDeadlineInput, WishRejectInput,
-    WishRecord, WishFeedbackRecord, WishStatus, WishUpdateInput, WishOut,
+use crate::domain::event::{
+    EventType, WishAgreementConfirmedPayload, WishFulfilledPayload, WishSelectedPayload,
 };
-use crate::domain::event::{EventType, WishFulfilledPayload, WishNegotiatingPayload, WishAgreementConfirmedPayload, WishSelectedPayload};
+use crate::domain::wish::{
+    WishCreateInput, WishDeadlineInput, WishFeedbackInput, WishFeedbackRecord, WishQuoteInput,
+    WishRecord, WishRejectInput, WishStatus, WishUpdateInput,
+};
 use crate::errors::CustomError;
 use crate::infrastructure::event::publisher::EventPublisher;
 
@@ -40,10 +42,11 @@ impl WishService {
     }
 
     /// 获取心愿列表
+    #[allow(dead_code)]
     pub async fn list_wishes(
         db: &PgPool,
         group_id: i64,
-        user_id: i64,
+        _user_id: i64,
         limit: i64,
         cursor_condition: Option<(DateTime<Utc>, i64)>,
     ) -> Result<(Vec<WishRecord>, i64), CustomError> {
@@ -93,7 +96,7 @@ impl WishService {
 
         let feedback = sqlx::query_as::<_, WishFeedbackRecord>(
             "SELECT feedback_id, wish_id, user_id, content, images, created_at, updated_at \
-             FROM wish_feedbacks WHERE wish_id = $1"
+             FROM wish_feedbacks WHERE wish_id = $1",
         )
         .bind(wish_id)
         .fetch_optional(db)
@@ -138,7 +141,7 @@ impl WishService {
 
         let feedback = sqlx::query_as::<_, WishFeedbackRecord>(
             "SELECT feedback_id, wish_id, user_id, content, images, created_at, updated_at \
-             FROM wish_feedbacks WHERE wish_id = $1"
+             FROM wish_feedbacks WHERE wish_id = $1",
         )
         .bind(wish_id)
         .fetch_optional(db)
@@ -262,7 +265,8 @@ impl WishService {
             Some(existing.group_id),
             Some("wish"),
             Some(wish_id),
-        ).await;
+        )
+        .await;
 
         Ok(rec)
     }
@@ -285,7 +289,12 @@ impl WishService {
         .ok_or_else(|| CustomError::NotFound("心愿不存在".into()))?;
 
         // 检查权限（创建者或认领者可以提交反馈）
-        if existing.created_by != user_id as i64 && existing.claimed_by.map(|c| c != user_id as i64).unwrap_or(true) {
+        if existing.created_by != user_id as i64
+            && existing
+                .claimed_by
+                .map(|c| c != user_id as i64)
+                .unwrap_or(true)
+        {
             return Err(CustomError::Forbidden("无权提交此心愿反馈".into()));
         }
 
@@ -300,7 +309,7 @@ impl WishService {
         sqlx::query(
             "INSERT INTO wish_feedbacks (wish_id, user_id, content, images) \
              VALUES ($1, $2, $3, $4) \
-             ON CONFLICT (wish_id) DO UPDATE SET content = $3, images = $4"
+             ON CONFLICT (wish_id) DO UPDATE SET content = $3, images = $4",
         )
         .bind(wish_id)
         .bind(user_id as i64)
@@ -321,7 +330,7 @@ impl WishService {
         // 获取反馈记录
         let feedback = sqlx::query_as::<_, WishFeedbackRecord>(
             "SELECT feedback_id, wish_id, user_id, content, images, created_at, updated_at \
-             FROM wish_feedbacks WHERE wish_id = $1"
+             FROM wish_feedbacks WHERE wish_id = $1",
         )
         .bind(wish_id)
         .fetch_optional(db)
@@ -469,7 +478,10 @@ impl WishService {
         }
 
         // 确认后使用 final_cost 作为最终积分
-        let final_cost = existing.final_cost.or(existing.initial_cost).unwrap_or(existing.wish_cost);
+        let final_cost = existing
+            .final_cost
+            .or(existing.initial_cost)
+            .unwrap_or(existing.wish_cost);
 
         sqlx::query(
             "INSERT INTO wish_negotiations (wish_id, group_id, operator_id, action, cost) VALUES ($1, $2, $3, 'ACCEPT', $4)"
@@ -508,7 +520,8 @@ impl WishService {
             Some(existing.group_id),
             Some("wish"),
             Some(wish_id),
-        ).await;
+        )
+        .await;
 
         Ok(rec)
     }
@@ -580,13 +593,13 @@ impl WishService {
 
         // 获取用户可用积分
         let user_row = sqlx::query_as::<_, (i32, Option<i64>)>(
-            "SELECT love_point, group_id FROM users WHERE user_id = $1"
+            "SELECT love_point, group_id FROM users WHERE user_id = $1",
         )
         .bind(user_id)
         .fetch_one(db)
         .await?;
 
-        let (current_points, user_group_id) = user_row;
+        let (current_points, _user_group_id) = user_row;
 
         if current_points < points_cost {
             return Err(CustomError::BadRequest("爱心积分不足".into()));
@@ -599,13 +612,11 @@ impl WishService {
         let available_after = current_points - points_cost;
         let frozen_after = points_cost;
 
-        sqlx::query(
-            "UPDATE users SET love_point = $2 WHERE user_id = $1"
-        )
-        .bind(user_id)
-        .bind(available_after)
-        .execute(&mut *tx)
-        .await?;
+        sqlx::query("UPDATE users SET love_point = $2 WHERE user_id = $1")
+            .bind(user_id)
+            .bind(available_after)
+            .execute(&mut *tx)
+            .await?;
 
         // 写积分流水（冻结）
         sqlx::query(
@@ -658,7 +669,8 @@ impl WishService {
             Some(existing.group_id),
             Some("wish"),
             Some(wish_id),
-        ).await;
+        )
+        .await;
 
         Ok(rec)
     }

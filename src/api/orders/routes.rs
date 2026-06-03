@@ -14,11 +14,11 @@ use utoipa::ToSchema;
 use crate::application::order_service::OrderService as AppOrderService;
 use crate::config::AppState;
 use crate::domain::order::{
-    OrderCreateInput, OrderOutNew, OrderQuery, OrderRatingCreateInput, OrderRatingOut,
-    OrderStatus, OrderStatusUpdateInput,
+    OrderCreateInput, OrderOutNew, OrderQuery, OrderRatingCreateInput, OrderRatingOut, OrderStatus,
+    OrderStatusUpdateInput,
 };
-use crate::middlewares::auth::UserToken;
 use crate::errors::CustomError;
+use crate::middlewares::auth::UserToken;
 use crate::models::pagination::CursorPage;
 
 /// 配置订单路由
@@ -52,7 +52,8 @@ pub async fn create_order(
     state: State<Arc<AppState>>,
     data: Json<OrderCreateInput>,
 ) -> Result<impl Responder, CustomError> {
-    let out = AppOrderService::create_order(&state.db_pool, user_token.user_id, &data.into_inner()).await?;
+    let out = AppOrderService::create_order(&state.db_pool, user_token.user_id, &data.into_inner())
+        .await?;
     Ok(HttpResponse::Created().json(&out))
 }
 
@@ -107,7 +108,8 @@ pub async fn create_order_rating(
         user_token.user_id,
         *order_id,
         &body.into_inner(),
-    ).await?;
+    )
+    .await?;
     Ok(HttpResponse::Created().json(&out))
 }
 
@@ -123,7 +125,8 @@ pub async fn get_order_rating(
     state: State<Arc<AppState>>,
     order_id: Path<i64>,
 ) -> Result<impl Responder, CustomError> {
-    let out = AppOrderService::get_order_rating(&state.db_pool, user_token.user_id, *order_id).await?;
+    let out =
+        AppOrderService::get_order_rating(&state.db_pool, user_token.user_id, *order_id).await?;
     Ok(HttpResponse::Ok().json(&out))
 }
 
@@ -155,7 +158,8 @@ pub async fn accept_order(
         remark: None,
         points_reward: None,
     };
-    let out = AppOrderService::update_order_status(&state.db_pool, user_token.user_id, &input).await?;
+    let out =
+        AppOrderService::update_order_status(&state.db_pool, user_token.user_id, &input).await?;
     Ok(HttpResponse::Ok().json(&out))
 }
 
@@ -185,7 +189,8 @@ pub async fn complete_order(
         remark: None,
         points_reward: None,
     };
-    let out = AppOrderService::update_order_status(&state.db_pool, user_token.user_id, &input).await?;
+    let out =
+        AppOrderService::update_order_status(&state.db_pool, user_token.user_id, &input).await?;
     Ok(HttpResponse::Ok().json(&out))
 }
 

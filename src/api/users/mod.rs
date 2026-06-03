@@ -27,13 +27,13 @@ use ntex::web::{
 };
 
 use crate::{
-    errors::CustomError,
-    domain::user::{
-        UserPublic, LoginInput, ProfileUpdateInput, RegisterInput, LoginResponse,
-        UserInfoResponse, IsRegisterQuery, IsRegisterResponse,
-    },
-    middlewares::auth::UserToken,
     application::user_service::UserService,
+    domain::user::{
+        IsRegisterQuery, IsRegisterResponse, LoginInput, LoginResponse, ProfileUpdateInput,
+        RegisterInput, UserInfoResponse, UserPublic,
+    },
+    errors::CustomError,
+    middlewares::auth::UserToken,
 };
 
 #[utoipa::path(
@@ -137,7 +137,7 @@ pub async fn is_register(
     security(("cookie_auth" = []))
 )]
 pub async fn change_info(
-    token: UserToken,
+    _token: UserToken,
     data: Json<ProfileUpdateInput>,
     state: State<Arc<AppState>>,
 ) -> Result<impl Responder, CustomError> {

@@ -2,30 +2,28 @@
 // FSD.latest.md compliant - 微信登录
 
 use ntex::web::{
-    self, types::{Json, State}, HttpResponse, Responder, ServiceConfig,
+    self,
+    types::{Json, State},
+    HttpResponse, Responder, ServiceConfig,
 };
 use serde::{Deserialize, Serialize};
-use sqlx::Row;
-use utoipa::ToSchema;
 use std::sync::Arc;
+use utoipa::ToSchema;
 
 use crate::config::AppState;
 use crate::errors::CustomError;
 
 /// 配置认证路由
 pub fn configure(cfg: &mut ServiceConfig) {
-    cfg.service(
-        web::scope("/api/auth")
-            .route("/wechat-login", web::post().to(wechat_login)),
-    );
+    cfg.service(web::scope("/api/auth").route("/wechat-login", web::post().to(wechat_login)));
 }
 
 /// 微信登录请求
 #[derive(Debug, Deserialize, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct WechatLoginInput {
-    pub code: String,       // 前端通过 wx.login() 获取的 code
-    pub invite_code: Option<String>,  // 可选的邀请码
+    pub code: String,                // 前端通过 wx.login() 获取的 code
+    pub invite_code: Option<String>, // 可选的邀请码
 }
 
 /// 微信登录响应
@@ -74,12 +72,11 @@ pub async fn wechat_login(
     let db = &state.db_pool;
 
     // 查找已存在用户
-    let existing_user: Option<(i64, String, Option<String>, Option<String>)> = sqlx::query_as(
-        "SELECT user_id, openid, nick_name, avatar FROM users WHERE openid = $1"
-    )
-    .bind(&openid)
-    .fetch_optional(db)
-    .await?;
+    let existing_user: Option<(i64, String, Option<String>, Option<String>)> =
+        sqlx::query_as("SELECT user_id, openid, nick_name, avatar FROM users WHERE openid = $1")
+            .bind(&openid)
+            .fetch_optional(db)
+            .await?;
 
     let is_new_user = existing_user.is_none();
     let (user_id, nickname, avatar_url) = if let Some((uid, _, nick, ava)) = existing_user {
@@ -124,17 +121,26 @@ async fn get_wechat_openid(code: &str, state: &AppState) -> Result<String, Custo
         .await
         .map_err(|e| CustomError::InternalServerError(format!("微信请求失败: {}", e)))?;
 
-    let json: serde_json::Value = resp.json().await
+    let json: serde_json::Value = resp
+        .json()
+        .await
         .map_err(|e| CustomError::InternalServerError(format!("微信响应解析失败: {}", e)))?;
 
     if let Some(errcode) = json.get("errcode").and_then(|v| v.as_i64()) {
         if errcode != 0 {
-            let errmsg = json.get("errmsg").and_then(|v| v.as_str()).unwrap_or("未知错误");
-            return Err(CustomError::Unauthorized(format!("微信认证失败: {}", errmsg)));
+            let errmsg = json
+                .get("errmsg")
+                .and_then(|v| v.as_str())
+                .unwrap_or("未知错误");
+            return Err(CustomError::Unauthorized(format!(
+                "微信认证失败: {}",
+                errmsg
+            )));
         }
     }
 
-    let openid = json.get("openid")
+    let openid = json
+        .get("openid")
         .and_then(|v| v.as_str())
         .ok_or_else(|| CustomError::BadRequest("微信响应缺少openid".into()))?;
 
@@ -147,7 +153,7 @@ async fn create_wechat_user(db: &sqlx::PgPool, openid: &str) -> Result<i64, Cust
 
     sqlx::query(
         r#"INSERT INTO users (user_id, openid, status, created_at, updated_at)
-           VALUES ($1, $2, 'ACTIVE', NOW(), NOW())"#
+           VALUES ($1, $2, 'ACTIVE', NOW(), NOW())"#,
     )
     .bind(user_id)
     .bind(openid)
@@ -160,8 +166,8 @@ async fn create_wechat_user(db: &sqlx::PgPool, openid: &str) -> Result<i64, Cust
 
 /// 生成JWT token
 fn generate_token(user_id: i64, token_type: &str, secret: &str) -> Result<String, CustomError> {
-    use jsonwebtoken::{encode, decode, Header, Validation, EncodingKey, DecodingKey};
-    use chrono::{Utc, Duration};
+    use chrono::{Duration, Utc};
+    use jsonwebtoken::{encode, EncodingKey, Header};
 
     let expiration = if token_type == "access" {
         Utc::now() + Duration::hours(2)

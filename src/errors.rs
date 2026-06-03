@@ -60,6 +60,7 @@ impl CustomError {
     }
 
     /// Create a forbidden error
+    #[allow(dead_code)]
     pub fn forbidden<S: Into<String>>(msg: S) -> Self {
         Self::Forbidden(msg.into())
     }

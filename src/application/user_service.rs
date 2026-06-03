@@ -1,32 +1,30 @@
 // 应用服务层 - 用户服务
 // 包含用户登录、注册、信息管理、组服务等业务用例
 
-use std::sync::Arc;
+use crate::config::{AppState, TOKEN_SECRET_KEY};
+use crate::domain::user::entities::UserRecord;
+use crate::domain::user::{
+    BindUserDirectlyInput, ConfirmInvitationInput, Gender, GroupInfoOut, GroupPointConfig,
+    GroupPointConfigUpdateInput, GroupUpdateInput, InvitationListOut, InvitationRequestOut,
+    IsRegisterResponse, LoginInput, LoginMethod, LoginResponse, NewInvitationInput,
+    ProfileUpdateInput, RegisterInput, RoleSwitchInput, RoleSwitchResult, UnbindRequestInput,
+    UserInfoResponse, UserPublic, UserRole,
+};
+use crate::errors::CustomError;
 use argon2::{Argon2, PasswordHash, PasswordHasher, PasswordVerifier};
 use chrono::Utc;
 use jsonwebtoken::{encode, EncodingKey, Header};
 use password_hash::SaltString;
 use rand::thread_rng;
 use sqlx::Row;
-use crate::config::{AppState, TOKEN_SECRET_KEY};
-use crate::domain::user::{
-    LoginInput, RegisterInput, UserPublic, ProfileUpdateInput, IsRegisterResponse, LoginResponse, UserInfoResponse, RoleSwitchInput, RoleSwitchResult,
-    InvitationListOut, NewInvitationInput, ConfirmInvitationInput, InvitationRequestOut,
-    UnbindRequestInput, GroupInfoOut, BindUserDirectlyInput, GroupUpdateInput,
-    GroupPointConfig, GroupPointConfigUpdateInput, UserRole, Gender, LoginMethod,
-};
-use crate::domain::user::entities::UserRecord;
-use crate::errors::CustomError;
+use std::sync::Arc;
 
 /// 用户应用服务
 pub struct UserService;
 
 impl UserService {
     /// 注册
-    pub async fn register(
-        input: RegisterInput,
-        state: &Arc<AppState>,
-    ) -> Result<(), CustomError> {
+    pub async fn register(input: RegisterInput, state: &Arc<AppState>) -> Result<(), CustomError> {
         let db_pool = &state.db_pool;
         if input.username.is_empty() || input.password.is_empty() {
             return Err(CustomError::BadRequest("缺少账号或密码".into()));
@@ -42,8 +40,8 @@ impl UserService {
             return Err(CustomError::BadRequest("账号已存在".into()));
         }
 
-        let (pwd_hash, algo) = Self::hash_password(&input.password)
-            .map_err(|e| CustomError::internal(e))?;
+        let (pwd_hash, algo) =
+            Self::hash_password(&input.password).map_err(|e| CustomError::internal(e))?;
 
         sqlx::query(
             r#"INSERT INTO users (
@@ -215,11 +213,12 @@ impl UserService {
 
         // 如果要修改用户名，检查是否已被使用
         if let Some(ref new_username) = input.new_username {
-            let exists_row = sqlx::query("SELECT COUNT(*) FROM users WHERE username = $1 AND user_id != $2")
-                .bind(new_username)
-                .bind(0) // 需要用户ID，但这里没有传入，先跳过
-                .fetch_one(db)
-                .await?;
+            let exists_row =
+                sqlx::query("SELECT COUNT(*) FROM users WHERE username = $1 AND user_id != $2")
+                    .bind(new_username)
+                    .bind(0) // 需要用户ID，但这里没有传入，先跳过
+                    .fetch_one(db)
+                    .await?;
             let exists: i64 = exists_row.get(0);
             if exists > 0 {
                 return Err(CustomError::BadRequest("用户名已被使用".into()));
@@ -267,8 +266,8 @@ impl UserService {
                 if !Self::verify_password(old_pwd, &stored_hash).unwrap_or(false) {
                     return Err(CustomError::BadRequest("旧密码错误".into()));
                 }
-                let (pwd_hash, algo) = Self::hash_password(new_pwd)
-                    .map_err(|e| CustomError::internal(e))?;
+                let (_pwd_hash, _algo) =
+                    Self::hash_password(new_pwd).map_err(|e| CustomError::internal(e))?;
                 updates.push(format!("password_hash = ${}", param_count));
                 param_count += 1;
                 updates.push(format!("password_algo = ${}", param_count));
@@ -304,7 +303,7 @@ impl UserService {
         // 检查用户是否有正在进行的订单
         let active_orders: i64 = sqlx::query(
             r#"SELECT COUNT(*) FROM orders WHERE user_id = $1
-               AND status IN ('CREATED', 'ACCEPTED', 'PRODUCTION_COMPLETE')"#
+               AND status IN ('CREATED', 'ACCEPTED', 'PRODUCTION_COMPLETE')"#,
         )
         .bind(user_id)
         .fetch_one(db)
@@ -312,17 +311,18 @@ impl UserService {
         .get(0);
 
         if active_orders > 0 {
-            return Err(CustomError::BadRequest("有正在进行的订单，无法切换角色".into()));
+            return Err(CustomError::BadRequest(
+                "有正在进行的订单，无法切换角色".into(),
+            ));
         }
 
         // 检查24小时内是否切换过
-        let last_switch: Option<chrono::DateTime<Utc>> = sqlx::query(
-            "SELECT last_role_switch_at FROM users WHERE user_id = $1"
-        )
-        .bind(user_id)
-        .fetch_one(db)
-        .await?
-        .get(0);
+        let last_switch: Option<chrono::DateTime<Utc>> =
+            sqlx::query("SELECT last_role_switch_at FROM users WHERE user_id = $1")
+                .bind(user_id)
+                .fetch_one(db)
+                .await?
+                .get(0);
 
         if let Some(last) = last_switch {
             let hours_since_switch = (Utc::now() - last).num_hours();
@@ -332,14 +332,12 @@ impl UserService {
         }
 
         // 执行角色切换
-        sqlx::query(
-            "UPDATE users SET role = $2, last_role_switch_at = $3 WHERE user_id = $1"
-        )
-        .bind(user_id)
-        .bind(input.role)
-        .bind(Utc::now())
-        .execute(db)
-        .await?;
+        sqlx::query("UPDATE users SET role = $2, last_role_switch_at = $3 WHERE user_id = $1")
+            .bind(user_id)
+            .bind(input.role)
+            .bind(Utc::now())
+            .execute(db)
+            .await?;
 
         Ok(RoleSwitchResult {
             success: true,
@@ -425,8 +423,9 @@ impl GroupService {
         .fetch_all(db)
         .await?;
 
-        let incoming: Vec<InvitationRequestOut> = incoming_rows.into_iter().map(|r| {
-            InvitationRequestOut {
+        let incoming: Vec<InvitationRequestOut> = incoming_rows
+            .into_iter()
+            .map(|r| InvitationRequestOut {
                 id: r.get("id"),
                 from_user_id: r.get("from_user_id"),
                 from_username: r.get("from_username"),
@@ -438,8 +437,8 @@ impl GroupService {
                 to_avatar: r.get("to_avatar"),
                 status: r.get("status"),
                 created_at: r.get("created_at"),
-            }
-        }).collect();
+            })
+            .collect();
 
         // 获取发出的邀请（from_user_id = user_id）
         let outgoing_rows = sqlx::query(
@@ -456,8 +455,9 @@ impl GroupService {
         .fetch_all(db)
         .await?;
 
-        let outgoing: Vec<InvitationRequestOut> = outgoing_rows.into_iter().map(|r| {
-            InvitationRequestOut {
+        let outgoing: Vec<InvitationRequestOut> = outgoing_rows
+            .into_iter()
+            .map(|r| InvitationRequestOut {
                 id: r.get("id"),
                 from_user_id: r.get("from_user_id"),
                 from_username: r.get("from_username"),
@@ -469,8 +469,8 @@ impl GroupService {
                 to_avatar: r.get("to_avatar"),
                 status: r.get("status"),
                 created_at: r.get("created_at"),
-            }
-        }).collect();
+            })
+            .collect();
 
         Ok(InvitationListOut { incoming, outgoing })
     }
@@ -484,13 +484,12 @@ impl GroupService {
         let db = &state.db_pool;
 
         // 查找目标用户
-        let target_user: Option<(i64,)> = sqlx::query_as(
-            "SELECT user_id FROM users WHERE username = $1"
-        )
-        .bind(&input.to_username)
-        .fetch_optional(db)
-        .await?
-        .map(|r| r);
+        let target_user: Option<(i64,)> =
+            sqlx::query_as("SELECT user_id FROM users WHERE username = $1")
+                .bind(&input.to_username)
+                .fetch_optional(db)
+                .await?
+                .map(|r| r);
 
         let target_id = match target_user {
             Some((id,)) => id,
@@ -520,7 +519,7 @@ impl GroupService {
         // 创建邀请
         sqlx::query(
             r#"INSERT INTO invitations (from_user_id, to_user_id, status, created_at)
-               VALUES ($1, $2, 'PENDING', $3)"#
+               VALUES ($1, $2, 'PENDING', $3)"#,
         )
         .bind(user_id)
         .bind(target_id)
@@ -541,12 +540,11 @@ impl GroupService {
         let db = &state.db_pool;
 
         // 查找邀请记录
-        let invitation: Option<(i64, i64, String)> = sqlx::query_as(
-            "SELECT id, to_user_id, status FROM invitations WHERE id = $1"
-        )
-        .bind(invitation_id)
-        .fetch_optional(db)
-        .await?;
+        let invitation: Option<(i64, i64, String)> =
+            sqlx::query_as("SELECT id, to_user_id, status FROM invitations WHERE id = $1")
+                .bind(invitation_id)
+                .fetch_optional(db)
+                .await?;
 
         let (to_user_id, status) = match invitation {
             Some((_, tu, s)) => (tu, s),
@@ -573,7 +571,7 @@ impl GroupService {
             // 获取邀请人的组信息
             let inviter_group_id: Option<(i64,)> = sqlx::query_as(
                 r#"SELECT agm.group_id FROM association_group_members agm
-                   WHERE agm.user_id = $1 AND agm.is_primary = true LIMIT 1"#
+                   WHERE agm.user_id = $1 AND agm.is_primary = true LIMIT 1"#,
             )
             .bind(user_id)
             .fetch_optional(db)
@@ -612,12 +610,11 @@ impl GroupService {
         let db = &state.db_pool;
 
         // 检查邀请是否存在且状态为PENDING
-        let existing: Option<(i64, String)> = sqlx::query_as(
-            "SELECT id, status FROM invitations WHERE id = $1"
-        )
-        .bind(invitation_id)
-        .fetch_optional(db)
-        .await?;
+        let existing: Option<(i64, String)> =
+            sqlx::query_as("SELECT id, status FROM invitations WHERE id = $1")
+                .bind(invitation_id)
+                .fetch_optional(db)
+                .await?;
 
         match existing {
             Some((_, status)) if status == "PENDING" => {
@@ -654,13 +651,12 @@ impl GroupService {
         };
 
         // 检查组内其他成员
-        let member_count: i64 = sqlx::query(
-            "SELECT COUNT(*) FROM association_group_members WHERE group_id = $1"
-        )
-        .bind(group_id)
-        .fetch_one(db)
-        .await?
-        .get(0);
+        let member_count: i64 =
+            sqlx::query("SELECT COUNT(*) FROM association_group_members WHERE group_id = $1")
+                .bind(group_id)
+                .fetch_one(db)
+                .await?
+                .get(0);
 
         if member_count <= 1 {
             return Err(CustomError::BadRequest("组内只剩您一人，无需解绑".into()));
@@ -669,7 +665,7 @@ impl GroupService {
         // 创建解绑请求记录
         sqlx::query(
             r#"INSERT INTO unbind_requests (user_id, group_id, reason, status, created_at)
-               VALUES ($1, $2, $3, 'PENDING', $4)"#
+               VALUES ($1, $2, $3, 'PENDING', $4)"#,
         )
         .bind(user_id)
         .bind(group_id)
@@ -764,7 +760,7 @@ impl GroupService {
         sqlx::query(
             r#"INSERT INTO association_group_members (user_id, group_id, is_primary, created_at)
                VALUES ($1, $2, true, $3)
-               ON CONFLICT (user_id) DO UPDATE SET group_id = $2, is_primary = true"#
+               ON CONFLICT (user_id) DO UPDATE SET group_id = $2, is_primary = true"#,
         )
         .bind(input.user_id)
         .bind(group_id)
@@ -774,7 +770,7 @@ impl GroupService {
 
         // 更新组成员数量
         sqlx::query(
-            "UPDATE association_groups SET member_count = member_count + 1 WHERE group_id = $1"
+            "UPDATE association_groups SET member_count = member_count + 1 WHERE group_id = $1",
         )
         .bind(group_id)
         .execute(db)
@@ -794,7 +790,7 @@ impl GroupService {
 
         // 检查用户是否是该组成员
         let is_member: i64 = sqlx::query(
-            "SELECT COUNT(*) FROM association_group_members WHERE user_id = $1 AND group_id = $2"
+            "SELECT COUNT(*) FROM association_group_members WHERE user_id = $1 AND group_id = $2",
         )
         .bind(user_id)
         .bind(group_id)
@@ -819,8 +815,9 @@ impl GroupService {
     }
 
     /// 获取群组积分配置
+    #[allow(dead_code)]
     pub async fn get_group_point_config(
-        user_id: i64,
+        _user_id: i64,
         group_id: i64,
         state: &Arc<AppState>,
     ) -> Result<GroupPointConfig, CustomError> {
@@ -845,12 +842,11 @@ impl GroupService {
         let db = &state.db_pool;
 
         // 检查用户是否是组管理员
-        let user_role: Option<(String,)> = sqlx::query_as(
-            "SELECT role::text FROM users WHERE user_id = $1"
-        )
-        .bind(user_id)
-        .fetch_optional(db)
-        .await?;
+        let user_role: Option<(String,)> =
+            sqlx::query_as("SELECT role::text FROM users WHERE user_id = $1")
+                .bind(user_id)
+                .fetch_optional(db)
+                .await?;
 
         let is_admin = user_role.map(|(r,)| r == "ADMIN").unwrap_or(false);
         if !is_admin {

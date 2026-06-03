@@ -2,14 +2,22 @@
 // FSD.latest.md compliant endpoints
 
 use chrono::Utc;
-use ntex::web::{self, HttpResponse, ServiceConfig, types::{Path, State, Json}};
-use std::sync::Arc;
+use ntex::web::{
+    self,
+    types::{Json, Path, State},
+    HttpResponse, ServiceConfig,
+};
+use serde::{Deserialize, Serialize};
 use sqlx::Row;
+use std::sync::Arc;
+use utoipa::ToSchema;
 
 use crate::config::AppState;
+use crate::domain::group::entities::{
+    FulfillmentStats, GroupDetailInfo, GroupRecord, SettlementCheckResult,
+};
 use crate::errors::CustomError;
 use crate::middlewares::auth::UserToken;
-use crate::domain::group::entities::{GroupRecord, GroupDetailInfo, FulfillmentStats, SettlementCheckResult};
 
 /// 配置双人组路由
 pub fn configure(cfg: &mut ServiceConfig) {
@@ -18,18 +26,44 @@ pub fn configure(cfg: &mut ServiceConfig) {
             .route("", web::post().to(create_group))
             .route("/{group_id}", web::get().to(get_group))
             .route("/{group_id}/swap-role", web::post().to(swap_role))
-            .route("/{group_id}/settlement-check", web::get().to(settlement_check))
-            .route("/{group_id}/fulfillment-stats", web::get().to(fulfillment_stats))
+            .route(
+                "/{group_id}/settlement-check",
+                web::get().to(settlement_check),
+            )
+            .route(
+                "/{group_id}/fulfillment-stats",
+                web::get().to(fulfillment_stats),
+            )
             // FSD v2: 额外端点
             .route("/{group_id}/invite", web::post().to(create_invite))
             .route("/{group_id}/foods", web::get().to(list_foods))
             .route("/{group_id}/orders", web::post().to(create_group_order))
-            .route("/{group_id}/wishes", web::post().to(create_group_wish))
+            .route("/{group_id}/wishes", web::post().to(create_group_wish)),
     );
 }
 
 /// 创建双人组
 /// POST /api/groups
+/// 创建双人组响应
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct CreateGroupResponse {
+    pub group_id: i64,
+    pub invite_code: String,
+    pub status: String,
+}
+
+#[utoipa::path(
+    post,
+    path = "/api/groups",
+    tag = "双人组",
+    responses(
+        (status = 201, description = "创建成功", body = CreateGroupResponse),
+        (status = 400, description = "已在组中或其他错误"),
+        (status = 401, description = "未登录")
+    ),
+    security(("cookie_auth" = []))
+)]
 async fn create_group(
     token: UserToken,
     state: State<Arc<AppState>>,
@@ -38,7 +72,7 @@ async fn create_group(
 
     // 检查用户是否已在组中
     let existing: Option<(i64,)> = sqlx::query_as(
-        "SELECT group_id FROM association_group_members WHERE user_id = $1 AND is_primary = true"
+        "SELECT group_id FROM association_group_members WHERE user_id = $1 AND is_primary = true",
     )
     .bind(token.user_id)
     .fetch_optional(db)
@@ -88,6 +122,20 @@ async fn create_group(
 
 /// 获取组信息
 /// GET /api/groups/{group_id}
+#[utoipa::path(
+    get,
+    path = "/api/groups/{group_id}",
+    tag = "双人组",
+    params(
+        ("group_id" = i64, Path, description = "组ID")
+    ),
+    responses(
+        (status = 200, description = "获取成功", body = GroupDetailInfo),
+        (status = 403, description = "无权访问该组"),
+        (status = 404, description = "组不存在")
+    ),
+    security(("cookie_auth" = []))
+)]
 async fn get_group(
     token: UserToken,
     state: State<Arc<AppState>>,
@@ -98,7 +146,7 @@ async fn get_group(
 
     // 检查用户是否是组成员
     let is_member: bool = sqlx::query_scalar::<_, bool>(
-        "SELECT EXISTS(SELECT 1 FROM association_group_members WHERE group_id=$1 AND user_id=$2)"
+        "SELECT EXISTS(SELECT 1 FROM association_group_members WHERE group_id=$1 AND user_id=$2)",
     )
     .bind(gid)
     .bind(token.user_id)
@@ -119,7 +167,7 @@ async fn get_group(
            FROM association_groups g
            LEFT JOIN users buyer ON buyer.user_id = g.buyer_user_id
            LEFT JOIN users seller ON seller.user_id = g.seller_user_id
-           WHERE g.group_id = $1"#
+           WHERE g.group_id = $1"#,
     )
     .bind(gid)
     .fetch_optional(db)
@@ -157,8 +205,31 @@ async fn get_group(
 /// - 操作人无CLAIMED状态且自己作为发起人或履约人的在途心愿
 /// - 互换后当前Buyer与Seller对调
 ///
+/// 角色互换响应
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct SwapRoleResponse {
+    pub status: String,
+    pub new_buyer: Option<i64>,
+    pub new_seller: Option<i64>,
+}
+
 /// 配置开关:
 /// - swap_ignore_ongoing_wish = true时允许带在途心愿互换身份
+#[utoipa::path(
+    post,
+    path = "/api/groups/{group_id}/swap-role",
+    tag = "双人组",
+    params(
+        ("group_id" = i64, Path, description = "组ID")
+    ),
+    responses(
+        (status = 200, description = "互换成功", body = SwapRoleResponse),
+        (status = 400, description = "存在未完结订单或心愿"),
+        (status = 403, description = "无权访问该组")
+    ),
+    security(("cookie_auth" = []))
+)]
 async fn swap_role(
     token: UserToken,
     state: State<Arc<AppState>>,
@@ -169,7 +240,7 @@ async fn swap_role(
 
     // 检查用户是否是组成员
     let is_member: bool = sqlx::query_scalar::<_, bool>(
-        "SELECT EXISTS(SELECT 1 FROM association_group_members WHERE group_id=$1 AND user_id=$2)"
+        "SELECT EXISTS(SELECT 1 FROM association_group_members WHERE group_id=$1 AND user_id=$2)",
     )
     .bind(gid)
     .bind(token.user_id)
@@ -184,7 +255,7 @@ async fn swap_role(
 
     // 检查组配置 swap_ignore_ongoing_wish
     let settings: Option<serde_json::Value> = sqlx::query_scalar::<_, Option<serde_json::Value>>(
-        "SELECT settings FROM association_groups WHERE group_id = $1"
+        "SELECT settings FROM association_groups WHERE group_id = $1",
     )
     .bind(gid)
     .fetch_optional(&mut *tx)
@@ -214,7 +285,7 @@ async fn swap_role(
         let pending_wishes: i64 = sqlx::query_scalar::<_, i64>(
             r#"SELECT COUNT(*) FROM wishes
                WHERE group_id=$1 AND status='CLAIMED'
-               AND (selected_by=$2 OR fulfiller_id=$2)"#
+               AND (selected_by=$2 OR fulfiller_id=$2)"#,
         )
         .bind(gid)
         .bind(token.user_id)
@@ -228,7 +299,7 @@ async fn swap_role(
 
     // 执行角色互换
     let (old_buyer, old_seller): (Option<i64>, Option<i64>) = sqlx::query_as(
-        "SELECT buyer_user_id, seller_user_id FROM association_groups WHERE group_id=$1"
+        "SELECT buyer_user_id, seller_user_id FROM association_groups WHERE group_id=$1",
     )
     .bind(gid)
     .fetch_one(&mut *tx)
@@ -279,6 +350,19 @@ async fn swap_role(
 /// - 无自己作为履约人且未完结的心愿
 /// - 无本组冻结爱心积分
 /// - 无待处理的逾期补偿或管理员钻石奖励
+#[utoipa::path(
+    get,
+    path = "/api/groups/{group_id}/settlement-check",
+    tag = "双人组",
+    params(
+        ("group_id" = i64, Path, description = "组ID")
+    ),
+    responses(
+        (status = 200, description = "获取成功", body = SettlementCheckResult),
+        (status = 403, description = "无权访问该组")
+    ),
+    security(("cookie_auth" = []))
+)]
 async fn settlement_check(
     token: UserToken,
     state: State<Arc<AppState>>,
@@ -289,7 +373,7 @@ async fn settlement_check(
 
     // 检查用户是否是组成员
     let is_member: bool = sqlx::query_scalar::<_, bool>(
-        "SELECT EXISTS(SELECT 1 FROM association_group_members WHERE group_id=$1 AND user_id=$2)"
+        "SELECT EXISTS(SELECT 1 FROM association_group_members WHERE group_id=$1 AND user_id=$2)",
     )
     .bind(gid)
     .bind(token.user_id)
@@ -327,7 +411,7 @@ async fn settlement_check(
     // 检查冻结爱心积分
     let frozen_points: i64 = sqlx::query_scalar::<_, Option<i64>>(
         r#"SELECT COALESCE(SUM(amount), 0) FROM love_point_transactions
-           WHERE user_id=$1 AND group_id=$2 AND type='FREEZE'"#
+           WHERE user_id=$1 AND group_id=$2 AND type='FREEZE'"#,
     )
     .bind(token.user_id)
     .bind(gid)
@@ -371,6 +455,19 @@ async fn settlement_check(
 /// - fulfillment_rate: 按期完成率
 /// - avg_fulfillment_hours: 平均履约时长
 /// - pending_fulfillment_count: 当前待履约数量
+#[utoipa::path(
+    get,
+    path = "/api/groups/{group_id}/fulfillment-stats",
+    tag = "双人组",
+    params(
+        ("group_id" = i64, Path, description = "组ID")
+    ),
+    responses(
+        (status = 200, description = "获取成功"),
+        (status = 403, description = "无权访问该组")
+    ),
+    security(("cookie_auth" = []))
+)]
 async fn fulfillment_stats(
     token: UserToken,
     state: State<Arc<AppState>>,
@@ -381,7 +478,7 @@ async fn fulfillment_stats(
 
     // 检查用户是否是组成员
     let is_member: bool = sqlx::query_scalar::<_, bool>(
-        "SELECT EXISTS(SELECT 1 FROM association_group_members WHERE group_id=$1 AND user_id=$2)"
+        "SELECT EXISTS(SELECT 1 FROM association_group_members WHERE group_id=$1 AND user_id=$2)",
     )
     .bind(gid)
     .bind(token.user_id)
@@ -393,19 +490,18 @@ async fn fulfillment_stats(
     }
 
     // 获取组内所有用户
-    let members: Vec<(i64,)> = sqlx::query_as(
-        "SELECT user_id FROM association_group_members WHERE group_id=$1"
-    )
-    .bind(gid)
-    .fetch_all(db)
-    .await?;
+    let members: Vec<(i64,)> =
+        sqlx::query_as("SELECT user_id FROM association_group_members WHERE group_id=$1")
+            .bind(gid)
+            .fetch_all(db)
+            .await?;
 
     let mut stats_map = std::collections::HashMap::new();
 
     for (user_id,) in members {
         // 作为履约人的总心愿数
         let total: i64 = sqlx::query_scalar::<_, Option<i64>>(
-            "SELECT COUNT(*) FROM wishes WHERE group_id=$1 AND fulfiller_id=$2"
+            "SELECT COUNT(*) FROM wishes WHERE group_id=$1 AND fulfiller_id=$2",
         )
         .bind(gid)
         .bind(user_id)
@@ -417,7 +513,7 @@ async fn fulfillment_stats(
         let finished: i64 = sqlx::query_scalar::<_, Option<i64>>(
             r#"SELECT COUNT(*) FROM wishes
                WHERE group_id=$1 AND fulfiller_id=$2 AND status='FINISHED'
-               AND fulfilled_at <= fulfillment_due_at"#
+               AND fulfilled_at <= fulfillment_due_at"#,
         )
         .bind(gid)
         .bind(user_id)
@@ -428,7 +524,7 @@ async fn fulfillment_stats(
         // 逾期数
         let expired: i64 = sqlx::query_scalar::<_, Option<i64>>(
             r#"SELECT COUNT(*) FROM wishes
-               WHERE group_id=$1 AND fulfiller_id=$2 AND status='EXPIRED'"#
+               WHERE group_id=$1 AND fulfiller_id=$2 AND status='EXPIRED'"#,
         )
         .bind(gid)
         .bind(user_id)
@@ -439,7 +535,7 @@ async fn fulfillment_stats(
         // 待履约数
         let pending: i64 = sqlx::query_scalar::<_, Option<i64>>(
             r#"SELECT COUNT(*) FROM wishes
-               WHERE group_id=$1 AND fulfiller_id=$2 AND status='CLAIMED'"#
+               WHERE group_id=$1 AND fulfiller_id=$2 AND status='CLAIMED'"#,
         )
         .bind(gid)
         .bind(user_id)
@@ -447,17 +543,24 @@ async fn fulfillment_stats(
         .await?
         .unwrap_or(0);
 
-        let rate = if total > 0 { finished as f64 / total as f64 } else { 0.0 };
+        let rate = if total > 0 {
+            finished as f64 / total as f64
+        } else {
+            0.0
+        };
 
-        stats_map.insert(user_id, FulfillmentStats {
+        stats_map.insert(
             user_id,
-            fulfillment_total: total as i32,
-            fulfillment_finished: finished as i32,
-            fulfillment_expired: expired as i32,
-            fulfillment_rate: rate,
-            avg_fulfillment_hours: 0.0, // 简化
-            pending_fulfillment_count: pending as i32,
-        });
+            FulfillmentStats {
+                user_id,
+                fulfillment_total: total as i32,
+                fulfillment_finished: finished as i32,
+                fulfillment_expired: expired as i32,
+                fulfillment_rate: rate,
+                avg_fulfillment_hours: 0.0, // 简化
+                pending_fulfillment_count: pending as i32,
+            },
+        );
     }
 
     Ok(HttpResponse::Ok().json(&stats_map))
@@ -465,10 +568,33 @@ async fn fulfillment_stats(
 
 // ============== FSD v2 额外端点 ==============
 
+/// 创建邀请响应
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct CreateInviteResponse {
+    pub invite_code: String,
+    pub expires_at: chrono::DateTime<chrono::Utc>,
+    pub status: String,
+}
+
 /// 创建邀请链接
 /// POST /api/groups/{group_id}/invite
 ///
 /// 生成邀请码，供受邀用户加入组
+#[utoipa::path(
+    post,
+    path = "/api/groups/{group_id}/invite",
+    tag = "双人组",
+    params(
+        ("group_id" = i64, Path, description = "组ID")
+    ),
+    responses(
+        (status = 201, description = "创建成功", body = CreateInviteResponse),
+        (status = 400, description = "组已满2人"),
+        (status = 403, description = "无权访问该组")
+    ),
+    security(("cookie_auth" = []))
+)]
 async fn create_invite(
     token: UserToken,
     state: State<Arc<AppState>>,
@@ -479,7 +605,7 @@ async fn create_invite(
 
     // 检查用户是否是组成员
     let is_member: bool = sqlx::query_scalar::<_, bool>(
-        "SELECT EXISTS(SELECT 1 FROM association_group_members WHERE group_id=$1 AND user_id=$2)"
+        "SELECT EXISTS(SELECT 1 FROM association_group_members WHERE group_id=$1 AND user_id=$2)",
     )
     .bind(gid)
     .bind(token.user_id)
@@ -524,8 +650,37 @@ async fn create_invite(
     })))
 }
 
+/// 组内菜品项
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct FoodItem {
+    pub food_id: i64,
+    pub group_id: i64,
+    pub name: String,
+    pub description: Option<String>,
+    pub images: Option<serde_json::Value>,
+    pub tags: Option<serde_json::Value>,
+    pub ingredients: Option<serde_json::Value>,
+    pub steps: Option<serde_json::Value>,
+    pub status: String,
+    pub created_by: i64,
+}
+
 /// 获取组内菜品列表
 /// GET /api/groups/{group_id}/foods
+#[utoipa::path(
+    get,
+    path = "/api/groups/{group_id}/foods",
+    tag = "双人组",
+    params(
+        ("group_id" = i64, Path, description = "组ID")
+    ),
+    responses(
+        (status = 200, description = "获取成功", body = Vec<FoodItem>),
+        (status = 403, description = "无权访问该组")
+    ),
+    security(("cookie_auth" = []))
+)]
 async fn list_foods(
     token: UserToken,
     state: State<Arc<AppState>>,
@@ -536,7 +691,7 @@ async fn list_foods(
 
     // 检查用户是否是组成员
     let is_member: bool = sqlx::query_scalar::<_, bool>(
-        "SELECT EXISTS(SELECT 1 FROM association_group_members WHERE group_id=$1 AND user_id=$2)"
+        "SELECT EXISTS(SELECT 1 FROM association_group_members WHERE group_id=$1 AND user_id=$2)",
     )
     .bind(gid)
     .bind(token.user_id)
@@ -557,28 +712,54 @@ async fn list_foods(
     .fetch_all(db)
     .await?;
 
-    let result: Vec<serde_json::Value> = foods.into_iter().map(|r| {
-        serde_json::json!({
-            "foodId": r.get::<i64, _>("food_id"),
-            "groupId": r.get::<i64, _>("group_id"),
-            "name": r.get::<String, _>("name"),
-            "description": r.get::<Option<String>, _>("description"),
-            "images": r.get::<Option<serde_json::Value>, _>("images"),
-            "tags": r.get::<Option<serde_json::Value>, _>("tags"),
-            "ingredients": r.get::<Option<serde_json::Value>, _>("ingredients"),
-            "steps": r.get::<Option<serde_json::Value>, _>("steps"),
-            "status": r.get::<String, _>("status"),
-            "createdBy": r.get::<i64, _>("created_by")
+    let result: Vec<serde_json::Value> = foods
+        .into_iter()
+        .map(|r| {
+            serde_json::json!({
+                "foodId": r.get::<i64, _>("food_id"),
+                "groupId": r.get::<i64, _>("group_id"),
+                "name": r.get::<String, _>("name"),
+                "description": r.get::<Option<String>, _>("description"),
+                "images": r.get::<Option<serde_json::Value>, _>("images"),
+                "tags": r.get::<Option<serde_json::Value>, _>("tags"),
+                "ingredients": r.get::<Option<serde_json::Value>, _>("ingredients"),
+                "steps": r.get::<Option<serde_json::Value>, _>("steps"),
+                "status": r.get::<String, _>("status"),
+                "createdBy": r.get::<i64, _>("created_by")
+            })
         })
-    }).collect();
+        .collect();
 
     Ok(HttpResponse::Ok().json(&result))
+}
+
+/// 在组内创建订单响应
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct CreateGroupOrderResponse {
+    pub order_id: i64,
+    pub status: String,
 }
 
 /// 在组内创建订单
 /// POST /api/groups/{group_id}/orders
 ///
 /// Buyer 创建本组订单
+#[utoipa::path(
+    post,
+    path = "/api/groups/{group_id}/orders",
+    tag = "双人组",
+    params(
+        ("group_id" = i64, Path, description = "组ID")
+    ),
+    request_body = GroupOrderInput,
+    responses(
+        (status = 201, description = "创建成功", body = CreateGroupOrderResponse),
+        (status = 403, description = "无权访问或只有Buyer可创建"),
+        (status = 404, description = "组不存在")
+    ),
+    security(("cookie_auth" = []))
+)]
 async fn create_group_order(
     token: UserToken,
     state: State<Arc<AppState>>,
@@ -591,7 +772,7 @@ async fn create_group_order(
 
     // 检查用户是否是组成员
     let is_member: bool = sqlx::query_scalar::<_, bool>(
-        "SELECT EXISTS(SELECT 1 FROM association_group_members WHERE group_id=$1 AND user_id=$2)"
+        "SELECT EXISTS(SELECT 1 FROM association_group_members WHERE group_id=$1 AND user_id=$2)",
     )
     .bind(gid)
     .bind(token.user_id)
@@ -604,7 +785,7 @@ async fn create_group_order(
 
     // 检查用户角色是否为 BUYER
     let user_role: Option<String> = sqlx::query_scalar(
-        "SELECT role_in_group FROM association_group_members WHERE group_id=$1 AND user_id=$2"
+        "SELECT role_in_group FROM association_group_members WHERE group_id=$1 AND user_id=$2",
     )
     .bind(gid)
     .bind(token.user_id)
@@ -616,12 +797,11 @@ async fn create_group_order(
     }
 
     // 获取当前组Seller
-    let seller_id: Option<i64> = sqlx::query_scalar(
-        "SELECT seller_user_id FROM association_groups WHERE group_id=$1"
-    )
-    .bind(gid)
-    .fetch_one(db)
-    .await?;
+    let seller_id: Option<i64> =
+        sqlx::query_scalar("SELECT seller_user_id FROM association_groups WHERE group_id=$1")
+            .bind(gid)
+            .fetch_one(db)
+            .await?;
 
     // 创建订单
     let order_id = idgenerator::IdInstance::next_id();
@@ -646,10 +826,32 @@ async fn create_group_order(
     })))
 }
 
+/// 在组内创建心愿响应
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct CreateGroupWishResponse {
+    pub wish_id: i64,
+    pub status: String,
+}
+
 /// 在组内创建心愿
 /// POST /api/groups/{group_id}/wishes
 ///
 /// 组成员创建心愿，创建后发起人为 requester_id，另一成员为 fulfiller_id
+#[utoipa::path(
+    post,
+    path = "/api/groups/{group_id}/wishes",
+    tag = "双人组",
+    params(
+        ("group_id" = i64, Path, description = "组ID")
+    ),
+    request_body = GroupWishInput,
+    responses(
+        (status = 201, description = "创建成功", body = CreateGroupWishResponse),
+        (status = 403, description = "无权访问该组")
+    ),
+    security(("cookie_auth" = []))
+)]
 async fn create_group_wish(
     token: UserToken,
     state: State<Arc<AppState>>,
@@ -662,7 +864,7 @@ async fn create_group_wish(
 
     // 检查用户是否是组成员
     let is_member: bool = sqlx::query_scalar::<_, bool>(
-        "SELECT EXISTS(SELECT 1 FROM association_group_members WHERE group_id=$1 AND user_id=$2)"
+        "SELECT EXISTS(SELECT 1 FROM association_group_members WHERE group_id=$1 AND user_id=$2)",
     )
     .bind(gid)
     .bind(token.user_id)
@@ -675,7 +877,7 @@ async fn create_group_wish(
 
     // 获取组内另一成员作为默认履约人
     let other_member: Option<i64> = sqlx::query_scalar(
-        "SELECT user_id FROM association_group_members WHERE group_id=$1 AND user_id!=$2 LIMIT 1"
+        "SELECT user_id FROM association_group_members WHERE group_id=$1 AND user_id!=$2 LIMIT 1",
     )
     .bind(gid)
     .bind(token.user_id)
@@ -686,7 +888,7 @@ async fn create_group_wish(
 
     // 获取用户当前角色快照
     let user_role: Option<String> = sqlx::query_scalar(
-        "SELECT role_in_group FROM association_group_members WHERE group_id=$1 AND user_id=$2"
+        "SELECT role_in_group FROM association_group_members WHERE group_id=$1 AND user_id=$2",
     )
     .bind(gid)
     .bind(token.user_id)
@@ -719,7 +921,7 @@ async fn create_group_wish(
 // ============== FSD v2 请求结构体 ==============
 
 /// 组内创建订单输入
-#[derive(Debug, serde::Deserialize)]
+#[derive(Debug, Deserialize, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct GroupOrderInput {
     pub title: String,
@@ -728,7 +930,7 @@ pub struct GroupOrderInput {
 }
 
 /// 组内创建心愿输入
-#[derive(Debug, serde::Deserialize)]
+#[derive(Debug, Deserialize, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct GroupWishInput {
     pub name: String,

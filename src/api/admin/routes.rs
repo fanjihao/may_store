@@ -8,8 +8,8 @@ use ntex::web::{
 };
 use serde::{Deserialize, Serialize};
 use sqlx::Row;
-use utoipa::ToSchema;
 use std::sync::Arc;
+use utoipa::ToSchema;
 
 use crate::config::AppState;
 use crate::errors::CustomError;
@@ -25,10 +25,84 @@ pub fn configure(cfg: &mut ServiceConfig) {
             .route("/config", web::get().to(get_config))
             .route("/config", web::put().to(update_config))
             // FSD v2: 心愿质量奖励审核
-            .route("/wishes/{wish_id}/quality-reward", web::post().to(wish_quality_reward))
+            .route(
+                "/wishes/{wish_id}/quality-reward",
+                web::post().to(wish_quality_reward),
+            )
             // FSD v2: 订单积分/经验审核
-            .route("/orders/{order_id}/reward-review", web::post().to(order_reward_review))
+            .route(
+                "/orders/{order_id}/reward-review",
+                web::post().to(order_reward_review),
+            ),
     );
+}
+
+// ============== 响应结构体 ==============
+
+/// 系统统计响应
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct StatsResponse {
+    pub total_users: i64,
+    pub total_groups: i64,
+    pub total_orders: i64,
+    pub active_orders: i64,
+    pub total_diamonds: i64,
+}
+
+/// 组列表项
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct GroupListItem {
+    pub group_id: i64,
+    pub group_name: String,
+    pub diamond: i32,
+    pub member_count: i32,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+}
+
+/// 用户列表项
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct UserListItem {
+    pub user_id: i64,
+    pub username: String,
+    pub nick_name: Option<String>,
+    pub role: String,
+    pub love_point: i32,
+    pub diamond: i32,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+}
+
+/// 系统配置响应
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ConfigResponse {
+    pub sign_reward_daily: i32,
+    pub sign_reward_consecutive: i32,
+    pub order_point_percent: i32,
+    pub diamond_unlock_cost: i32,
+    pub default_footprint_capacity: i32,
+}
+
+/// 心愿质量奖励响应
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct WishQualityRewardResponse {
+    pub wish_id: i64,
+    pub quality_level: String,
+    pub diamond_reward: i32,
+    pub status: String,
+}
+
+/// 订单奖励审核响应
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct OrderRewardReviewResponse {
+    pub order_id: i64,
+    pub point_grant_status_updated: bool,
+    pub exp_grant_status_updated: bool,
+    pub status: String,
 }
 
 /// 获取系统统计数据
@@ -38,7 +112,7 @@ pub fn configure(cfg: &mut ServiceConfig) {
     path = "/admin/stats",
     tag = "后台管理",
     responses(
-        (status = 200, description = "获取成功"),
+        (status = 200, description = "获取成功", body = StatsResponse),
         (status = 401, description = "未登录"),
         (status = 403, description = "无权限")
     ),
@@ -49,7 +123,11 @@ pub async fn get_stats(
     token: UserToken,
 ) -> Result<impl Responder, CustomError> {
     // 检查是否为管理员角色
-    let is_admin = token.user.as_ref().map(|u| u.role == crate::domain::user::UserRole::Admin).unwrap_or(false);
+    let is_admin = token
+        .user
+        .as_ref()
+        .map(|u| u.role == crate::domain::user::UserRole::Admin)
+        .unwrap_or(false);
     if !is_admin {
         return Err(CustomError::Forbidden("需要管理员权限".into()));
     }
@@ -72,15 +150,18 @@ pub async fn get_stats(
         .await?
         .get(0);
 
-    let active_orders: i64 = sqlx::query("SELECT COUNT(*) FROM orders WHERE status NOT IN ('COMPLETED', 'CANCELLED', 'REJECTED')")
-        .fetch_one(db)
-        .await?
-        .get(0);
+    let active_orders: i64 = sqlx::query(
+        "SELECT COUNT(*) FROM orders WHERE status NOT IN ('COMPLETED', 'CANCELLED', 'REJECTED')",
+    )
+    .fetch_one(db)
+    .await?
+    .get(0);
 
-    let total_diamonds: i64 = sqlx::query("SELECT COALESCE(SUM(diamond), 0) FROM association_groups")
-        .fetch_one(db)
-        .await?
-        .get(0);
+    let total_diamonds: i64 =
+        sqlx::query("SELECT COALESCE(SUM(diamond), 0) FROM association_groups")
+            .fetch_one(db)
+            .await?
+            .get(0);
 
     let stats = serde_json::json!({
         "totalUsers": total_users,
@@ -99,7 +180,7 @@ pub async fn get_stats(
     path = "/admin/groups",
     tag = "后台管理",
     responses(
-        (status = 200, description = "获取成功"),
+        (status = 200, description = "获取成功", body = Vec<GroupListItem>),
         (status = 401, description = "未登录"),
         (status = 403, description = "无权限")
     ),
@@ -109,7 +190,11 @@ pub async fn list_groups(
     state: State<Arc<AppState>>,
     token: UserToken,
 ) -> Result<impl Responder, CustomError> {
-    let is_admin = token.user.as_ref().map(|u| u.role == crate::domain::user::UserRole::Admin).unwrap_or(false);
+    let is_admin = token
+        .user
+        .as_ref()
+        .map(|u| u.role == crate::domain::user::UserRole::Admin)
+        .unwrap_or(false);
     if !is_admin {
         return Err(CustomError::Forbidden("需要管理员权限".into()));
     }
@@ -120,14 +205,17 @@ pub async fn list_groups(
     .fetch_all(&state.db_pool)
     .await?;
 
-    let result: Vec<serde_json::Value> = groups.into_iter()
-        .map(|r| serde_json::json!({
-            "groupId": r.get::<i64, _>("group_id"),
-            "groupName": r.get::<String, _>("group_name"),
-            "diamond": r.get::<i32, _>("diamond"),
-            "memberCount": r.get::<i32, _>("member_count"),
-            "createdAt": r.get::<chrono::DateTime<chrono::Utc>, _>("created_at")
-        }))
+    let result: Vec<serde_json::Value> = groups
+        .into_iter()
+        .map(|r| {
+            serde_json::json!({
+                "groupId": r.get::<i64, _>("group_id"),
+                "groupName": r.get::<String, _>("group_name"),
+                "diamond": r.get::<i32, _>("diamond"),
+                "memberCount": r.get::<i32, _>("member_count"),
+                "createdAt": r.get::<chrono::DateTime<chrono::Utc>, _>("created_at")
+            })
+        })
         .collect();
 
     Ok(HttpResponse::Ok().json(&result))
@@ -139,7 +227,7 @@ pub async fn list_groups(
     path = "/admin/users",
     tag = "后台管理",
     responses(
-        (status = 200, description = "获取成功"),
+        (status = 200, description = "获取成功", body = Vec<UserListItem>),
         (status = 401, description = "未登录"),
         (status = 403, description = "无权限")
     ),
@@ -149,7 +237,11 @@ pub async fn list_all_users(
     state: State<Arc<AppState>>,
     token: UserToken,
 ) -> Result<impl Responder, CustomError> {
-    let is_admin = token.user.as_ref().map(|u| u.role == crate::domain::user::UserRole::Admin).unwrap_or(false);
+    let is_admin = token
+        .user
+        .as_ref()
+        .map(|u| u.role == crate::domain::user::UserRole::Admin)
+        .unwrap_or(false);
     if !is_admin {
         return Err(CustomError::Forbidden("需要管理员权限".into()));
     }
@@ -160,16 +252,19 @@ pub async fn list_all_users(
     .fetch_all(&state.db_pool)
     .await?;
 
-    let result: Vec<serde_json::Value> = users.into_iter()
-        .map(|r| serde_json::json!({
-            "userId": r.get::<i64, _>("user_id"),
-            "username": r.get::<String, _>("username"),
-            "nickName": r.get::<Option<String>, _>("nick_name"),
-            "role": r.get::<String, _>("role"),
-            "lovePoint": r.get::<i32, _>("love_point"),
-            "diamond": r.get::<i32, _>("diamond"),
-            "createdAt": r.get::<chrono::DateTime<chrono::Utc>, _>("created_at")
-        }))
+    let result: Vec<serde_json::Value> = users
+        .into_iter()
+        .map(|r| {
+            serde_json::json!({
+                "userId": r.get::<i64, _>("user_id"),
+                "username": r.get::<String, _>("username"),
+                "nickName": r.get::<Option<String>, _>("nick_name"),
+                "role": r.get::<String, _>("role"),
+                "lovePoint": r.get::<i32, _>("love_point"),
+                "diamond": r.get::<i32, _>("diamond"),
+                "createdAt": r.get::<chrono::DateTime<chrono::Utc>, _>("created_at")
+            })
+        })
         .collect();
 
     Ok(HttpResponse::Ok().json(&result))
@@ -181,17 +276,21 @@ pub async fn list_all_users(
     path = "/admin/config",
     tag = "后台管理",
     responses(
-        (status = 200, description = "获取成功"),
+        (status = 200, description = "获取成功", body = ConfigResponse),
         (status = 401, description = "未登录"),
         (status = 403, description = "无权限")
     ),
     security(("cookie_auth" = []))
 )]
 pub async fn get_config(
-    state: State<Arc<AppState>>,
+    _state: State<Arc<AppState>>,
     token: UserToken,
 ) -> Result<impl Responder, CustomError> {
-    let is_admin = token.user.as_ref().map(|u| u.role == crate::domain::user::UserRole::Admin).unwrap_or(false);
+    let is_admin = token
+        .user
+        .as_ref()
+        .map(|u| u.role == crate::domain::user::UserRole::Admin)
+        .unwrap_or(false);
     if !is_admin {
         return Err(CustomError::Forbidden("需要管理员权限".into()));
     }
@@ -215,7 +314,7 @@ pub async fn get_config(
     tag = "后台管理",
     request_body = serde_json::Value,
     responses(
-        (status = 200, description = "更新成功"),
+        (status = 200, description = "更新成功", body = serde_json::Value),
         (status = 401, description = "未登录"),
         (status = 403, description = "无权限")
     ),
@@ -226,7 +325,11 @@ pub async fn update_config(
     token: UserToken,
     body: web::types::Json<serde_json::Value>,
 ) -> Result<impl Responder, CustomError> {
-    let is_admin = token.user.as_ref().map(|u| u.role == crate::domain::user::UserRole::Admin).unwrap_or(false);
+    let is_admin = token
+        .user
+        .as_ref()
+        .map(|u| u.role == crate::domain::user::UserRole::Admin)
+        .unwrap_or(false);
     if !is_admin {
         return Err(CustomError::Forbidden("需要管理员权限".into()));
     }
@@ -237,7 +340,9 @@ pub async fn update_config(
     // 验证并更新配置项
     if let Some(sign_reward_daily) = config.get("signRewardDaily").and_then(|v| v.as_i64()) {
         if sign_reward_daily < 1 || sign_reward_daily > 100 {
-            return Err(CustomError::BadRequest("每日签到奖励必须在1-100之间".into()));
+            return Err(CustomError::BadRequest(
+                "每日签到奖励必须在1-100之间".into(),
+            ));
         }
         sqlx::query(
             "INSERT INTO system_config (key, value, updated_at) VALUES ('sign_reward_daily', $1, NOW()) ON CONFLICT (key) DO UPDATE SET value = $1, updated_at = NOW()"
@@ -247,9 +352,13 @@ pub async fn update_config(
         .await?;
     }
 
-    if let Some(sign_reward_consecutive) = config.get("signRewardConsecutive").and_then(|v| v.as_i64()) {
+    if let Some(sign_reward_consecutive) =
+        config.get("signRewardConsecutive").and_then(|v| v.as_i64())
+    {
         if sign_reward_consecutive < 1 || sign_reward_consecutive > 100 {
-            return Err(CustomError::BadRequest("连续签到奖励必须在1-100之间".into()));
+            return Err(CustomError::BadRequest(
+                "连续签到奖励必须在1-100之间".into(),
+            ));
         }
         sqlx::query(
             "INSERT INTO system_config (key, value, updated_at) VALUES ('sign_reward_consecutive', $1, NOW()) ON CONFLICT (key) DO UPDATE SET value = $1, updated_at = NOW()"
@@ -261,7 +370,9 @@ pub async fn update_config(
 
     if let Some(order_point_percent) = config.get("orderPointPercent").and_then(|v| v.as_i64()) {
         if order_point_percent < 1 || order_point_percent > 200 {
-            return Err(CustomError::BadRequest("订单积分百分比必须在1-200之间".into()));
+            return Err(CustomError::BadRequest(
+                "订单积分百分比必须在1-200之间".into(),
+            ));
         }
         sqlx::query(
             "INSERT INTO system_config (key, value, updated_at) VALUES ('order_point_percent', $1, NOW()) ON CONFLICT (key) DO UPDATE SET value = $1, updated_at = NOW()"
@@ -273,7 +384,9 @@ pub async fn update_config(
 
     if let Some(diamond_unlock_cost) = config.get("diamondUnlockCost").and_then(|v| v.as_i64()) {
         if diamond_unlock_cost < 10 || diamond_unlock_cost > 10000 {
-            return Err(CustomError::BadRequest("钻石解锁费用必须在10-10000之间".into()));
+            return Err(CustomError::BadRequest(
+                "钻石解锁费用必须在10-10000之间".into(),
+            ));
         }
         sqlx::query(
             "INSERT INTO system_config (key, value, updated_at) VALUES ('diamond_unlock_cost', $1, NOW()) ON CONFLICT (key) DO UPDATE SET value = $1, updated_at = NOW()"
@@ -283,9 +396,14 @@ pub async fn update_config(
         .await?;
     }
 
-    if let Some(default_capacity) = config.get("defaultFootprintCapacity").and_then(|v| v.as_i64()) {
+    if let Some(default_capacity) = config
+        .get("defaultFootprintCapacity")
+        .and_then(|v| v.as_i64())
+    {
         if default_capacity < 10 || default_capacity > 1000 {
-            return Err(CustomError::BadRequest("默认足迹容量必须在10-1000之间".into()));
+            return Err(CustomError::BadRequest(
+                "默认足迹容量必须在10-1000之间".into(),
+            ));
         }
         sqlx::query(
             "INSERT INTO system_config (key, value, updated_at) VALUES ('default_footprint_capacity', $1, NOW()) ON CONFLICT (key) DO UPDATE SET value = $1, updated_at = NOW()"
@@ -315,7 +433,7 @@ pub async fn update_config(
     ),
     request_body = WishQualityRewardInput,
     responses(
-        (status = 200, description = "奖励成功"),
+        (status = 200, description = "奖励成功", body = WishQualityRewardResponse),
         (status = 401, description = "未登录"),
         (status = 403, description = "无权限"),
         (status = 404, description = "心愿不存在"),
@@ -329,7 +447,11 @@ pub async fn wish_quality_reward(
     path: Path<i64>,
     body: Json<WishQualityRewardInput>,
 ) -> Result<impl Responder, CustomError> {
-    let is_admin = token.user.as_ref().map(|u| u.role == crate::domain::user::UserRole::Admin).unwrap_or(false);
+    let is_admin = token
+        .user
+        .as_ref()
+        .map(|u| u.role == crate::domain::user::UserRole::Admin)
+        .unwrap_or(false);
     if !is_admin {
         return Err(CustomError::Forbidden("需要管理员权限".into()));
     }
@@ -340,12 +462,11 @@ pub async fn wish_quality_reward(
     let db = &state.db_pool;
 
     // 检查心愿是否存在且处于FINISHED状态
-    let wish: Option<(String, i64)> = sqlx::query_as(
-        "SELECT status::text, group_id FROM wishes WHERE wish_id = $1"
-    )
-    .bind(wish_id)
-    .fetch_optional(db)
-    .await?;
+    let wish: Option<(String, i64)> =
+        sqlx::query_as("SELECT status::text, group_id FROM wishes WHERE wish_id = $1")
+            .bind(wish_id)
+            .fetch_optional(db)
+            .await?;
 
     let (status, group_id) = match wish {
         Some((s, g)) => (s, g),
@@ -358,7 +479,7 @@ pub async fn wish_quality_reward(
 
     // 检查是否已经发放过奖励 (幂等)
     let existing_reward: Option<(Option<i32>,)> = sqlx::query_as(
-        "SELECT diamond_reward FROM wishes WHERE wish_id = $1 AND diamond_reward > 0"
+        "SELECT diamond_reward FROM wishes WHERE wish_id = $1 AND diamond_reward > 0",
     )
     .bind(wish_id)
     .fetch_optional(db)
@@ -387,7 +508,7 @@ pub async fn wish_quality_reward(
             diamond_reward = $3,
             updated_at = NOW()
         WHERE wish_id = $4
-        "#
+        "#,
     )
     .bind(token.user_id)
     .bind(&input.remark)
@@ -449,7 +570,7 @@ pub async fn wish_quality_reward(
     ),
     request_body = OrderRewardReviewInput,
     responses(
-        (status = 200, description = "审核成功"),
+        (status = 200, description = "审核成功", body = OrderRewardReviewResponse),
         (status = 401, description = "未登录"),
         (status = 403, description = "无权限"),
         (status = 404, description = "订单不存在")
@@ -462,7 +583,11 @@ pub async fn order_reward_review(
     path: Path<i64>,
     body: Json<OrderRewardReviewInput>,
 ) -> Result<impl web::Responder, CustomError> {
-    let is_admin = token.user.as_ref().map(|u| u.role == crate::domain::user::UserRole::Admin).unwrap_or(false);
+    let is_admin = token
+        .user
+        .as_ref()
+        .map(|u| u.role == crate::domain::user::UserRole::Admin)
+        .unwrap_or(false);
     if !is_admin {
         return Err(CustomError::Forbidden("需要管理员权限".into()));
     }
@@ -480,14 +605,18 @@ pub async fn order_reward_review(
     .fetch_optional(db)
     .await?;
 
-    let (point_status, exp_status, group_id) = match order {
+    let (point_status, exp_status, _group_id) = match order {
         Some((p, e, g)) => (p, e, g),
         None => return Err(CustomError::NotFound("订单不存在".into())),
     };
 
     // 更新积分发放状态
     if point_status == "PENDING_REVIEW" {
-        let new_point_status = if input.approve_point { "GRANTED" } else { "REJECTED" };
+        let new_point_status = if input.approve_point {
+            "GRANTED"
+        } else {
+            "REJECTED"
+        };
         sqlx::query(
             "UPDATE orders SET point_grant_status = $1::point_grant_status_enum WHERE order_id = $2"
         )
@@ -499,9 +628,13 @@ pub async fn order_reward_review(
 
     // 更新经验发放状态
     if exp_status == "PENDING_REVIEW" {
-        let new_exp_status = if input.approve_exp { "GRANTED" } else { "REJECTED" };
+        let new_exp_status = if input.approve_exp {
+            "GRANTED"
+        } else {
+            "REJECTED"
+        };
         sqlx::query(
-            "UPDATE orders SET exp_grant_status = $1::exp_grant_status_enum WHERE order_id = $2"
+            "UPDATE orders SET exp_grant_status = $1::exp_grant_status_enum WHERE order_id = $2",
         )
         .bind(new_exp_status)
         .bind(order_id)
@@ -509,8 +642,10 @@ pub async fn order_reward_review(
         .await?;
     }
 
-    println!("Admin order reward review: order_id={}, point_approved={}, exp_approved={}",
-        order_id, input.approve_point, input.approve_exp);
+    println!(
+        "Admin order reward review: order_id={}, point_approved={}, exp_approved={}",
+        order_id, input.approve_point, input.approve_exp
+    );
 
     Ok(HttpResponse::Ok().json(&serde_json::json!({
         "orderId": order_id,
@@ -535,6 +670,6 @@ pub struct WishQualityRewardInput {
 #[serde(rename_all = "camelCase")]
 pub struct OrderRewardReviewInput {
     pub approve_point: bool, // 是否批准积分发放
-    pub approve_exp: bool,    // 是否批准经验发放
+    pub approve_exp: bool,   // 是否批准经验发放
     pub remark: Option<String>,
 }
