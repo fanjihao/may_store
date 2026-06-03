@@ -26,7 +26,7 @@ async fn get_swagger_ui() -> impl Responder {
 <!DOCTYPE html>
 <html>
 <head>
-    <title>May Store API 文档</title>
+    <title>Wish Menu API Docs</title>
     <link rel="stylesheet" type="text/css" href="https://unpkg.com/swagger-ui@5.9.0/dist/swagger-ui.css" />
 </head>
 <body>

@@ -62,6 +62,21 @@ use utoipa::OpenApi;
         // WebSocket
         crate::api::ws::ws_info,
         crate::api::ws::ws_status,
+        // Footprints
+        crate::api::footprints::routes::get_overview,
+        crate::api::footprints::routes::list_record_groups,
+        crate::api::footprints::routes::create_record,
+        crate::api::footprints::routes::submit_record,
+        crate::api::footprints::routes::get_record,
+        crate::api::footprints::routes::update_record,
+        crate::api::footprints::routes::delete_record,
+        crate::api::footprints::routes::list_records,
+        // Notifications
+        crate::api::notifications::routes::get_unread_count,
+        crate::api::notifications::routes::mark_as_read,
+        // Sign-in
+        crate::api::sign_in::routes::daily_sign_in,
+        crate::api::sign_in::routes::get_sign_info,
     )
 )]
 pub struct ApiDoc;
