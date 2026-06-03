@@ -31,7 +31,12 @@ pub fn configure(cfg: &mut ServiceConfig) {
             // FSD v2: 独立接单/完成/确认接口
             .route("/{id}/accept", web::post().to(accept_order))
             .route("/{id}/complete", web::post().to(complete_order))
-            .route("/{id}/confirm", web::post().to(confirm_order)),
+            .route("/{id}/confirm", web::post().to(confirm_order))
+            // FSD v2: 取消/拒绝/超时/备注接口
+            .route("/{id}/cancel", web::post().to(cancel_order))
+            .route("/{id}/reject", web::post().to(reject_order))
+            .route("/{id}/timeout", web::post().to(order_timeout))
+            .route("/{id}/guest-remark", web::patch().to(update_guest_remark)),
     )
     .service(
         web::scope("/orders-rating")
@@ -234,6 +239,195 @@ pub async fn confirm_order(
     )
     .await?;
     Ok(HttpResponse::Ok().json(&out))
+}
+
+/// 取消订单
+/// POST /api/orders/{id}/cancel
+///
+/// 仅 CREATED 状态可取消
+#[utoipa::path(
+    post,
+    path = "/orders/{id}/cancel",
+    tag = "订单",
+    params(("id" = i64, Path, description = "订单ID")),
+    request_body = OrderCancelInput,
+    responses(
+        (status = 200, description = "取消成功"),
+        (status = 400, description = "订单状态不允许取消"),
+        (status = 404, description = "订单不存在")
+    ),
+    security(("cookie_auth" = []))
+)]
+pub async fn cancel_order(
+    user_token: UserToken,
+    state: State<Arc<AppState>>,
+    order_id: Path<i64>,
+    body: Json<OrderCancelInput>,
+) -> Result<impl Responder, CustomError> {
+    let id = *order_id;
+    let input = body.into_inner();
+    let out = AppOrderService::update_order_status(
+        &state.db_pool,
+        user_token.user_id,
+        &OrderStatusUpdateInput {
+            order_id: id,
+            to_status: OrderStatus::Cancelled,
+            remark: input.reason,
+            points_reward: None,
+        },
+    )
+    .await?;
+    Ok(HttpResponse::Ok().json(&out))
+}
+
+/// 拒绝订单
+/// POST /api/orders/{id}/reject
+///
+/// 仅 CREATED 状态 Seller 可拒绝
+#[utoipa::path(
+    post,
+    path = "/orders/{id}/reject",
+    tag = "订单",
+    params(("id" = i64, Path, description = "订单ID")),
+    request_body = OrderRejectInput,
+    responses(
+        (status = 200, description = "拒绝成功"),
+        (status = 400, description = "订单状态不允许拒绝"),
+        (status = 404, description = "订单不存在")
+    ),
+    security(("cookie_auth" = []))
+)]
+pub async fn reject_order(
+    user_token: UserToken,
+    state: State<Arc<AppState>>,
+    order_id: Path<i64>,
+    body: Json<OrderRejectInput>,
+) -> Result<impl Responder, CustomError> {
+    let id = *order_id;
+    let input = body.into_inner();
+    let out = AppOrderService::update_order_status(
+        &state.db_pool,
+        user_token.user_id,
+        &OrderStatusUpdateInput {
+            order_id: id,
+            to_status: OrderStatus::Rejected,
+            remark: input.reason,
+            points_reward: None,
+        },
+    )
+    .await?;
+    Ok(HttpResponse::Ok().json(&out))
+}
+
+/// 订单超时处理
+/// POST /api/orders/{id}/timeout
+///
+/// CREATED 或 ACCEPTED 状态超过超时时间可标记为超时
+#[utoipa::path(
+    post,
+    path = "/orders/{id}/timeout",
+    tag = "订单",
+    params(("id" = i64, Path, description = "订单ID")),
+    responses(
+        (status = 200, description = "处理成功"),
+        (status = 400, description = "订单状态不允许超时处理"),
+        (status = 404, description = "订单不存在")
+    ),
+    security(("cookie_auth" = []))
+)]
+pub async fn order_timeout(
+    user_token: UserToken,
+    state: State<Arc<AppState>>,
+    order_id: Path<i64>,
+) -> Result<impl Responder, CustomError> {
+    let id = *order_id;
+    let out = AppOrderService::update_order_status(
+        &state.db_pool,
+        user_token.user_id,
+        &OrderStatusUpdateInput {
+            order_id: id,
+            to_status: OrderStatus::Timeout,
+            remark: None,
+            points_reward: None,
+        },
+    )
+    .await?;
+    Ok(HttpResponse::Ok().json(&out))
+}
+
+/// 更新做客订单备注
+/// PATCH /api/orders/{id}/guest-remark
+///
+/// 仅做客订单创建者可更新备注
+#[utoipa::path(
+    patch,
+    path = "/orders/{id}/guest-remark",
+    tag = "订单",
+    params(("id" = i64, Path, description = "订单ID")),
+    request_body = GuestRemarkInput,
+    responses(
+        (status = 200, description = "更新成功"),
+        (status = 400, description = "非做客订单无法更新备注"),
+        (status = 403, description = "无权更新"),
+        (status = 404, description = "订单不存在")
+    ),
+    security(("cookie_auth" = []))
+)]
+pub async fn update_guest_remark(
+    user_token: UserToken,
+    state: State<Arc<AppState>>,
+    order_id: Path<i64>,
+    body: Json<GuestRemarkInput>,
+) -> Result<impl Responder, CustomError> {
+    let id = *order_id;
+    let input = body.into_inner();
+
+    // 检查订单是否存在且为 GUEST 类型
+    let order = AppOrderService::get_order_by_id(&state.db_pool, id).await?
+        .ok_or_else(|| CustomError::NotFound("订单不存在".into()))?;
+
+    if !order.is_guest {
+        return Err(CustomError::BadRequest("非做客订单无法更新备注".into()));
+    }
+
+    // 检查是否是创建者
+    if order.user_id != user_token.user_id {
+        return Err(CustomError::Forbidden("无权更新此订单备注".into()));
+    }
+
+    // 更新做客备注
+    sqlx::query(
+        "UPDATE orders SET guest_remark=$1, guest_mark_tags=$2 WHERE order_id=$3"
+    )
+    .bind(&input.guest_remark)
+    .bind(serde_json::json!(&input.guest_mark_tags))
+    .bind(id)
+    .execute(&state.db_pool)
+    .await?;
+
+    Ok(HttpResponse::Ok().json(&serde_json::json!({"status": "ok"})))
+}
+
+/// 订单取消输入
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct OrderCancelInput {
+    pub reason: Option<String>,
+}
+
+/// 订单拒绝输入
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct OrderRejectInput {
+    pub reason: Option<String>,
+}
+
+/// 做客订单备注输入
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct GuestRemarkInput {
+    pub guest_remark: Option<String>,
+    pub guest_mark_tags: Option<Vec<String>>,
 }
 
 /// 订单确认输入

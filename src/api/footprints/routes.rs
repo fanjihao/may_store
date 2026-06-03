@@ -1,296 +1,542 @@
 // API - 足迹路由
 // FSD.latest.md compliant - 组内足迹、纪念内容、图片
+// FSD v2: 路径为 /api/groups/{group_id}/footprints
 
 use ntex::web::{
     self,
     types::{Json, Path, Query, State},
     HttpResponse, Responder, ServiceConfig,
 };
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
+use sqlx::Row;
 use std::sync::Arc;
 use utoipa::ToSchema;
 
-use crate::application::footprint_service::FootprintService;
 use crate::config::AppState;
-use crate::domain::footprint::{RecordCreateInput, RecordGroup, RecordOut, RecordQuery, RecordUpdateInput};
 use crate::errors::CustomError;
 use crate::middlewares::auth::UserToken;
-use crate::models::pagination::CursorPage;
 
 /// 配置足迹路由
+/// FSD v2: 路径为 /api/groups/{group_id}/footprints
 pub fn configure(cfg: &mut ServiceConfig) {
     cfg.service(
-        web::scope("/api/footprints")
-            .route("/groups", web::get().to(list_record_groups))
-            .route("/records", web::post().to(create_record))
-            .route("/records/submit", web::post().to(submit_record))
-            .route("/records/{record_id}", web::get().to(get_record))
-            .route("/records/{record_id}", web::put().to(update_record))
-            .route("/records/{record_id}", web::delete().to(delete_record))
-            .route("/records/list", web::get().to(list_records))
-            .route("/overview", web::get().to(get_overview)),
+        web::scope("/api/groups/{group_id}/footprints")
+            // 足迹列表
+            .route("", web::get().to(list_footprints))
+            // 发布足迹
+            .route("", web::post().to(create_footprint))
+            // 删除足迹
+            .route("/{footprint_id}", web::delete().to(delete_footprint))
+            // 扩容足迹容量
+            .route("/capacity/expand", web::post().to(expand_capacity)),
     );
 }
 
 // ========== 响应结构 ==========
 
-/// 足迹概览响应
+/// 足迹项 (FSD v2 10.2)
 #[derive(Debug, Serialize, ToSchema)]
-pub struct FootprintOverviewResponse {
-    pub together_days: i32,
-    pub total_feedings: i32,
-    pub streak_days: i32,
-    pub total_records: i32,
-    pub streak_progress: f32,
-    pub feeding_text: String,
-    pub diamond_balance: i32,
-    pub footprint_capacity: i32,
-    pub footprint_count: i32,
+#[serde(rename_all = "camelCase")]
+pub struct FootprintItem {
+    pub footprint_id: i64,
+    pub user_id: i64,
+    pub user_nickname: Option<String>,
+    pub user_avatar: Option<String>,
+    pub content: String,
+    pub location: Option<String>,
+    pub images: Option<serde_json::Value>,
+    pub related_order_id: Option<i64>,
+    pub related_wish_id: Option<i64>,
+    pub created_at: chrono::DateTime<chrono::Utc>,
 }
 
-/// 足迹分组列表响应
+/// 足迹列表响应
 #[derive(Debug, Serialize, ToSchema)]
-pub struct RecordGroupsResponse {
-    pub items: Vec<RecordGroup>,
+pub struct FootprintsListResponse {
+    pub footprints: Vec<FootprintItem>,
+    pub next_cursor: Option<String>,
+    pub has_more: bool,
+    pub total_count: Option<i64>,
+    pub capacity: Option<i32>,
+}
+
+/// 发布足迹响应 (FSD v2 10.1)
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct CreateFootprintResponse {
+    pub footprint_id: i64,
+    pub group_id: i64,
+    pub user_id: i64,
+    pub content: String,
+    pub location: Option<String>,
+    pub images: Option<serde_json::Value>,
+    pub related_order_id: Option<i64>,
+    pub related_wish_id: Option<i64>,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+}
+
+/// 扩容容量响应 (FSD v2 10.4)
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ExpandCapacityResponse {
+    pub group_id: i64,
+    pub old_capacity: i32,
+    pub new_capacity: i32,
+    pub diamond_cost: i32,
+    pub diamond_balance_after: i32,
+}
+
+// ========== 请求结构 ==========
+
+/// 发布足迹请求 (FSD v2 10.1)
+#[derive(Debug, Deserialize, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct CreateFootprintRequest {
+    pub content: String,
+    pub location: Option<String>,
+    pub images: Option<Vec<ImageItem>>,
+    pub related_order_id: Option<i64>,
+    pub related_wish_id: Option<i64>,
+    pub idempotency_key: String,
+}
+
+/// 图片项
+#[derive(Debug, Deserialize, Serialize, ToSchema)]
+pub struct ImageItem {
+    pub url: String,
+    pub width: Option<i32>,
+    pub height: Option<i32>,
+}
+
+/// 扩容容量请求 (FSD v2 10.4)
+#[derive(Debug, Deserialize, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ExpandCapacityRequest {
+    pub expand_by: i32,
+    pub idempotency_key: String,
+}
+
+/// 足迹列表查询参数 (FSD v2 10.2)
+#[derive(Debug, Deserialize, utoipa::IntoParams)]
+pub struct FootprintsQuery {
+    pub cursor: Option<String>,
+    pub limit: Option<i32>,
+    pub user_id: Option<i64>,
 }
 
 // ========== 处理器 ==========
 
-/// 获取足迹概览
-/// GET /api/footprints/overview?group_id=xxx
+/// 发布足迹
+/// POST /api/groups/{group_id}/footprints
+/// FSD v2 10.1
 #[utoipa::path(
-    get,
-    path = "/api/footprints/overview",
+    post,
+    path = "/api/groups/{group_id}/footprints",
     tag = "足迹",
     params(
-        ("group_id" = i64, Query, description = "小组ID")
+        ("group_id" = i64, Path, description = "组ID")
     ),
+    request_body = CreateFootprintRequest,
     responses(
-        (status = 200, description = "获取成功", body = FootprintOverviewResponse),
+        (status = 201, description = "发布成功", body = CreateFootprintResponse),
+        (status = 400, description = "参数错误或容量已满"),
         (status = 401, description = "未登录"),
+        (status = 403, description = "非组成员"),
         (status = 500, description = "服务器错误")
     ),
     security(("cookie_auth" = []))
 )]
-pub async fn get_overview(
+pub async fn create_footprint(
     state: State<Arc<AppState>>,
     token: UserToken,
-    query: Query<FootprintOverviewQuery>,
+    group_id: Path<i64>,
+    body: Json<CreateFootprintRequest>,
 ) -> Result<impl Responder, CustomError> {
-    let overview = FootprintService::get_overview(&state.db_pool, token.user_id, query.group_id).await?;
-    Ok(HttpResponse::Ok().json(&FootprintOverviewResponse {
-        together_days: overview.together_days,
-        total_feedings: overview.total_feedings,
-        streak_days: overview.streak_days,
-        total_records: overview.total_records,
-        streak_progress: overview.streak_progress,
-        feeding_text: overview.feeding_text,
-        diamond_balance: overview.diamond_balance,
-        footprint_capacity: overview.footprint_capacity,
-        footprint_count: overview.footprint_count,
+    let gid = *group_id;
+    let input = body.into_inner();
+    let db = &state.db_pool;
+    let user_id = token.user_id;
+
+    // 检查用户是否是组成员
+    let is_member: bool = sqlx::query_scalar::<_, bool>(
+        "SELECT EXISTS(SELECT 1 FROM association_group_members WHERE group_id=$1 AND user_id=$2 AND member_status='ACTIVE')",
+    )
+    .bind(gid)
+    .bind(user_id)
+    .fetch_one(db)
+    .await?;
+
+    if !is_member {
+        return Err(CustomError::Forbidden("非组成员".into()));
+    }
+
+    // 检查容量
+    let (current_count, capacity): (i64, i32) = sqlx::query_as(
+        r#"SELECT COUNT(*), COALESCE(g.footprint_capacity, 50)
+           FROM association_groups g
+           LEFT JOIN footprints f ON f.group_id = g.group_id
+           WHERE g.group_id = $1"#,
+    )
+    .bind(gid)
+    .fetch_one(db)
+    .await?;
+
+    if current_count >= capacity as i64 {
+        return Err(CustomError::BadRequest("足迹容量已满".into()));
+    }
+
+    // 验证 content 长度
+    if input.content.chars().count() > 500 {
+        return Err(CustomError::BadRequest("内容最多500字符".into()));
+    }
+
+    // 验证图片数量
+    if let Some(ref images) = input.images {
+        if images.len() > 9 {
+            return Err(CustomError::BadRequest("最多9张图片".into()));
+        }
+    }
+
+    // 将 images 序列化为 JSON 字符串
+    let images_json = input
+        .images
+        .as_ref()
+        .map(|imgs| serde_json::to_string(imgs).unwrap_or_else(|_| "[]".to_string()));
+
+    // 插入足迹记录
+    let footprint_id: i64 = sqlx::query_scalar(
+        r#"
+        INSERT INTO footprints (group_id, user_id, content, location, images,
+                               related_order_id, related_wish_id, idempotency_key, created_at)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())
+        RETURNING footprint_id
+        "#,
+    )
+    .bind(gid)
+    .bind(user_id)
+    .bind(&input.content)
+    .bind(&input.location)
+    .bind(&images_json)
+    .bind(input.related_order_id)
+    .bind(input.related_wish_id)
+    .bind(&input.idempotency_key)
+    .fetch_one(db)
+    .await?;
+
+    Ok(HttpResponse::Created().json(&CreateFootprintResponse {
+        footprint_id,
+        group_id: gid,
+        user_id,
+        content: input.content,
+        location: input.location,
+        images: input.images.map(|imgs| {
+            serde_json::json!(imgs
+                .iter()
+                .map(|i| serde_json::json!({
+                    "url": i.url,
+                    "width": i.width,
+                    "height": i.height
+                }))
+                .collect::<Vec<_>>())
+        }),
+        related_order_id: input.related_order_id,
+        related_wish_id: input.related_wish_id,
+        created_at: chrono::Utc::now(),
     }))
 }
 
-/// 足迹概览查询参数
-#[derive(Debug, Deserialize, utoipa::IntoParams)]
-pub struct FootprintOverviewQuery {
-    pub group_id: i64,
-}
-
-/// 获取足迹分组列表
-/// GET /api/footprints/groups?group_id=xxx
+/// 获取足迹列表
+/// GET /api/groups/{group_id}/footprints
+/// FSD v2 10.2
 #[utoipa::path(
     get,
-    path = "/api/footprints/groups",
+    path = "/api/groups/{group_id}/footprints",
     tag = "足迹",
     params(
-        ("group_id" = i64, Query, description = "小组ID")
+        ("group_id" = i64, Path, description = "组ID"),
+        FootprintsQuery
     ),
     responses(
-        (status = 200, description = "获取成功", body = RecordGroupsResponse),
+        (status = 200, description = "获取成功", body = FootprintsListResponse),
         (status = 401, description = "未登录"),
+        (status = 403, description = "非组成员"),
         (status = 500, description = "服务器错误")
     ),
     security(("cookie_auth" = []))
 )]
-pub async fn list_record_groups(
-    state: State<Arc<AppState>>,
-    query: Query<FootprintOverviewQuery>,
-) -> Result<impl Responder, CustomError> {
-    let groups = FootprintService::list_record_groups(&state.db_pool, query.group_id).await?;
-    Ok(HttpResponse::Ok().json(&RecordGroupsResponse { items: groups }))
-}
-
-/// 创建足迹记录（草稿）
-/// POST /api/footprints/records
-#[utoipa::path(
-    post,
-    path = "/api/footprints/records",
-    tag = "足迹",
-    request_body = RecordCreateInput,
-    responses(
-        (status = 201, description = "创建成功", body = RecordOut),
-        (status = 400, description = "参数错误"),
-        (status = 401, description = "未登录"),
-        (status = 500, description = "服务器错误")
-    ),
-    security(("cookie_auth" = []))
-)]
-pub async fn create_record(
+pub async fn list_footprints(
     state: State<Arc<AppState>>,
     token: UserToken,
-    input: Json<RecordCreateInput>,
+    group_id: Path<i64>,
+    query: Query<FootprintsQuery>,
 ) -> Result<impl Responder, CustomError> {
-    let record_id = FootprintService::create_record(&state.db_pool, token.user_id, &input).await?;
-    let record = FootprintService::get_record(&state.db_pool, token.user_id, input.record_group_id, record_id).await?;
-    Ok(HttpResponse::Ok().json(&record))
+    let gid = *group_id;
+    let db = &state.db_pool;
+    let user_id = token.user_id;
+    let limit = query.limit.unwrap_or(20).min(100);
+
+    // 检查用户是否是组成员
+    let is_member: bool = sqlx::query_scalar::<_, bool>(
+        "SELECT EXISTS(SELECT 1 FROM association_group_members WHERE group_id=$1 AND user_id=$2 AND member_status='ACTIVE')",
+    )
+    .bind(gid)
+    .bind(user_id)
+    .fetch_one(db)
+    .await?;
+
+    if !is_member {
+        return Err(CustomError::Forbidden("非组成员".into()));
+    }
+
+    // 构建筛选条件
+    let user_filter = if let Some(uid) = query.user_id {
+        format!("AND f.user_id = {}", uid)
+    } else {
+        String::new()
+    };
+
+    let cursor_filter = if let Some(ref cursor) = query.cursor {
+        format!("AND f.footprint_id < {}", cursor)
+    } else {
+        String::new()
+    };
+
+    // 获取足迹列表
+    let sql = format!(
+        r#"
+        SELECT f.footprint_id, f.user_id, f.content, f.location, f.images,
+               f.related_order_id, f.related_wish_id, f.created_at,
+               u.nick_name as user_nickname, u.avatar_url as user_avatar
+        FROM footprints f
+        JOIN users u ON u.user_id = f.user_id
+        WHERE f.group_id = $1 {} {}
+        ORDER BY f.created_at DESC
+        LIMIT $2
+        "#,
+        user_filter, cursor_filter
+    );
+
+    let rows = sqlx::query(&sql)
+        .bind(gid)
+        .bind(limit + 1)
+        .fetch_all(db)
+        .await?;
+
+    let has_more = rows.len() > limit as usize;
+
+    let footprints: Vec<FootprintItem> = rows
+        .iter()
+        .take(limit as usize)
+        .map(|r| {
+            let created_at: chrono::DateTime<chrono::Utc> = r.get("created_at");
+            FootprintItem {
+                footprint_id: r.get("footprint_id"),
+                user_id: r.get("user_id"),
+                user_nickname: r.get("user_nickname"),
+                user_avatar: r.get("user_avatar"),
+                content: r.get("content"),
+                location: r.get("location"),
+                images: r.get("images"),
+                related_order_id: r.get("related_order_id"),
+                related_wish_id: r.get("related_wish_id"),
+                created_at,
+            }
+        })
+        .collect();
+
+    let next_cursor = if has_more {
+        footprints.last().map(|f| f.footprint_id.to_string())
+    } else {
+        None
+    };
+
+    // 获取总数和容量
+    let (total_count, capacity): (i64, i32) = sqlx::query_as(
+        r#"SELECT COUNT(*), COALESCE(g.footprint_capacity, 50)
+           FROM association_groups g
+           LEFT JOIN footprints f ON f.group_id = g.group_id
+           WHERE g.group_id = $1"#,
+    )
+    .bind(gid)
+    .fetch_one(db)
+    .await?;
+
+    Ok(HttpResponse::Ok().json(&FootprintsListResponse {
+        footprints,
+        next_cursor,
+        has_more,
+        total_count: Some(total_count),
+        capacity: Some(capacity),
+    }))
 }
 
-/// 提交足迹记录（正式发布）
-/// POST /api/footprints/records/submit
-#[utoipa::path(
-    post,
-    path = "/api/footprints/records/submit",
-    tag = "足迹",
-    request_body = RecordCreateInput,
-    responses(
-        (status = 201, description = "提交成功", body = RecordOut),
-        (status = 400, description = "容量已满或其他错误"),
-        (status = 401, description = "未登录"),
-        (status = 500, description = "服务器错误")
-    ),
-    security(("cookie_auth" = []))
-)]
-pub async fn submit_record(
-    state: State<Arc<AppState>>,
-    token: UserToken,
-    input: Json<RecordCreateInput>,
-) -> Result<impl Responder, CustomError> {
-    let group_id = input.record_group_id;
-    let record_id = FootprintService::submit_record(&state.db_pool, token.user_id, group_id, input.into_inner()).await?;
-    let record = FootprintService::get_record(&state.db_pool, token.user_id, group_id, record_id).await?;
-    Ok(HttpResponse::Ok().json(&record))
-}
-
-/// 获取足迹记录详情
-/// GET /api/footprints/records/{record_id}?group_id=xxx
-#[utoipa::path(
-    get,
-    path = "/api/footprints/records/{record_id}",
-    tag = "足迹",
-    params(
-        ("record_id" = i64, Path, description = "记录ID"),
-        ("group_id" = i64, Query, description = "小组ID")
-    ),
-    responses(
-        (status = 200, description = "获取成功", body = RecordOut),
-        (status = 401, description = "未登录"),
-        (status = 404, description = "记录不存在"),
-        (status = 500, description = "服务器错误")
-    ),
-    security(("cookie_auth" = []))
-)]
-pub async fn get_record(
-    state: State<Arc<AppState>>,
-    token: UserToken,
-    path: Path<i64>,
-    query: Query<FootprintOverviewQuery>,
-) -> Result<impl Responder, CustomError> {
-    let record_id = path.into_inner();
-    let record = FootprintService::get_record(&state.db_pool, token.user_id, query.group_id, record_id).await?;
-    Ok(HttpResponse::Ok().json(&record))
-}
-
-/// 更新足迹记录
-/// PUT /api/footprints/records/{record_id}
-#[utoipa::path(
-    put,
-    path = "/api/footprints/records/{record_id}",
-    tag = "足迹",
-    params(
-        ("record_id" = i64, Path, description = "记录ID")
-    ),
-    request_body = RecordUpdateInput,
-    responses(
-        (status = 200, description = "更新成功"),
-        (status = 401, description = "未登录"),
-        (status = 403, description = "无权修改"),
-        (status = 404, description = "记录不存在"),
-        (status = 500, description = "服务器错误")
-    ),
-    security(("cookie_auth" = []))
-)]
-pub async fn update_record(
-    state: State<Arc<AppState>>,
-    token: UserToken,
-    path: Path<i64>,
-    input: Json<RecordUpdateInput>,
-) -> Result<impl Responder, CustomError> {
-    let record_id = path.into_inner();
-    FootprintService::update_record(&state.db_pool, token.user_id, record_id, input.into_inner()).await?;
-    Ok(HttpResponse::Ok().json(&serde_json::json!({"status": "ok"})))
-}
-
-/// 删除足迹记录
-/// DELETE /api/footprints/records/{record_id}?group_id=xxx
+/// 删除足迹
+/// DELETE /api/groups/{group_id}/footprints/{footprint_id}
+/// FSD v2 10.3
 #[utoipa::path(
     delete,
-    path = "/api/footprints/records/{record_id}",
+    path = "/api/groups/{group_id}/footprints/{footprint_id}",
     tag = "足迹",
     params(
-        ("record_id" = i64, Path, description = "记录ID"),
-        ("group_id" = i64, Query, description = "小组ID")
+        ("group_id" = i64, Path, description = "组ID"),
+        ("footprint_id" = i64, Path, description = "足迹ID")
     ),
     responses(
         (status = 200, description = "删除成功"),
         (status = 401, description = "未登录"),
         (status = 403, description = "无权删除"),
-        (status = 404, description = "记录不存在"),
+        (status = 404, description = "足迹不存在"),
         (status = 500, description = "服务器错误")
     ),
     security(("cookie_auth" = []))
 )]
-pub async fn delete_record(
+pub async fn delete_footprint(
     state: State<Arc<AppState>>,
     token: UserToken,
-    path: Path<i64>,
-    _query: Query<FootprintOverviewQuery>,
+    path: Path<(i64, i64)>,
 ) -> Result<impl Responder, CustomError> {
-    let record_id = path.into_inner();
-    FootprintService::delete_record(&state.db_pool, token.user_id, record_id).await?;
-    Ok(HttpResponse::Ok().json(&serde_json::json!({"status": "ok"})))
+    let (gid, footprint_id) = *path;
+    let db = &state.db_pool;
+    let user_id = token.user_id;
+
+    // 检查用户是否是组成员
+    let is_member: bool = sqlx::query_scalar::<_, bool>(
+        "SELECT EXISTS(SELECT 1 FROM association_group_members WHERE group_id=$1 AND user_id=$2 AND member_status='ACTIVE')",
+    )
+    .bind(gid)
+    .bind(user_id)
+    .fetch_one(db)
+    .await?;
+
+    if !is_member {
+        return Err(CustomError::Forbidden("非组成员".into()));
+    }
+
+    // 检查是否是创建者（仅创建者可删除）
+    let is_owner: bool = sqlx::query_scalar::<_, bool>(
+        "SELECT EXISTS(SELECT 1 FROM footprints WHERE footprint_id=$1 AND user_id=$2)",
+    )
+    .bind(footprint_id)
+    .bind(user_id)
+    .fetch_one(db)
+    .await?;
+
+    if !is_owner {
+        return Err(CustomError::Forbidden("无权删除此足迹".into()));
+    }
+
+    // 删除足迹
+    let result = sqlx::query("DELETE FROM footprints WHERE footprint_id = $1")
+        .bind(footprint_id)
+        .execute(db)
+        .await?;
+
+    if result.rows_affected() == 0 {
+        return Err(CustomError::NotFound("足迹不存在".into()));
+    }
+
+    #[derive(Serialize)]
+    struct OkResponse {
+        status: String,
+    }
+    Ok(HttpResponse::Ok().json(&OkResponse {
+        status: "ok".to_string(),
+    }))
 }
 
-/// 获取足迹记录列表
-/// GET /api/footprints/records/list
+/// 扩容足迹容量
+/// POST /api/groups/{group_id}/footprints/capacity/expand
+/// FSD v2 10.4
 #[utoipa::path(
-    get,
-    path = "/api/footprints/records/list",
+    post,
+    path = "/api/groups/{group_id}/footprints/capacity/expand",
     tag = "足迹",
     params(
-        ("group_id" = i64, Query, description = "小组ID"),
-        ("record_group_id" = Option<i64>, Query, description = "分组ID"),
-        ("limit" = Option<i64>, Query, description = "每页数量"),
-        ("cursor" = Option<String>, Query, description = "游标")
+        ("group_id" = i64, Path, description = "组ID")
     ),
+    request_body = ExpandCapacityRequest,
     responses(
-        (status = 200, description = "获取成功", body = CursorPage<RecordOut>),
+        (status = 200, description = "扩容成功", body = ExpandCapacityResponse),
+        (status = 400, description = "参数错误"),
         (status = 401, description = "未登录"),
+        (status = 403, description = "非组成员或钻石不足"),
         (status = 500, description = "服务器错误")
     ),
     security(("cookie_auth" = []))
 )]
-pub async fn list_records(
+pub async fn expand_capacity(
     state: State<Arc<AppState>>,
     token: UserToken,
-    query: Query<RecordQuery>,
+    group_id: Path<i64>,
+    body: Json<ExpandCapacityRequest>,
 ) -> Result<impl Responder, CustomError> {
-    let records = FootprintService::list_records(
-        &state.db_pool,
-        token.user_id,
-        query.group_id,
-        query.record_group_id,
-        query.clone(),
-    ).await?;
-    Ok(HttpResponse::Ok().json(&records))
+    let gid = *group_id;
+    let input = body.into_inner();
+    let db = &state.db_pool;
+    let user_id = token.user_id;
+
+    // 检查用户是否是组成员
+    let is_member: bool = sqlx::query_scalar::<_, bool>(
+        "SELECT EXISTS(SELECT 1 FROM association_group_members WHERE group_id=$1 AND user_id=$2 AND member_status='ACTIVE')",
+    )
+    .bind(gid)
+    .bind(user_id)
+    .fetch_one(db)
+    .await?;
+
+    if !is_member {
+        return Err(CustomError::Forbidden("非组成员".into()));
+    }
+
+    // 获取组当前钻石和容量
+    let (current_diamond, current_capacity): (i32, i32) = sqlx::query_as(
+        "SELECT diamond_balance, COALESCE(footprint_capacity, 50) FROM association_groups WHERE group_id = $1"
+    )
+    .bind(gid)
+    .fetch_optional(db)
+    .await?
+    .unwrap_or((0, 50));
+
+    // 简化：每扩容1个容量需要1钻石
+    let diamond_cost = input.expand_by;
+    let new_capacity = current_capacity + input.expand_by;
+
+    if current_diamond < diamond_cost {
+        return Err(CustomError::Forbidden("组钻石不足".into()));
+    }
+
+    // 扣除钻石并更新容量
+    sqlx::query(
+        r#"UPDATE association_groups
+           SET diamond_balance = diamond_balance - $1,
+               footprint_capacity = $2,
+               updated_at = NOW()
+           WHERE group_id = $3"#,
+    )
+    .bind(diamond_cost)
+    .bind(new_capacity)
+    .bind(gid)
+    .execute(db)
+    .await?;
+
+    // 写钻石流水
+    let idempotency_key = format!("footprint_expand_{}_{}", gid, input.idempotency_key);
+    sqlx::query(
+        r#"INSERT INTO diamond_transactions (group_id, type, amount, balance_before, balance_after, biz_type, idempotency_key, created_at)
+           VALUES ($1, 'CONSUME', $2, $3, $3 - $2, 'FOOTPRINT_CAPACITY_EXPANSION', $4, NOW())"#
+    )
+    .bind(gid)
+    .bind(diamond_cost)
+    .bind(current_diamond)
+    .bind(&idempotency_key)
+    .execute(db)
+    .await?;
+
+    Ok(HttpResponse::Ok().json(&ExpandCapacityResponse {
+        group_id: gid,
+        old_capacity: current_capacity,
+        new_capacity,
+        diamond_cost,
+        diamond_balance_after: current_diamond - diamond_cost,
+    }))
 }

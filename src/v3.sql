@@ -266,8 +266,9 @@ COMMENT ON COLUMN association_groups.updated_at IS '更新时间';
 CREATE INDEX idx_groups_buyer ON association_groups(buyer_user_id);
 CREATE INDEX idx_groups_seller ON association_groups(seller_user_id);
 
--- ================= GROUP MEMBERS =================
-CREATE TABLE group_members (
+-- ================= ASSOCIATION GROUP MEMBERS =================
+-- Note: Table named association_group_members to match code conventions (FSD 11.4 uses group_members)
+CREATE TABLE association_group_members (
     id BIGSERIAL PRIMARY KEY,
     group_id BIGINT NOT NULL REFERENCES association_groups(group_id) ON DELETE CASCADE,
     user_id BIGINT NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
@@ -277,16 +278,16 @@ CREATE TABLE group_members (
     joined_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     UNIQUE (group_id, user_id)
 );
-COMMENT ON TABLE group_members IS '组成员';
-COMMENT ON COLUMN group_members.id IS '成员记录主键';
-COMMENT ON COLUMN group_members.group_id IS '关联组ID';
-COMMENT ON COLUMN group_members.user_id IS '用户ID';
-COMMENT ON COLUMN group_members.role_in_group IS '组内角色';
-COMMENT ON COLUMN group_members.member_status IS '成员状态：ACTIVE/LEFT';
-COMMENT ON COLUMN group_members.is_primary IS '是否主成员标记';
-COMMENT ON COLUMN group_members.joined_at IS '添加时间';
-CREATE INDEX idx_gm_user_status ON group_members(user_id, member_status);
-CREATE INDEX idx_gm_group_status ON group_members(group_id, member_status);
+COMMENT ON TABLE association_group_members IS '组成员';
+COMMENT ON COLUMN association_group_members.id IS '成员记录主键';
+COMMENT ON COLUMN association_group_members.group_id IS '关联组ID';
+COMMENT ON COLUMN association_group_members.user_id IS '用户ID';
+COMMENT ON COLUMN association_group_members.role_in_group IS '组内角色';
+COMMENT ON COLUMN association_group_members.member_status IS '成员状态：ACTIVE/LEFT';
+COMMENT ON COLUMN association_group_members.is_primary IS '是否主成员标记';
+COMMENT ON COLUMN association_group_members.joined_at IS '添加时间';
+CREATE INDEX idx_gm_user_status ON association_group_members(user_id, member_status);
+CREATE INDEX idx_gm_group_status ON association_group_members(group_id, member_status);
 
 -- ================= USER GROUP POINTS =================
 CREATE TABLE user_group_points (
@@ -459,6 +460,7 @@ CREATE TABLE orders (
     guest_mark_tags JSONB DEFAULT '[]',
     -- Reward fields
     points_reward INT NOT NULL DEFAULT 0,
+    group_exp_reward INT NOT NULL DEFAULT 0,
     point_grant_status point_grant_status_enum DEFAULT 'NONE',
     exp_grant_status exp_grant_status_enum DEFAULT 'NONE',
     -- Risk fields

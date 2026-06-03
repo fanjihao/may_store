@@ -24,11 +24,17 @@ pub fn configure(cfg: &mut ServiceConfig) {
     cfg.service(
         web::scope("/api/groups")
             .route("", web::post().to(create_group))
+            .route("/join", web::post().to(join_group))
             .route("/{group_id}", web::get().to(get_group))
             .route("/{group_id}/swap-role", web::post().to(swap_role))
+            .route("/{group_id}/exit", web::post().to(exit_group))
             .route(
                 "/{group_id}/settlement-check",
                 web::get().to(settlement_check),
+            )
+            .route(
+                "/{group_id}/members",
+                web::get().to(get_group_members),
             )
             .route(
                 "/{group_id}/fulfillment-stats",
@@ -918,6 +924,342 @@ async fn create_group_wish(
     })))
 }
 
+// ============== FSD v2 新增端点 ==============
+
+/// 通过邀请码加入组
+/// POST /api/groups/join
+///
+/// 受邀者自动成为 Seller，加入后更新组的 seller_user_id
+#[utoipa::path(
+    post,
+    path = "/api/groups/join",
+    tag = "双人组",
+    request_body = JoinGroupInput,
+    responses(
+        (status = 200, description = "加入成功"),
+        (status = 400, description = "邀请码无效或已过期"),
+        (status = 400, description = "组已满2人"),
+        (status = 403, description = "已在其他组")
+    ),
+    security(("cookie_auth" = []))
+)]
+async fn join_group(
+    token: UserToken,
+    state: State<Arc<AppState>>,
+    body: Json<JoinGroupInput>,
+) -> Result<HttpResponse, CustomError> {
+    let db = &state.db_pool;
+    let input = body.into_inner();
+
+    // 检查用户是否已在组中
+    let existing: Option<(i64,)> = sqlx::query_as(
+        "SELECT group_id FROM association_group_members WHERE user_id = $1 AND member_status = 'ACTIVE'",
+    )
+    .bind(token.user_id)
+    .fetch_optional(db)
+    .await?;
+
+    if existing.is_some() {
+        return Err(CustomError::BadRequest("您已在其他组中".into()));
+    }
+
+    // 查找邀请码对应的邀请记录
+    let invite: Option<(i64, chrono::DateTime<chrono::Utc>, i32, i32)> = sqlx::query_as(
+        r#"SELECT group_id, expires_at, max_uses, used_count
+           FROM guest_invitations
+           WHERE invite_code = $1 AND status = 'ACTIVE'"#
+    )
+    .bind(&input.invite_code)
+    .fetch_optional(db)
+    .await?;
+
+    let (group_id, expires_at, max_uses, used_count) = match invite {
+        Some(inv) => inv,
+        None => return Err(CustomError::BadRequest("邀请码无效或已过期".into())),
+    };
+
+    // 检查是否过期
+    if Utc::now() > expires_at {
+        return Err(CustomError::BadRequest("邀请码已过期".into()));
+    }
+
+    // 检查使用次数
+    if used_count >= max_uses {
+        return Err(CustomError::BadRequest("邀请码已使用".into()));
+    }
+
+    // 检查组是否已满
+    let member_count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM association_group_members WHERE group_id=$1 AND member_status='ACTIVE'"
+    )
+    .bind(group_id)
+    .fetch_one(db)
+    .await?;
+
+    if member_count >= 2 {
+        return Err(CustomError::BadRequest("组已满2人，无法加入".into()));
+    }
+
+    let mut tx = db.begin().await?;
+
+    // 加入组成员
+    sqlx::query(
+        r#"INSERT INTO association_group_members (user_id, group_id, role_in_group, is_primary, member_status, joined_at)
+           VALUES ($1, $2, 'RECEIVING', false, 'ACTIVE', $3)"#
+    )
+    .bind(token.user_id)
+    .bind(group_id)
+    .bind(Utc::now())
+    .execute(&mut *tx)
+    .await?;
+
+    // 更新组的 seller_user_id
+    sqlx::query(
+        "UPDATE association_groups SET seller_user_id=$1, updated_at=NOW() WHERE group_id=$2"
+    )
+    .bind(token.user_id)
+    .bind(group_id)
+    .execute(&mut *tx)
+    .await?;
+
+    // 更新邀请码使用次数
+    sqlx::query(
+        "UPDATE guest_invitations SET used_count=used_count+1 WHERE invite_code=$1"
+    )
+    .bind(&input.invite_code)
+    .execute(&mut *tx)
+    .await?;
+
+    tx.commit().await?;
+
+    Ok(HttpResponse::Ok().json(&serde_json::json!({
+        "groupId": group_id,
+        "role": "SELLER",
+        "status": "ok"
+    })))
+}
+
+/// 退出双人组
+/// POST /api/groups/{group_id}/exit
+///
+/// 退出前必须通过结清检查（无未完结心愿、无冻结积分）
+#[utoipa::path(
+    post,
+    path = "/api/groups/{group_id}/exit",
+    tag = "双人组",
+    params(
+        ("group_id" = i64, Path, description = "组ID")
+    ),
+    responses(
+        (status = 200, description = "退出成功"),
+        (status = 400, description = "仍有未结清订单/心愿/冻结积分"),
+        (status = 403, description = "无权访问该组")
+    ),
+    security(("cookie_auth" = []))
+)]
+async fn exit_group(
+    token: UserToken,
+    state: State<Arc<AppState>>,
+    group_id: Path<i64>,
+) -> Result<HttpResponse, CustomError> {
+    let db = &state.db_pool;
+    let gid = group_id.into_inner();
+
+    // 检查用户是否是组成员
+    let is_member: bool = sqlx::query_scalar::<_, bool>(
+        "SELECT EXISTS(SELECT 1 FROM association_group_members WHERE group_id=$1 AND user_id=$2 AND member_status='ACTIVE')",
+    )
+    .bind(gid)
+    .bind(token.user_id)
+    .fetch_one(db)
+    .await?;
+
+    if !is_member {
+        return Err(CustomError::Forbidden("无权访问该组".into()));
+    }
+
+    // 结清检查
+    let settlement = settlement_check_impl(db, gid, token.user_id).await?;
+    if !settlement.can_exit {
+        return Err(CustomError::BadRequest(settlement.reasons.join("; ").into()));
+    }
+
+    let mut tx = db.begin().await?;
+
+    // 获取用户角色
+    let user_role: Option<String> = sqlx::query_scalar(
+        "SELECT role_in_group FROM association_group_members WHERE group_id=$1 AND user_id=$2"
+    )
+    .bind(gid)
+    .bind(token.user_id)
+    .fetch_one(&mut *tx)
+    .await?;
+
+    // 更新组成员状态为 LEFT
+    sqlx::query(
+        "UPDATE association_group_members SET member_status='LEFT' WHERE group_id=$1 AND user_id=$2"
+    )
+    .bind(gid)
+    .bind(token.user_id)
+    .execute(&mut *tx)
+    .await?;
+
+    // 清空组的 buyer 或 seller 引用
+    if user_role.as_deref() == Some("ORDERING") {
+        sqlx::query("UPDATE association_groups SET buyer_user_id=NULL, updated_at=NOW() WHERE group_id=$1")
+            .bind(gid)
+            .execute(&mut *tx)
+            .await?;
+    } else {
+        sqlx::query("UPDATE association_groups SET seller_user_id=NULL, updated_at=NOW() WHERE group_id=$1")
+            .bind(gid)
+            .execute(&mut *tx)
+            .await?;
+    }
+
+    tx.commit().await?;
+
+    Ok(HttpResponse::Ok().json(&serde_json::json!({
+        "status": "ok"
+    })))
+}
+
+/// 获取组内成员列表
+/// GET /api/groups/{group_id}/members
+///
+/// 返回组成员详细信息和积分余额
+#[utoipa::path(
+    get,
+    path = "/api/groups/{group_id}/members",
+    tag = "双人组",
+    params(
+        ("group_id" = i64, Path, description = "组ID")
+    ),
+    responses(
+        (status = 200, description = "获取成功"),
+        (status = 403, description = "无权访问该组")
+    ),
+    security(("cookie_auth" = []))
+)]
+async fn get_group_members(
+    token: UserToken,
+    state: State<Arc<AppState>>,
+    group_id: Path<i64>,
+) -> Result<HttpResponse, CustomError> {
+    let db = &state.db_pool;
+    let gid = group_id.into_inner();
+
+    // 检查用户是否是组成员
+    let is_member: bool = sqlx::query_scalar::<_, bool>(
+        "SELECT EXISTS(SELECT 1 FROM association_group_members WHERE group_id=$1 AND user_id=$2 AND member_status='ACTIVE')",
+    )
+    .bind(gid)
+    .bind(token.user_id)
+    .fetch_one(db)
+    .await?;
+
+    if !is_member {
+        return Err(CustomError::Forbidden("无权访问该组".into()));
+    }
+
+    // 获取组成员列表
+    let members = sqlx::query(
+        r#"SELECT agm.user_id, agm.role_in_group, agm.joined_at,
+                  u.nick_name, u.avatar,
+                  COALESCE(ugp.available_love_point, 0) as available_love_point,
+                  COALESCE(ugp.frozen_love_point, 0) as frozen_love_point
+           FROM association_group_members agm
+           JOIN users u ON u.user_id = agm.user_id
+           LEFT JOIN user_group_points ugp ON ugp.user_id = agm.user_id AND ugp.group_id = agm.group_id
+           WHERE agm.group_id = $1 AND agm.member_status = 'ACTIVE'"#
+    )
+    .bind(gid)
+    .fetch_all(db)
+    .await?;
+
+    let result: Vec<serde_json::Value> = members
+        .iter()
+        .map(|r| {
+            serde_json::json!({
+                "userId": r.get::<i64, _>("user_id"),
+                "nickname": r.get::<Option<String>, _>("nick_name"),
+                "avatar": r.get::<Option<String>, _>("avatar"),
+                "role": r.get::<String, _>("role_in_group"),
+                "lovePointAvailable": r.get::<i64, _>("available_love_point"),
+                "lovePointFrozen": r.get::<i64, _>("frozen_love_point"),
+                "joinedAt": r.get::<chrono::DateTime<chrono::Utc>, _>("joined_at")
+            })
+        })
+        .collect();
+
+    Ok(HttpResponse::Ok().json(&result))
+}
+
+// 内部实现：结清检查
+async fn settlement_check_impl(
+    db: &sqlx::PgPool,
+    group_id: i64,
+    user_id: i64,
+) -> Result<SettlementCheckResult, CustomError> {
+    let mut reasons = Vec::new();
+
+    // 检查自己发起且未完结的心愿
+    let pending_initiated: i64 = sqlx::query_scalar::<_, Option<i64>>(
+        r#"SELECT COUNT(*) FROM wishes
+           WHERE group_id=$1 AND requester_id=$2 AND status NOT IN ('FINISHED', 'EXPIRED', 'CLOSED')"#
+    )
+    .bind(group_id)
+    .bind(user_id)
+    .fetch_one(db)
+    .await?
+    .unwrap_or(0);
+
+    // 检查自己作为履约人且未完结的心愿
+    let pending_as_fulfiller: i64 = sqlx::query_scalar::<_, Option<i64>>(
+        r#"SELECT COUNT(*) FROM wishes
+           WHERE group_id=$1 AND fulfiller_id=$2 AND status NOT IN ('FINISHED', 'EXPIRED', 'CLOSED')"#
+    )
+    .bind(group_id)
+    .bind(user_id)
+    .fetch_one(db)
+    .await?
+    .unwrap_or(0);
+
+    // 检查冻结爱心积分
+    let frozen_points: i64 = sqlx::query_scalar::<_, Option<i64>>(
+        r#"SELECT COALESCE(SUM(amount), 0) FROM love_point_transactions
+           WHERE user_id=$1 AND group_id=$2 AND type='FREEZE'"#
+    )
+    .bind(user_id)
+    .bind(group_id)
+    .fetch_one(db)
+    .await?
+    .unwrap_or(0);
+
+    let can_exit = pending_initiated == 0 && pending_as_fulfiller == 0 && frozen_points == 0;
+
+    if pending_initiated > 0 {
+        reasons.push(format!("存在{}个未完结的心愿", pending_initiated));
+    }
+    if pending_as_fulfiller > 0 {
+        reasons.push(format!("有{}个待履约心愿", pending_as_fulfiller));
+    }
+    if frozen_points > 0 {
+        reasons.push(format!("有{}冻结积分未处理", frozen_points));
+    }
+
+    Ok(SettlementCheckResult {
+        can_exit,
+        pending_orders: 0,
+        pending_wishes_initiated: pending_initiated as i32,
+        pending_wishes_as_fulfiller: pending_as_fulfiller as i32,
+        frozen_love_points: frozen_points,
+        pending_compensation: 0,
+        pending_diamond_reward: 0,
+        reasons,
+    })
+}
+
 // ============== FSD v2 请求结构体 ==============
 
 /// 组内创建订单输入
@@ -935,4 +1277,11 @@ pub struct GroupOrderInput {
 pub struct GroupWishInput {
     pub name: String,
     pub initial_cost: i32,
+}
+
+/// 通过邀请码加入组输入
+#[derive(Debug, Deserialize, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct JoinGroupInput {
+    pub invite_code: String,
 }

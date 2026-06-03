@@ -838,7 +838,17 @@ B 逾期未履约
 - 列表优先使用 cursor 分页。
 - 后台接口与用户接口权限隔离。
 
-### 13.2 核心 API 示例
+### 13.2 完整 API 文档
+
+API 设计文档分三部分，保存在 `docs/superpowers/specs/` 目录下：
+
+| 文档 | 模块 |
+|------|------|
+| `2026-06-03-api-design-part1.md` | auth、user、group、food、order |
+| `2026-06-03-api-design-part2.md` | wish、economy、sign_in、footprint、achievement |
+| `2026-06-03-api-design-part3.md` | notification、upload、admin、ws、dashboard |
+
+### 13.3 核心 API 速查表
 
 | 方法 | 路径 | 说明 |
 | --- | --- | --- |
