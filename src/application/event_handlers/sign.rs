@@ -52,9 +52,10 @@ pub async fn handle_sign_in(db: &PgPool, payload: &SignInPayload) -> Result<(), 
                 .get(0);
 
         sqlx::query(
-            "INSERT INTO group_diamond_flow (group_id, amount, balance, scene) VALUES ($1, $2, $3, 'sign')"
+            "INSERT INTO group_diamond_flow (group_id, type, diamond_num, balance_after, scene) VALUES ($1, $2, $3, $4, 'sign')"
         )
         .bind(gid)
+        .bind(1) // type 1 = earn for sign
         .bind(diamonds)
         .bind(new_balance)
         .execute(db)

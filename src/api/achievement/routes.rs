@@ -10,6 +10,7 @@ use utoipa::ToSchema;
 use crate::config::AppState;
 use crate::errors::CustomError;
 use crate::middlewares::auth::UserToken;
+use crate::utils::response::ApiResponse;
 
 /// 配置成就路由
 pub fn configure(cfg: &mut ServiceConfig) {
@@ -145,7 +146,7 @@ pub async fn get_achievements(
         })
         .collect();
 
-    Ok(HttpResponse::Ok().json(&AchievementsResponse { achievements }))
+    Ok(ApiResponse::success(AchievementsResponse { achievements }))
 }
 
 /// 获取成就墙
@@ -258,7 +259,7 @@ pub async fn get_achievement_wall(
         None
     };
 
-    Ok(HttpResponse::Ok().json(&AchievementWallResponse {
+    Ok(ApiResponse::success(AchievementWallResponse {
         total_achievements: total_count,
         unlocked_count,
         achievements,

@@ -3,7 +3,7 @@
 
 use ntex::web::{
     self,
-    types::{Json, Path, State},
+    types::{Json, Path, Query, State},
     HttpResponse, Responder, ServiceConfig,
 };
 use serde::{Deserialize, Serialize};
@@ -14,6 +14,7 @@ use utoipa::ToSchema;
 use crate::config::AppState;
 use crate::errors::CustomError;
 use crate::middlewares::auth::UserToken;
+use crate::utils::response::ApiResponse;
 
 /// 配置后台管理路由
 pub fn configure(cfg: &mut ServiceConfig) {
@@ -33,6 +34,24 @@ pub fn configure(cfg: &mut ServiceConfig) {
             .route(
                 "/orders/{order_id}/reward-review",
                 web::post().to(order_reward_review),
+            )
+            // FSD v2: 获取待审核订单列表
+            .route("/orders/pending-review", web::get().to(get_pending_review_orders))
+            // FSD v2: 审核风险订单
+            .route("/orders/{order_id}/review", web::post().to(review_order))
+            // FSD v2: 获取审计日志
+            .route("/audit-logs", web::get().to(get_audit_logs))
+            // FSD v2: 组级配置更新
+            .route("/groups/{group_id}/configs", web::patch().to(update_group_configs))
+            // FSD v2: 积分补偿
+            .route(
+                "/groups/{group_id}/points/compensate",
+                web::post().to(compensate_points),
+            )
+            // FSD v2: 钻石补偿
+            .route(
+                "/groups/{group_id}/diamonds/compensate",
+                web::post().to(compensate_diamonds),
             ),
     );
 }
@@ -171,7 +190,7 @@ pub async fn get_stats(
         "totalDiamonds": total_diamonds
     });
 
-    Ok(HttpResponse::Ok().json(&stats))
+    Ok(ApiResponse::success(stats))
 }
 
 /// 获取所有组列表
@@ -218,7 +237,7 @@ pub async fn list_groups(
         })
         .collect();
 
-    Ok(HttpResponse::Ok().json(&result))
+    Ok(ApiResponse::success(result))
 }
 
 /// 获取所有用户列表
@@ -267,7 +286,7 @@ pub async fn list_all_users(
         })
         .collect();
 
-    Ok(HttpResponse::Ok().json(&result))
+    Ok(ApiResponse::success(result))
 }
 
 /// 获取系统配置
@@ -304,7 +323,7 @@ pub async fn get_config(
         "defaultFootprintCapacity": 50
     });
 
-    Ok(HttpResponse::Ok().json(&config))
+    Ok(ApiResponse::success(config))
 }
 
 /// 更新系统配置
@@ -413,9 +432,7 @@ pub async fn update_config(
         .await?;
     }
 
-    println!("Admin config updated: {:?}", config);
-
-    Ok(HttpResponse::Ok().json(&serde_json::json!({"status": "ok"})))
+    Ok(ApiResponse::success(serde_json::json!({"status": "ok"})))
 }
 
 /// 心愿质量奖励审核
@@ -548,7 +565,7 @@ pub async fn wish_quality_reward(
         .await?;
     }
 
-    Ok(HttpResponse::Ok().json(&serde_json::json!({
+    Ok(ApiResponse::success(serde_json::json!({
         "wishId": wish_id,
         "qualityLevel": input.quality_level,
         "diamondReward": diamond_amount,
@@ -642,12 +659,7 @@ pub async fn order_reward_review(
         .await?;
     }
 
-    println!(
-        "Admin order reward review: order_id={}, point_approved={}, exp_approved={}",
-        order_id, input.approve_point, input.approve_exp
-    );
-
-    Ok(HttpResponse::Ok().json(&serde_json::json!({
+    Ok(ApiResponse::success(serde_json::json!({
         "orderId": order_id,
         "pointGrantStatusUpdated": point_status == "PENDING_REVIEW",
         "expGrantStatusUpdated": exp_status == "PENDING_REVIEW",
@@ -655,7 +667,554 @@ pub async fn order_reward_review(
     })))
 }
 
+/// 获取待审核订单列表
+/// GET /api/admin/orders/pending-review
+#[utoipa::path(
+    get,
+    path = "/admin/orders/pending-review",
+    tag = "后台管理",
+    params(
+        ("cursor" = Option<String>, Query, description = "游标分页"),
+        ("limit" = Option<i32>, Query, description = "每页数量"),
+        ("risk_status" = Option<String>, Query, description = "风险状态：SUSPECT/BLOCKED")
+    ),
+    responses(
+        (status = 200, description = "获取成功"),
+        (status = 401, description = "未登录"),
+        (status = 403, description = "无权限")
+    ),
+    security(("cookie_auth" = []))
+)]
+pub async fn get_pending_review_orders(
+    state: State<Arc<AppState>>,
+    token: UserToken,
+    query: Query<PendingReviewQuery>,
+) -> Result<impl Responder, CustomError> {
+    let is_admin = check_admin(&token)?;
+    if !is_admin {
+        return Err(CustomError::Forbidden("需要管理员权限".into()));
+    }
+
+    let db = &state.db_pool;
+    let limit = query.limit.unwrap_or(20);
+
+    let rows = sqlx::query(
+        r#"SELECT order_id, group_id, type, creator_id, status, risk_status, risk_detail,
+           love_point_reward, group_exp_reward, point_grant_status, exp_grant_status, created_at
+           FROM orders
+           WHERE point_grant_status = 'PENDING_REVIEW' OR exp_grant_status = 'PENDING_REVIEW'
+           ORDER BY created_at DESC
+           LIMIT $1"#,
+    )
+    .bind(limit)
+    .fetch_all(db)
+    .await?;
+
+    let orders: Vec<serde_json::Value> = rows
+        .into_iter()
+        .map(|r| {
+            serde_json::json!({
+                "orderId": r.get::<i64, _>("order_id"),
+                "groupId": r.get::<i64, _>("group_id"),
+                "type": r.get::<String, _>("type"),
+                "creatorId": r.get::<i64, _>("creator_id"),
+                "status": r.get::<String, _>("status"),
+                "riskStatus": r.get::<String, _>("risk_status"),
+                "riskDetail": r.get::<Option<serde_json::Value>, _>("risk_detail"),
+                "lovePointReward": r.get::<i32, _>("love_point_reward"),
+                "groupExpReward": r.get::<i32, _>("group_exp_reward"),
+                "pointGrantStatus": r.get::<String, _>("point_grant_status"),
+                "expGrantStatus": r.get::<String, _>("exp_grant_status"),
+                "createdAt": r.get::<chrono::DateTime<chrono::Utc>, _>("created_at").to_rfc3339()
+            })
+        })
+        .collect();
+
+    Ok(ApiResponse::success(serde_json::json!({
+        "code": 0,
+        "message": "success",
+        "data": { "orders": orders }
+    })))
+}
+
+/// 审核风险订单
+/// POST /api/admin/orders/{order_id}/review
+#[derive(Debug, Deserialize, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ReviewOrderInput {
+    pub action: String,         // APPROVE=批准发放，REJECT=拒绝发放
+    pub point_grant_status: Option<String>, // APPROVE时可设置：GRANTED/REJECTED
+    pub exp_grant_status: Option<String>,
+    pub remark: Option<String>,
+}
+
+#[utoipa::path(
+    post,
+    path = "/admin/orders/{order_id}/review",
+    tag = "后台管理",
+    params(
+        ("order_id" = i64, Path, description = "订单ID")
+    ),
+    request_body = ReviewOrderInput,
+    responses(
+        (status = 200, description = "审核成功"),
+        (status = 401, description = "未登录"),
+        (status = 403, description = "无权限"),
+        (status = 404, description = "订单不存在")
+    ),
+    security(("cookie_auth" = []))
+)]
+pub async fn review_order(
+    state: State<Arc<AppState>>,
+    token: UserToken,
+    path: Path<i64>,
+    body: Json<ReviewOrderInput>,
+) -> Result<impl Responder, CustomError> {
+    let is_admin = check_admin(&token)?;
+    if !is_admin {
+        return Err(CustomError::Forbidden("需要管理员权限".into()));
+    }
+
+    let order_id = path.into_inner();
+    let input = body.into_inner();
+    let db = &state.db_pool;
+
+    // 检查订单是否存在
+    let order: Option<(String, String, i64)> = sqlx::query_as(
+        "SELECT point_grant_status::text, exp_grant_status::text, group_id FROM orders WHERE order_id = $1"
+    )
+    .bind(order_id)
+    .fetch_optional(db)
+    .await?;
+
+    let (point_status, exp_status, _group_id) = match order {
+        Some((p, e, g)) => (p, e, g),
+        None => return Err(CustomError::NotFound("订单不存在".into())),
+    };
+
+    if input.action == "APPROVE" {
+        if point_status == "PENDING_REVIEW" {
+            let new_status = input.point_grant_status.as_deref().unwrap_or("GRANTED");
+            sqlx::query("UPDATE orders SET point_grant_status = $1::point_grant_status_enum WHERE order_id = $2")
+                .bind(new_status)
+                .bind(order_id)
+                .execute(db)
+                .await?;
+        }
+        if exp_status == "PENDING_REVIEW" {
+            let new_status = input.exp_grant_status.as_deref().unwrap_or("GRANTED");
+            sqlx::query("UPDATE orders SET exp_grant_status = $1::exp_grant_status_enum WHERE order_id = $2")
+                .bind(new_status)
+                .bind(order_id)
+                .execute(db)
+                .await?;
+        }
+    } else if input.action == "REJECT" {
+        if point_status == "PENDING_REVIEW" {
+            sqlx::query("UPDATE orders SET point_grant_status = 'REJECTED'::point_grant_status_enum WHERE order_id = $1")
+                .bind(order_id)
+                .execute(db)
+                .await?;
+        }
+        if exp_status == "PENDING_REVIEW" {
+            sqlx::query("UPDATE orders SET exp_grant_status = 'REJECTED'::exp_grant_status_enum WHERE order_id = $1")
+                .bind(order_id)
+                .execute(db)
+                .await?;
+        }
+    }
+
+    Ok(ApiResponse::success(serde_json::json!({
+        "code": 0,
+        "message": "success",
+        "data": { "orderId": order_id }
+    })))
+}
+
+/// 获取审计日志
+/// GET /api/admin/audit-logs
+#[derive(Debug, Deserialize, Serialize, ToSchema, utoipa::IntoParams)]
+#[serde(rename_all = "camelCase")]
+pub struct AuditLogQuery {
+    pub cursor: Option<String>,
+    pub limit: Option<i32>,
+    pub operator_id: Option<i64>,
+    pub action_type: Option<String>,
+    pub start_date: Option<String>,
+    pub end_date: Option<String>,
+}
+
+#[utoipa::path(
+    get,
+    path = "/admin/audit-logs",
+    tag = "后台管理",
+    params(AuditLogQuery),
+    responses(
+        (status = 200, description = "获取成功"),
+        (status = 401, description = "未登录"),
+        (status = 403, description = "无权限")
+    ),
+    security(("cookie_auth" = []))
+)]
+pub async fn get_audit_logs(
+    state: State<Arc<AppState>>,
+    token: UserToken,
+    query: Query<AuditLogQuery>,
+) -> Result<impl Responder, CustomError> {
+    let is_admin = check_admin(&token)?;
+    if !is_admin {
+        return Err(CustomError::Forbidden("需要管理员权限".into()));
+    }
+
+    let db = &state.db_pool;
+    let limit = query.limit.unwrap_or(50);
+
+    // 简化的审计日志查询
+    let rows = sqlx::query(
+        r#"SELECT id, operator_id, action_type, target_type, target_id, detail, ip, created_at
+           FROM audit_logs
+           ORDER BY created_at DESC
+           LIMIT $1"#,
+    )
+    .bind(limit)
+    .fetch_all(db)
+    .await?;
+
+    let logs: Vec<serde_json::Value> = rows
+        .into_iter()
+        .map(|r| {
+            serde_json::json!({
+                "id": r.get::<i64, _>("id"),
+                "operatorId": r.get::<i64, _>("operator_id"),
+                "actionType": r.get::<String, _>("action_type"),
+                "targetType": r.get::<Option<String>, _>("target_type"),
+                "targetId": r.get::<Option<i64>, _>("target_id"),
+                "detail": r.get::<Option<serde_json::Value>, _>("detail"),
+                "ip": r.get::<Option<String>, _>("ip"),
+                "createdAt": r.get::<chrono::DateTime<chrono::Utc>, _>("created_at").to_rfc3339()
+            })
+        })
+        .collect();
+
+    Ok(ApiResponse::success(serde_json::json!({
+        "code": 0,
+        "message": "success",
+        "data": { "logs": logs }
+    })))
+}
+
+/// 更新组级配置
+/// PATCH /api/admin/groups/{group_id}/configs
+#[derive(Debug, Deserialize, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateGroupConfigsInput {
+    pub normal_order_love_point: Option<i32>,
+    pub guest_order_love_point: Option<i32>,
+    pub normal_order_group_exp: Option<i32>,
+    pub guest_order_group_exp: Option<i32>,
+    pub daily_love_point_limit: Option<i32>,
+    pub daily_group_exp_limit: Option<i32>,
+    pub food_capacity: Option<i32>,
+    pub footprint_capacity: Option<i32>,
+    pub order_timeout_hours: Option<i32>,
+}
+
+#[utoipa::path(
+    patch,
+    path = "/admin/groups/{group_id}/configs",
+    tag = "后台管理",
+    params(
+        ("group_id" = i64, Path, description = "组ID")
+    ),
+    request_body = UpdateGroupConfigsInput,
+    responses(
+        (status = 200, description = "更新成功"),
+        (status = 401, description = "未登录"),
+        (status = 403, description = "无权限"),
+        (status = 404, description = "组不存在")
+    ),
+    security(("cookie_auth" = []))
+)]
+pub async fn update_group_configs(
+    state: State<Arc<AppState>>,
+    token: UserToken,
+    path: Path<i64>,
+    body: Json<UpdateGroupConfigsInput>,
+) -> Result<impl Responder, CustomError> {
+    let is_admin = check_admin(&token)?;
+    if !is_admin {
+        return Err(CustomError::Forbidden("需要管理员权限".into()));
+    }
+
+    let group_id = path.into_inner();
+    let input = body.into_inner();
+    let db = &state.db_pool;
+
+    // 检查组是否存在
+    let exists: Option<i64> = sqlx::query_scalar(
+        "SELECT group_id FROM association_groups WHERE group_id = $1"
+    )
+    .bind(group_id)
+    .fetch_optional(db)
+    .await?;
+
+    if exists.is_none() {
+        return Err(CustomError::NotFound("组不存在".into()));
+    }
+
+    // 更新 settings JSONB
+    let mut settings = serde_json::json!({});
+    if let Some(v) = input.normal_order_love_point {
+        settings["normal_order_love_point"] = serde_json::json!(v);
+    }
+    if let Some(v) = input.guest_order_love_point {
+        settings["guest_order_love_point"] = serde_json::json!(v);
+    }
+    if let Some(v) = input.normal_order_group_exp {
+        settings["normal_order_group_exp"] = serde_json::json!(v);
+    }
+    if let Some(v) = input.guest_order_group_exp {
+        settings["guest_order_group_exp"] = serde_json::json!(v);
+    }
+    if let Some(v) = input.daily_love_point_limit {
+        settings["daily_love_point_limit"] = serde_json::json!(v);
+    }
+    if let Some(v) = input.daily_group_exp_limit {
+        settings["daily_group_exp_limit"] = serde_json::json!(v);
+    }
+    if let Some(v) = input.food_capacity {
+        settings["food_capacity"] = serde_json::json!(v);
+    }
+    if let Some(v) = input.footprint_capacity {
+        settings["footprint_capacity"] = serde_json::json!(v);
+    }
+    if let Some(v) = input.order_timeout_hours {
+        settings["order_timeout_hours"] = serde_json::json!(v);
+    }
+
+    sqlx::query("UPDATE association_groups SET settings = $1, updated_at = NOW() WHERE group_id = $2")
+        .bind(&settings)
+        .bind(group_id)
+        .execute(db)
+        .await?;
+
+    Ok(ApiResponse::success(serde_json::json!({
+        "code": 0,
+        "message": "success",
+        "data": { "groupId": group_id, "updatedConfigs": settings }
+    })))
+}
+
+/// 管理员补偿积分
+/// POST /api/admin/groups/{group_id}/points/compensate
+#[derive(Debug, Deserialize, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct CompensatePointsInput {
+    pub user_id: i64,
+    pub type_: String, // ADD=增加，REDUCE=扣减
+    pub amount: i64,
+    pub biz_type: String, // SYSTEM_COMPENSATION / ADMIN_GIFT
+    pub remark: String,
+}
+
+#[utoipa::path(
+    post,
+    path = "/admin/groups/{group_id}/points/compensate",
+    tag = "后台管理",
+    params(
+        ("group_id" = i64, Path, description = "组ID")
+    ),
+    request_body = CompensatePointsInput,
+    responses(
+        (status = 200, description = "补偿成功"),
+        (status = 401, description = "未登录"),
+        (status = 403, description = "无权限"),
+        (status = 404, description = "用户不在该组")
+    ),
+    security(("cookie_auth" = []))
+)]
+pub async fn compensate_points(
+    state: State<Arc<AppState>>,
+    token: UserToken,
+    path: Path<i64>,
+    body: Json<CompensatePointsInput>,
+) -> Result<impl Responder, CustomError> {
+    let is_admin = check_admin(&token)?;
+    if !is_admin {
+        return Err(CustomError::Forbidden("需要管理员权限".into()));
+    }
+
+    let group_id = path.into_inner();
+    let input = body.into_inner();
+    let db = &state.db_pool;
+
+    let idempotency_key = format!("compensate_points_{}_{}_{}", group_id, input.user_id, input.amount);
+
+    // 补偿流水
+    if input.type_ == "ADD" {
+        sqlx::query(
+            r#"INSERT INTO love_point_transactions
+               (user_id, group_id, type, amount, available_before, available_after, biz_type, biz_id, idempotency_key, created_at)
+               SELECT $1, $2, 'ADJUST', $3, love_point, love_point + $3, $4, $5, $6, NOW()
+               FROM user_group_points WHERE user_id = $1 AND group_id = $2"#,
+        )
+        .bind(input.user_id)
+        .bind(group_id)
+        .bind(input.amount)
+        .bind(input.biz_type)
+        .bind(group_id)
+        .bind(&idempotency_key)
+        .execute(db)
+        .await?;
+
+        sqlx::query(
+            "UPDATE user_group_points SET love_point = love_point + $1 WHERE user_id = $2 AND group_id = $3"
+        )
+        .bind(input.amount)
+        .bind(input.user_id)
+        .bind(group_id)
+        .execute(db)
+        .await?;
+    } else {
+        sqlx::query(
+            r#"INSERT INTO love_point_transactions
+               (user_id, group_id, type, amount, available_before, available_after, biz_type, biz_id, idempotency_key, created_at)
+               SELECT $1, $2, 'ADJUST', $3, love_point, love_point - $3, $4, $5, $6, NOW()
+               FROM user_group_points WHERE user_id = $1 AND group_id = $2"#,
+        )
+        .bind(input.user_id)
+        .bind(group_id)
+        .bind(input.amount)
+        .bind(input.biz_type)
+        .bind(group_id)
+        .bind(&idempotency_key)
+        .execute(db)
+        .await?;
+
+        sqlx::query(
+            "UPDATE user_group_points SET love_point = love_point - $1 WHERE user_id = $2 AND group_id = $3"
+        )
+        .bind(input.amount)
+        .bind(input.user_id)
+        .bind(group_id)
+        .execute(db)
+        .await?;
+    }
+
+    Ok(ApiResponse::success(serde_json::json!({
+        "code": 0,
+        "message": "success",
+        "data": { "userId": input.user_id, "groupId": group_id, "amount": input.amount }
+    })))
+}
+
+/// 管理员补偿钻石
+/// POST /api/admin/groups/{group_id}/diamonds/compensate
+#[derive(Debug, Deserialize, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct CompensateDiamondsInput {
+    pub type_: String, // ADD=增加，REDUCE=扣减
+    pub amount: i64,
+    pub remark: String,
+}
+
+#[utoipa::path(
+    post,
+    path = "/admin/groups/{group_id}/diamonds/compensate",
+    tag = "后台管理",
+    params(
+        ("group_id" = i64, Path, description = "组ID")
+    ),
+    request_body = CompensateDiamondsInput,
+    responses(
+        (status = 200, description = "补偿成功"),
+        (status = 401, description = "未登录"),
+        (status = 403, description = "无权限"),
+        (status = 404, description = "组不存在")
+    ),
+    security(("cookie_auth" = []))
+)]
+pub async fn compensate_diamonds(
+    state: State<Arc<AppState>>,
+    token: UserToken,
+    path: Path<i64>,
+    body: Json<CompensateDiamondsInput>,
+) -> Result<impl Responder, CustomError> {
+    let is_admin = check_admin(&token)?;
+    if !is_admin {
+        return Err(CustomError::Forbidden("需要管理员权限".into()));
+    }
+
+    let group_id = path.into_inner();
+    let input = body.into_inner();
+    let db = &state.db_pool;
+
+    let idempotency_key = format!("compensate_diamonds_{}_{}_{}", group_id, input.type_, input.amount);
+
+    if input.type_ == "ADD" {
+        sqlx::query(
+            r#"INSERT INTO diamond_transactions
+               (group_id, type, amount, balance_before, balance_after, biz_type, idempotency_key, created_at)
+               SELECT $1, 'ADJUST', $2, diamond, diamond + $2, 'ADMIN_COMPENSATION', $3, NOW()
+               FROM association_groups WHERE group_id = $1"#,
+        )
+        .bind(group_id)
+        .bind(input.amount)
+        .bind(&idempotency_key)
+        .execute(db)
+        .await?;
+
+        sqlx::query("UPDATE association_groups SET diamond = diamond + $1 WHERE group_id = $2")
+            .bind(input.amount)
+            .bind(group_id)
+            .execute(db)
+            .await?;
+    } else {
+        sqlx::query(
+            r#"INSERT INTO diamond_transactions
+               (group_id, type, amount, balance_before, balance_after, biz_type, idempotency_key, created_at)
+               SELECT $1, 'ADJUST', $2, diamond, diamond - $2, 'ADMIN_COMPENSATION', $3, NOW()
+               FROM association_groups WHERE group_id = $1"#,
+        )
+        .bind(group_id)
+        .bind(input.amount)
+        .bind(&idempotency_key)
+        .execute(db)
+        .await?;
+
+        sqlx::query("UPDATE association_groups SET diamond = diamond - $1 WHERE group_id = $2")
+            .bind(input.amount)
+            .bind(group_id)
+            .execute(db)
+            .await?;
+    }
+
+    Ok(ApiResponse::success(serde_json::json!({
+        "code": 0,
+        "message": "success",
+        "data": { "groupId": group_id, "amount": input.amount }
+    })))
+}
+
 // ============== FSD v2 请求结构体 ==============
+
+/// 管理员检查辅助函数
+fn check_admin(token: &UserToken) -> Result<bool, CustomError> {
+    Ok(token
+        .user
+        .as_ref()
+        .map(|u| u.role == crate::domain::user::UserRole::Admin)
+        .unwrap_or(false))
+}
+
+/// 待审核订单查询参数
+#[derive(Debug, Deserialize, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct PendingReviewQuery {
+    pub cursor: Option<String>,
+    pub limit: Option<i32>,
+    pub risk_status: Option<String>,
+}
 
 /// 心愿质量奖励输入
 #[derive(Debug, Deserialize, Serialize, ToSchema)]

@@ -13,6 +13,7 @@ use utoipa::ToSchema;
 use crate::config::AppState;
 use crate::errors::CustomError;
 use crate::middlewares::auth::UserToken;
+use crate::utils::response::ApiResponse;
 
 /// 配置上传路由
 pub fn configure(cfg: &mut ServiceConfig) {
@@ -154,7 +155,7 @@ pub async fn get_presigned_url(
 
     let expires_at = now + chrono::Duration::minutes(30);
 
-    Ok(HttpResponse::Ok().json(&PresignedUrlResponse {
+    Ok(ApiResponse::success(PresignedUrlResponse {
         upload_url,
         file_key: file_key.clone(),
         expires_at,
@@ -220,7 +221,7 @@ pub async fn get_presigned_urls(
         })
         .collect();
 
-    Ok(HttpResponse::Ok().json(&PresignedUrlsResponse { uploads }))
+    Ok(ApiResponse::success(PresignedUrlsResponse { uploads }))
 }
 
 /// 确认上传完成
@@ -265,7 +266,7 @@ pub async fn confirm_upload(
     // 简化：内容审核状态默认为 PASS，实际应异步回调
     let content_check_status = "PASS";
 
-    Ok(HttpResponse::Ok().json(&ConfirmUploadResponse {
+    Ok(ApiResponse::success(ConfirmUploadResponse {
         file_key: input.file_key,
         cdn_url,
         content_check_status: content_check_status.to_string(),
@@ -317,7 +318,7 @@ pub async fn delete_file(
         .execute(db)
         .await?;
 
-    Ok(HttpResponse::Ok().json(&DeleteFileResponse {
+    Ok(ApiResponse::success(DeleteFileResponse {
         status: "ok".to_string(),
     }))
 }

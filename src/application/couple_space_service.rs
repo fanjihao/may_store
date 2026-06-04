@@ -1,17 +1,19 @@
 // 应用服务层 - 情侣空间服务
+// Note: This service is designed for a user-couple based model, but v3.sql uses a group-based model
+// The memorial_day table in v3.sql has: id, group_id, name, description, memorial_date, etc.
+// This service references: user_id, couple_user_id, name, date, day_type which don't match
 
 use crate::domain::couple_space::{
     MemorialDay, MemorialDayCreate, MemorialDayQuery, MemorialDayUpdate,
 };
 use crate::errors::CustomError;
-use chrono::NaiveDate;
 use sqlx::{PgPool, Row};
 
 pub struct MemorialDayService;
 
 #[allow(dead_code)]
 impl MemorialDayService {
-    /// 获取纪念日列表
+    /// 获取纪念日列表 - Uses correct memorial_day columns from v3.sql
     pub async fn list_memorial_days(
         db: &PgPool,
         user_id: i64,
@@ -19,28 +21,27 @@ impl MemorialDayService {
     ) -> Result<Vec<MemorialDay>, CustomError> {
         let limit = query.limit.unwrap_or(50).min(100);
 
-        // 获取用户的情侣用户ID
-        let couple_user_id: Option<i64> =
-            sqlx::query("SELECT partner_user_id FROM couple_relations WHERE user_id = $1 LIMIT 1")
-                .bind(user_id as i64)
-                .fetch_optional(db)
-                .await?
-                .map(|r| r.get("partner_user_id"));
+        // Get user's group_id
+        let group_id: Option<i64> = sqlx::query_scalar(
+            "SELECT group_id FROM association_group_members WHERE user_id = $1 AND member_status='ACTIVE' LIMIT 1"
+        )
+        .bind(user_id)
+        .fetch_optional(db)
+        .await?;
 
-        let couple_uid = match couple_user_id {
+        let gid = match group_id {
             Some(id) => id,
-            None => return Err(CustomError::NotFound("未找到情侣关系".into())),
+            None => return Err(CustomError::NotFound("用户不在任何组中".into())),
         };
 
         let rows = sqlx::query(
-            "SELECT id, user_id, couple_user_id, name, date, day_type, created_at, updated_at \
-             FROM memorial_days \
-             WHERE user_id = $1 OR user_id = $2 \
-             ORDER BY date DESC \
-             LIMIT $3",
+            "SELECT id, group_id, name, description, memorial_date, calendar_type, created_at, updated_at \
+             FROM memorial_day \
+             WHERE group_id = $1 \
+             ORDER BY memorial_date DESC \
+             LIMIT $2",
         )
-        .bind(user_id as i64)
-        .bind(couple_uid)
+        .bind(gid)
         .bind(limit)
         .fetch_all(db)
         .await?;
@@ -49,11 +50,11 @@ impl MemorialDayService {
             .into_iter()
             .map(|r| MemorialDay {
                 id: r.get("id"),
-                user_id: r.get("user_id"),
-                couple_user_id: r.get("couple_user_id"),
+                user_id: r.get("group_id"), // map group_id to user_id for compatibility
+                couple_user_id: 0,
                 name: r.get("name"),
-                date: r.get("date"),
-                day_type: r.get("day_type"),
+                date: r.get("memorial_date"), // map memorial_date to date
+                day_type: r.get::<Option<String>, _>("calendar_type").unwrap_or_else(|| "SOLAR".to_string()),
                 created_at: r.get("created_at"),
                 updated_at: r.get("updated_at"),
             })
@@ -62,50 +63,44 @@ impl MemorialDayService {
         Ok(days)
     }
 
-    /// 创建纪念日
+    /// 创建纪念日 - Uses correct memorial_day columns from v3.sql
     pub async fn create_memorial_day(
         db: &PgPool,
         user_id: i64,
         input: &MemorialDayCreate,
     ) -> Result<MemorialDay, CustomError> {
-        // 获取用户的情侣用户ID
-        let couple_user_id: Option<i64> =
-            sqlx::query("SELECT partner_user_id FROM couple_relations WHERE user_id = $1 LIMIT 1")
-                .bind(user_id as i64)
-                .fetch_optional(db)
-                .await?
-                .map(|r| r.get("partner_user_id"));
+        // Get user's group_id
+        let group_id: Option<i64> = sqlx::query_scalar(
+            "SELECT group_id FROM association_group_members WHERE user_id = $1 AND member_status='ACTIVE' LIMIT 1"
+        )
+        .bind(user_id)
+        .fetch_optional(db)
+        .await?;
 
-        let couple_uid = match couple_user_id {
+        let gid = match group_id {
             Some(id) => id,
-            None => return Err(CustomError::NotFound("未找到情侣关系".into())),
+            None => return Err(CustomError::NotFound("用户不在任何组中".into())),
         };
 
-        let day_type = input
-            .day_type
-            .clone()
-            .unwrap_or_else(|| "custom".to_string());
-
         let row = sqlx::query(
-            "INSERT INTO memorial_days (user_id, couple_user_id, name, date, day_type) \
-             VALUES ($1, $2, $3, $4, $5) \
-             RETURNING id, user_id, couple_user_id, name, date, day_type, created_at, updated_at",
+            "INSERT INTO memorial_day (group_id, name, memorial_date, calendar_type) \
+             VALUES ($1, $2, $3, $4) \
+             RETURNING id, group_id, name, description, memorial_date, calendar_type, created_at, updated_at",
         )
-        .bind(user_id as i64)
-        .bind(couple_uid)
+        .bind(gid)
         .bind(&input.name)
         .bind(input.date)
-        .bind(&day_type)
+        .bind(input.day_type.as_deref().unwrap_or("SOLAR"))
         .fetch_one(db)
         .await?;
 
         Ok(MemorialDay {
             id: row.get("id"),
-            user_id: row.get("user_id"),
-            couple_user_id: row.get("couple_user_id"),
+            user_id: row.get("group_id"),
+            couple_user_id: 0,
             name: row.get("name"),
-            date: row.get("date"),
-            day_type: row.get("day_type"),
+            date: row.get("memorial_date"),
+            day_type: row.get::<Option<String>, _>("calendar_type").unwrap_or_else(|| "SOLAR".to_string()),
             created_at: row.get("created_at"),
             updated_at: row.get("updated_at"),
         })
@@ -118,24 +113,39 @@ impl MemorialDayService {
         id: i64,
         input: &MemorialDayUpdate,
     ) -> Result<MemorialDay, CustomError> {
-        // 检查权限
-        let owner: Option<i64> = sqlx::query("SELECT user_id FROM memorial_days WHERE id = $1")
-            .bind(id)
-            .fetch_optional(db)
-            .await?
-            .map(|r| r.get("user_id"));
+        // 检查权限 - user must be member of the group that owns this memorial
+        let owner: Option<i64> = sqlx::query_scalar(
+            "SELECT group_id FROM memorial_day WHERE id = $1"
+        )
+        .bind(id)
+        .fetch_optional(db)
+        .await?;
 
-        if owner.map(|o| o != user_id as i64).unwrap_or(true) {
+        let owner_group_id = match owner {
+            Some(o) => o,
+            None => return Err(CustomError::NotFound("纪念日不存在".into())),
+        };
+
+        // Check user is member of this group
+        let is_member: bool = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM association_group_members WHERE group_id=$1 AND user_id=$2 AND member_status='ACTIVE')"
+        )
+        .bind(owner_group_id)
+        .bind(user_id)
+        .fetch_one(db)
+        .await?;
+
+        if !is_member {
             return Err(CustomError::Forbidden("无权修改此纪念日".into()));
         }
 
         let row = sqlx::query(
-            "UPDATE memorial_days SET \
+            "UPDATE memorial_day SET \
              name = COALESCE($2, name), \
-             date = COALESCE($3, date), \
-             day_type = COALESCE($4, day_type) \
+             memorial_date = COALESCE($3, memorial_date), \
+             calendar_type = COALESCE($4, calendar_type) \
              WHERE id = $1 \
-             RETURNING id, user_id, couple_user_id, name, date, day_type, created_at, updated_at",
+             RETURNING id, group_id, name, description, memorial_date, calendar_type, created_at, updated_at",
         )
         .bind(id)
         .bind(&input.name)
@@ -147,11 +157,11 @@ impl MemorialDayService {
 
         Ok(MemorialDay {
             id: row.get("id"),
-            user_id: row.get("user_id"),
-            couple_user_id: row.get("couple_user_id"),
+            user_id: row.get("group_id"),
+            couple_user_id: 0,
             name: row.get("name"),
-            date: row.get("date"),
-            day_type: row.get("day_type"),
+            date: row.get("memorial_date"),
+            day_type: row.get::<Option<String>, _>("calendar_type").unwrap_or_else(|| "SOLAR".to_string()),
             created_at: row.get("created_at"),
             updated_at: row.get("updated_at"),
         })
@@ -164,17 +174,32 @@ impl MemorialDayService {
         id: i64,
     ) -> Result<(), CustomError> {
         // 检查权限
-        let owner: Option<i64> = sqlx::query("SELECT user_id FROM memorial_days WHERE id = $1")
-            .bind(id)
-            .fetch_optional(db)
-            .await?
-            .map(|r| r.get("user_id"));
+        let owner: Option<i64> = sqlx::query_scalar(
+            "SELECT group_id FROM memorial_day WHERE id = $1"
+        )
+        .bind(id)
+        .fetch_optional(db)
+        .await?;
 
-        if owner.map(|o| o != user_id as i64).unwrap_or(true) {
+        let owner_group_id = match owner {
+            Some(o) => o,
+            None => return Err(CustomError::NotFound("纪念日不存在".into())),
+        };
+
+        // Check user is member of this group
+        let is_member: bool = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM association_group_members WHERE group_id=$1 AND user_id=$2 AND member_status='ACTIVE')"
+        )
+        .bind(owner_group_id)
+        .bind(user_id)
+        .fetch_one(db)
+        .await?;
+
+        if !is_member {
             return Err(CustomError::Forbidden("无权删除此纪念日".into()));
         }
 
-        sqlx::query("DELETE FROM memorial_days WHERE id = $1")
+        sqlx::query("DELETE FROM memorial_day WHERE id = $1")
             .bind(id)
             .execute(db)
             .await?;
@@ -182,67 +207,14 @@ impl MemorialDayService {
         Ok(())
     }
 
-    /// 获取默认纪念日（在一起的日子）
+    /// 获取默认纪念日（在一起的日子）- Not applicable in group-based model
+    #[allow(dead_code)]
     pub async fn get_default_memorial_day(
-        db: &PgPool,
-        user_id: i64,
+        _db: &PgPool,
+        _user_id: i64,
     ) -> Result<Option<MemorialDay>, CustomError> {
-        // 获取用户的情侣用户ID和在一起日期
-        let couple_info: Option<(i64, NaiveDate)> = sqlx::query_as(
-            "SELECT partner_user_id, start_date FROM couple_relations WHERE user_id = $1",
-        )
-        .bind(user_id as i64)
-        .fetch_optional(db)
-        .await?;
-
-        let (couple_uid, start_date) = match couple_info {
-            Some((uid, date)) => (uid, date),
-            None => return Ok(None),
-        };
-
-        // 查找是否已有"在一起"纪念日
-        let existing_row = sqlx::query(
-            "SELECT id, user_id, couple_user_id, name, date, day_type, created_at, updated_at \
-             FROM memorial_days WHERE user_id = $1 AND day_type = 'anniversary' LIMIT 1",
-        )
-        .bind(user_id as i64)
-        .fetch_optional(db)
-        .await?;
-
-        if let Some(row) = existing_row {
-            return Ok(Some(MemorialDay {
-                id: row.get("id"),
-                user_id: row.get("user_id"),
-                couple_user_id: row.get("couple_user_id"),
-                name: row.get("name"),
-                date: row.get("date"),
-                day_type: row.get("day_type"),
-                created_at: row.get("created_at"),
-                updated_at: row.get("updated_at"),
-            }));
-        }
-
-        // 创建默认纪念日
-        let row = sqlx::query(
-            "INSERT INTO memorial_days (user_id, couple_user_id, name, date, day_type) \
-             VALUES ($1, $2, '在一起', $3, 'anniversary') \
-             RETURNING id, user_id, couple_user_id, name, date, day_type, created_at, updated_at",
-        )
-        .bind(user_id as i64)
-        .bind(couple_uid)
-        .bind(start_date)
-        .fetch_optional(db)
-        .await?;
-
-        Ok(row.map(|r| MemorialDay {
-            id: r.get("id"),
-            user_id: r.get("user_id"),
-            couple_user_id: r.get("couple_user_id"),
-            name: r.get("name"),
-            date: r.get("date"),
-            day_type: r.get("day_type"),
-            created_at: r.get("created_at"),
-            updated_at: r.get("updated_at"),
-        }))
+        // In v3.sql, there's no couple_relations table, so we can't get "start_date"
+        // The default memorial day concept doesn't translate to group-based model
+        Ok(None)
     }
 }

@@ -15,6 +15,7 @@ use utoipa::ToSchema;
 use crate::config::AppState;
 use crate::errors::CustomError;
 use crate::middlewares::auth::UserToken;
+use crate::utils::response::ApiResponse;
 
 /// 配置足迹路由
 /// FSD v2: 路径为 /api/groups/{group_id}/footprints
@@ -223,7 +224,7 @@ pub async fn create_footprint(
     .fetch_one(db)
     .await?;
 
-    Ok(HttpResponse::Created().json(&CreateFootprintResponse {
+    Ok(ApiResponse::success(CreateFootprintResponse {
         footprint_id,
         group_id: gid,
         user_id,
@@ -306,7 +307,7 @@ pub async fn list_footprints(
         r#"
         SELECT f.footprint_id, f.user_id, f.content, f.location, f.images,
                f.related_order_id, f.related_wish_id, f.created_at,
-               u.nick_name as user_nickname, u.avatar_url as user_avatar
+               u.nick_name as user_nickname, u.avatar as user_avatar
         FROM footprints f
         JOIN users u ON u.user_id = f.user_id
         WHERE f.group_id = $1 {} {}
@@ -361,7 +362,7 @@ pub async fn list_footprints(
     .fetch_one(db)
     .await?;
 
-    Ok(HttpResponse::Ok().json(&FootprintsListResponse {
+    Ok(ApiResponse::success(FootprintsListResponse {
         footprints,
         next_cursor,
         has_more,
@@ -414,7 +415,7 @@ pub async fn delete_footprint(
 
     // 检查是否是创建者（仅创建者可删除）
     let is_owner: bool = sqlx::query_scalar::<_, bool>(
-        "SELECT EXISTS(SELECT 1 FROM footprints WHERE footprint_id=$1 AND user_id=$2)",
+        "SELECT EXISTS(SELECT 1 FROM user_record WHERE id=$1 AND user_id=$2)",
     )
     .bind(footprint_id)
     .bind(user_id)
@@ -426,7 +427,7 @@ pub async fn delete_footprint(
     }
 
     // 删除足迹
-    let result = sqlx::query("DELETE FROM footprints WHERE footprint_id = $1")
+    let result = sqlx::query("DELETE FROM user_record WHERE id = $1")
         .bind(footprint_id)
         .execute(db)
         .await?;
@@ -439,7 +440,7 @@ pub async fn delete_footprint(
     struct OkResponse {
         status: String,
     }
-    Ok(HttpResponse::Ok().json(&OkResponse {
+    Ok(ApiResponse::success(OkResponse {
         status: "ok".to_string(),
     }))
 }
@@ -532,7 +533,7 @@ pub async fn expand_capacity(
     .execute(db)
     .await?;
 
-    Ok(HttpResponse::Ok().json(&ExpandCapacityResponse {
+    Ok(ApiResponse::success(ExpandCapacityResponse {
         group_id: gid,
         old_capacity: current_capacity,
         new_capacity,

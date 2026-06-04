@@ -18,6 +18,7 @@ use crate::domain::group::entities::{
 };
 use crate::errors::CustomError;
 use crate::middlewares::auth::UserToken;
+use crate::utils::response::ApiResponse;
 
 /// 配置双人组路由
 pub fn configure(cfg: &mut ServiceConfig) {
@@ -119,7 +120,7 @@ async fn create_group(
 
     tx.commit().await?;
 
-    Ok(HttpResponse::Created().json(&serde_json::json!({
+    Ok(ApiResponse::success(serde_json::json!({
         "groupId": group.group_id,
         "inviteCode": invite_code,
         "status": "ok"
@@ -200,7 +201,7 @@ async fn get_group(
         footprint_count: row.get("footprint_count"),
     };
 
-    Ok(HttpResponse::Ok().json(&detail))
+    Ok(ApiResponse::success(detail))
 }
 
 /// 角色互换
@@ -325,14 +326,14 @@ async fn swap_role(
 
     // 更新组成员角色
     if let Some(buyer_id) = new_buyer {
-        sqlx::query("UPDATE association_group_members SET role_in_group='BUYER' WHERE user_id=$1 AND group_id=$2")
+        sqlx::query("UPDATE association_group_members SET role_in_group='ORDERING' WHERE user_id=$1 AND group_id=$2")
             .bind(buyer_id)
             .bind(gid)
             .execute(&mut *tx)
             .await?;
     }
     if let Some(seller_id) = new_seller {
-        sqlx::query("UPDATE association_group_members SET role_in_group='SELLER' WHERE user_id=$1 AND group_id=$2")
+        sqlx::query("UPDATE association_group_members SET role_in_group='RECEIVING' WHERE user_id=$1 AND group_id=$2")
             .bind(seller_id)
             .bind(gid)
             .execute(&mut *tx)
@@ -341,7 +342,7 @@ async fn swap_role(
 
     tx.commit().await?;
 
-    Ok(HttpResponse::Ok().json(&serde_json::json!({
+    Ok(ApiResponse::success(serde_json::json!({
         "status": "ok",
         "newBuyer": new_buyer,
         "newSeller": new_seller
@@ -448,7 +449,7 @@ async fn settlement_check(
         reasons,
     };
 
-    Ok(HttpResponse::Ok().json(&result))
+    Ok(ApiResponse::success(result))
 }
 
 /// 查看组内双方履约统计
@@ -569,7 +570,7 @@ async fn fulfillment_stats(
         );
     }
 
-    Ok(HttpResponse::Ok().json(&stats_map))
+    Ok(ApiResponse::success(stats_map))
 }
 
 // ============== FSD v2 额外端点 ==============
@@ -639,8 +640,8 @@ async fn create_invite(
     let expires_at = Utc::now() + chrono::Duration::days(7);
 
     sqlx::query(
-        r#"INSERT INTO group_invitations (group_id, invite_code, created_by, expires_at, max_uses, used_count)
-           VALUES ($1, $2, $3, $4, 1, 0)"#
+        r#"INSERT INTO guest_invitations (group_id, invite_code, created_by, expires_at, max_uses, used_count, status)
+           VALUES ($1, $2, $3, $4, 1, 0, 'ACTIVE')"#
     )
     .bind(gid)
     .bind(&invite_code)
@@ -649,7 +650,7 @@ async fn create_invite(
     .execute(db)
     .await?;
 
-    Ok(HttpResponse::Created().json(&serde_json::json!({
+    Ok(ApiResponse::success(serde_json::json!({
         "inviteCode": invite_code,
         "expiresAt": expires_at,
         "status": "ok"
@@ -736,7 +737,7 @@ async fn list_foods(
         })
         .collect();
 
-    Ok(HttpResponse::Ok().json(&result))
+    Ok(ApiResponse::success(result))
 }
 
 /// 在组内创建订单响应
@@ -826,7 +827,7 @@ async fn create_group_order(
     .execute(db)
     .await?;
 
-    Ok(HttpResponse::Created().json(&serde_json::json!({
+    Ok(ApiResponse::success(serde_json::json!({
         "orderId": order_id,
         "status": "ok"
     })))
@@ -918,7 +919,7 @@ async fn create_group_wish(
     .execute(db)
     .await?;
 
-    Ok(HttpResponse::Created().json(&serde_json::json!({
+    Ok(ApiResponse::success(serde_json::json!({
         "wishId": wish_id,
         "status": "ok"
     })))
@@ -1032,7 +1033,7 @@ async fn join_group(
 
     tx.commit().await?;
 
-    Ok(HttpResponse::Ok().json(&serde_json::json!({
+    Ok(ApiResponse::success(serde_json::json!({
         "groupId": group_id,
         "role": "SELLER",
         "status": "ok"
@@ -1119,7 +1120,7 @@ async fn exit_group(
 
     tx.commit().await?;
 
-    Ok(HttpResponse::Ok().json(&serde_json::json!({
+    Ok(ApiResponse::success(serde_json::json!({
         "status": "ok"
     })))
 }
@@ -1192,7 +1193,7 @@ async fn get_group_members(
         })
         .collect();
 
-    Ok(HttpResponse::Ok().json(&result))
+    Ok(ApiResponse::success(result))
 }
 
 // 内部实现：结清检查

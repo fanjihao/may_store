@@ -54,8 +54,8 @@ impl UserRepository for PostgresUserRepository {
 
     async fn save(&self, user: &UserRecord) -> Result<(), CustomError> {
         sqlx::query(
-            r#"INSERT INTO users (user_id, username, nick_name, email, role, love_point, diamond, avatar, phone, open_id, is_active)
-               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)"#
+            r#"INSERT INTO users (user_id, username, nick_name, email, role, love_point, diamond, avatar, phone, open_id)
+               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)"#
         )
         .bind(user.user_id)
         .bind(&user.username)
@@ -67,7 +67,6 @@ impl UserRepository for PostgresUserRepository {
         .bind(&user.avatar)
         .bind(&user.phone)
         .bind(&user.open_id)
-        .bind(user.is_active)
         .execute(&self.pool)
         .await?;
         Ok(())

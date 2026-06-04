@@ -29,4 +29,14 @@ impl ApiResponse<()> {
             data: None,
         })
     }
+
+    /// 201 Created,空 data。用于 POST 注册等"创建成功且无返回体"的接口。
+    #[allow(dead_code)]
+    pub fn created() -> HttpResponse {
+        HttpResponse::Created().json(&Self {
+            code: 201,
+            message: "Created".to_string(),
+            data: None,
+        })
+    }
 }

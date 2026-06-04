@@ -1,7 +1,7 @@
 // API - 签到路由
 // FSD.latest.md compliant - 签到、连续签到、组钻石奖励
 
-use ntex::web::{self, types::State, HttpResponse, Responder, ServiceConfig};
+use ntex::web::{self, types::State, Responder, ServiceConfig};
 use serde::Deserialize;
 use serde::Serialize;
 use sqlx::Row;
@@ -12,6 +12,7 @@ use crate::application::sign_in_service::SignService;
 use crate::config::AppState;
 use crate::errors::CustomError;
 use crate::middlewares::auth::UserToken;
+use crate::utils::response::ApiResponse;
 
 /// 配置签到路由
 pub fn configure(cfg: &mut ServiceConfig) {
@@ -101,7 +102,7 @@ pub async fn sign_in(
     let _group_id = *path;
     let app_state = (*state).clone();
     let result = SignService::daily_checkin(token, &app_state).await?;
-    Ok(HttpResponse::Ok().json(&DailyCheckinResponse {
+    Ok(ApiResponse::success(DailyCheckinResponse {
         diamonds_earned: result.diamonds_earned,
         consecutive_days: result.consecutive_days,
         total_diamonds: result.total_diamonds,
@@ -179,7 +180,7 @@ pub async fn sign_in_status(
         });
     }
 
-    Ok(HttpResponse::Ok().json(&SignInStatusResponse {
+    Ok(ApiResponse::success(SignInStatusResponse {
         date: today.to_string(),
         members: member_statuses,
         full_team_today: all_signed,
@@ -258,7 +259,7 @@ pub async fn get_sign_ins(
         })
         .collect();
 
-    Ok(HttpResponse::Ok().json(&serde_json::json!({
+    Ok(ApiResponse::success(serde_json::json!({
         "records": items,
         "totalCount": items.len()
     })))

@@ -20,6 +20,7 @@ use crate::{
     config::AppState,
     errors::CustomError,
     middlewares::auth::UserToken,
+    utils::response::ApiResponse,
 };
 
 /// 配置心愿路由
@@ -115,7 +116,7 @@ pub async fn create_group_wish(
     }
 
     let rec = WishService::create_wish(db, user_token.user_id, &data.into_inner()).await?;
-    Ok(HttpResponse::Created().json(&WishOut::from_record(rec, None)))
+    Ok(ApiResponse::success(WishOut::from_record(rec, None)))
 }
 
 /// 获取组内心愿列表
@@ -236,7 +237,7 @@ pub async fn list_group_wishes(
         None
     };
 
-    Ok(HttpResponse::Ok().json(&serde_json::json!({
+    Ok(ApiResponse::success(serde_json::json!({
         "wishes": wishes,
         "next_cursor": next_cursor,
         "has_more": has_more
@@ -263,7 +264,7 @@ pub async fn get_wish(
     id: Path<i64>,
 ) -> Result<impl Responder, CustomError> {
     let (rec, feedback) = WishService::get_wish(&state.db_pool, *id).await?;
-    Ok(HttpResponse::Ok().json(&WishOut::from_record(rec, feedback)))
+    Ok(ApiResponse::success(WishOut::from_record(rec, feedback)))
 }
 
 /// 协商报价
@@ -291,7 +292,7 @@ pub async fn wish_quote(
     let wish_id = *id;
     let input = body.into_inner();
     let out = WishService::quote_wish(&state.db_pool, user_token.user_id, wish_id, &input).await?;
-    Ok(HttpResponse::Ok().json(&out))
+    Ok(ApiResponse::success(out))
 }
 
 /// 协商履约期限
@@ -319,7 +320,7 @@ pub async fn wish_deadline(
     let wish_id = *id;
     let input = body.into_inner();
     let out = WishService::set_deadline(&state.db_pool, user_token.user_id, wish_id, &input).await?;
-    Ok(HttpResponse::Ok().json(&out))
+    Ok(ApiResponse::success(out))
 }
 
 /// 双方线上确认积分和期限
@@ -344,7 +345,7 @@ pub async fn wish_confirm_agreement(
 ) -> Result<impl Responder, CustomError> {
     let wish_id = *id;
     let out = WishService::confirm_agreement(&state.db_pool, user_token.user_id, wish_id).await?;
-    Ok(HttpResponse::Ok().json(&out))
+    Ok(ApiResponse::success(out))
 }
 
 /// 拒绝或关闭协商
@@ -372,7 +373,7 @@ pub async fn wish_reject(
     let wish_id = *id;
     let input = body.into_inner();
     let out = WishService::reject_wish(&state.db_pool, user_token.user_id, wish_id, &input).await?;
-    Ok(HttpResponse::Ok().json(&out))
+    Ok(ApiResponse::success(out))
 }
 
 /// 选择心愿并冻结积分
@@ -397,7 +398,7 @@ pub async fn wish_select(
 ) -> Result<impl Responder, CustomError> {
     let wish_id = *id;
     let out = WishService::select_wish(&state.db_pool, user_token.user_id, wish_id).await?;
-    Ok(HttpResponse::Ok().json(&out))
+    Ok(ApiResponse::success(out))
 }
 
 /// 提交打卡反馈
@@ -425,7 +426,7 @@ pub async fn submit_feedback(
     let (rec, feedback) =
         WishService::submit_feedback(&state.db_pool, user_token.user_id, *id, &data.into_inner())
             .await?;
-    Ok(HttpResponse::Ok().json(&WishOut::from_record(rec, feedback)))
+    Ok(ApiResponse::success(WishOut::from_record(rec, feedback)))
 }
 
 /// 关闭心愿（双方协商一致）
@@ -459,7 +460,7 @@ pub async fn wish_close(
         &WishRejectInput { reason: input.reason },
     )
     .await?;
-    Ok(HttpResponse::Ok().json(&out))
+    Ok(ApiResponse::success(out))
 }
 
 /// 心愿履约逾期处理
@@ -545,7 +546,7 @@ pub async fn wish_expire(
         .execute(db)
         .await?;
 
-    Ok(HttpResponse::Ok().json(&serde_json::json!({
+    Ok(ApiResponse::success(serde_json::json!({
         "wishId": wish_id,
         "status": "EXPIRED",
         "frozenAmountUnfrozen": frozen_amount
@@ -594,7 +595,7 @@ pub async fn get_wish_checkins(
             })
         })
         .collect();
-    Ok(HttpResponse::Ok().json(&serde_json::json!({ "checkins": items })))
+    Ok(ApiResponse::success(serde_json::json!({ "checkins": items })))
 }
 
 /// 获取我作为履约人的待履约心愿
@@ -650,5 +651,5 @@ pub async fn pending_fulfillment(
             })
         })
         .collect();
-    Ok(HttpResponse::Ok().json(&serde_json::json!({ "items": items })))
+    Ok(ApiResponse::success(serde_json::json!({ "items": items })))
 }

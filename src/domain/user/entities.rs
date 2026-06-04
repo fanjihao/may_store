@@ -24,10 +24,9 @@ pub struct UserRecord {
     pub love_point: i32,
     pub diamond: i32,
     pub group_id: Option<i64>,
-    pub is_active: bool,
     pub last_login_at: Option<DateTime<Utc>>,
-    pub create_time: DateTime<Utc>,
-    pub update_time: DateTime<Utc>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
     #[sqlx(default)]
     pub password_hash: Option<String>,
     #[sqlx(default)]
@@ -117,6 +116,7 @@ pub struct ProfileUpdateInput {
     pub username: String,
     pub nick_name: Option<String>,
     pub avatar: Option<String>,
+    pub phone: Option<String>,
     pub gender: Option<Gender>,
     pub birthday: Option<NaiveDate>,
     pub new_password: Option<String>,

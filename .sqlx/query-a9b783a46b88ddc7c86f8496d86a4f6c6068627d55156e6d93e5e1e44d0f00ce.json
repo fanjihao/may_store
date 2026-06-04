@@ -1,0 +1,160 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n                    SELECT u.user_id, u.username, u.email, u.nick_name,\n                           u.role::text AS \"role!: UserRole\",\n                           u.love_point, u.diamond,\n                           u.avatar AS \"avatar!: Option<String>\",\n                           u.phone, u.open_id, u.created_at, u.updated_at, u.password_hash, u.password_algo,\n                           u.gender::text AS \"gender!: Gender\",\n                           u.birthday,\n                           u.username_change AS \"username_change!: Option<bool>\",\n                           u.login_method::text AS \"login_method!: LoginMethod\",\n                           u.last_login_at, u.password_updated_at,\n                           u.is_temp_password AS \"is_temp_password!: Option<bool>\",\n                           u.push_id, u.last_role_switch_at,\n                           (SELECT agm.group_id FROM association_group_members agm\n                              JOIN association_groups g ON g.group_id=agm.group_id AND g.status='ACTIVE'\n                              WHERE agm.user_id=u.user_id\n                              ORDER BY agm.is_primary DESC, agm.group_id ASC LIMIT 1) AS \"group_id!: Option<i64>\"\n                    FROM users u WHERE u.user_id=$1 AND u.status='ACTIVE'\n                    ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "user_id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 1,
+        "name": "username",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 2,
+        "name": "email",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 3,
+        "name": "nick_name",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 4,
+        "name": "role!: UserRole",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 5,
+        "name": "love_point",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 6,
+        "name": "diamond",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 7,
+        "name": "avatar!: Option<String>",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 8,
+        "name": "phone",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 9,
+        "name": "open_id",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 10,
+        "name": "created_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 11,
+        "name": "updated_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 12,
+        "name": "password_hash",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 13,
+        "name": "password_algo",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 14,
+        "name": "gender!: Gender",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 15,
+        "name": "birthday",
+        "type_info": "Date"
+      },
+      {
+        "ordinal": 16,
+        "name": "username_change!: Option<bool>",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 17,
+        "name": "login_method!: LoginMethod",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 18,
+        "name": "last_login_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 19,
+        "name": "password_updated_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 20,
+        "name": "is_temp_password!: Option<bool>",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 21,
+        "name": "push_id",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 22,
+        "name": "last_role_switch_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 23,
+        "name": "group_id!: Option<i64>",
+        "type_info": "Int8"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      true,
+      true,
+      null,
+      false,
+      false,
+      false,
+      true,
+      true,
+      false,
+      false,
+      true,
+      true,
+      null,
+      true,
+      false,
+      null,
+      true,
+      true,
+      false,
+      true,
+      true,
+      null
+    ]
+  },
+  "hash": "a9b783a46b88ddc7c86f8496d86a4f6c6068627d55156e6d93e5e1e44d0f00ce"
+}

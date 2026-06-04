@@ -22,6 +22,7 @@
 | `type` | string | 否 | 通知类型：ORDER / WISH / SIGN_IN / SYSTEM |
 
 **响应体**:
+
 ```json
 {
   "code": 0,
@@ -69,6 +70,7 @@
 **认证**: 是
 
 **响应体**:
+
 ```json
 {
   "code": 0,
@@ -99,6 +101,7 @@
 **请求体**: 无
 
 **响应体**:
+
 ```json
 {
   "code": 0,
@@ -119,17 +122,19 @@
 **幂等**: 是
 
 **请求体**:
+
 ```json
 {
   "notification_ids": [10001, 10002, 10003]
 }
 ```
 
-| 字段 | 类型 | 必填 | 说明 |
-|------|------|------|------|
-| `notification_ids` | array | 否 | 通知 ID 数组，不传则全部标记 |
+| 字段               | 类型  | 必填 | 说明                         |
+| ------------------ | ----- | ---- | ---------------------------- |
+| `notification_ids` | array | 否   | 通知 ID 数组，不传则全部标记 |
 
 **响应体**:
+
 ```json
 {
   "code": 0,
@@ -150,6 +155,7 @@
 **认证**: 是
 
 **响应体**:
+
 ```json
 {
   "code": 0,
@@ -172,6 +178,7 @@
 **幂等**: 是
 
 **请求体**:
+
 ```json
 {
   "filename": "photo.jpg",
@@ -181,14 +188,15 @@
 }
 ```
 
-| 字段 | 类型 | 必填 | 说明 |
-|------|------|------|------|
-| `filename` | string | 是 | 原始文件名 |
-| `content_type` | string | 是 | MIME 类型 |
-| `size` | integer | 是 | 文件大小（字节），最大 5242880（5MB） |
-| `idempotency_key` | string | 是 | 幂等键 |
+| 字段              | 类型    | 必填 | 说明                                  |
+| ----------------- | ------- | ---- | ------------------------------------- |
+| `filename`        | string  | 是   | 原始文件名                            |
+| `content_type`    | string  | 是   | MIME 类型                             |
+| `size`            | integer | 是   | 文件大小（字节），最大 5242880（5MB） |
+| `idempotency_key` | string  | 是   | 幂等键                                |
 
 **响应体**:
+
 ```json
 {
   "code": 0,
@@ -203,11 +211,13 @@
 ```
 
 **业务规则**:
+
 - 图片限制：JPEG/PNG/GIF，最大 5MB
 - 预签名 URL 有效期 30 分钟
 - 直接上传到对象存储，不经过业务服务器
 
 **错误码**:
+
 - `UPLOAD_SIZE_EXCEEDED`: 文件大小超出 5MB
 - `UPLOAD_TYPE_NOT_ALLOWED`: 不支持的文件类型
 
@@ -222,6 +232,7 @@
 **幂等**: 是
 
 **请求体**:
+
 ```json
 {
   "file_key": "uploads/2026/06/03/abc123def456.jpg"
@@ -229,6 +240,7 @@
 ```
 
 **响应体**:
+
 ```json
 {
   "code": 0,
@@ -243,11 +255,13 @@
 ```
 
 **content_check_status 取值**:
+
 - `PASS`: 内容安全检查通过
 - `PENDING`: 检查中，稍后回调
 - `REJECTED`: 内容安全检查未通过
 
 **业务规则**:
+
 - 上传后需确认才返回可用的 CDN URL
 - 内容安全审核异步进行
 - 审核未通过时返回 `UPLOAD_CONTENT_REJECTED`
@@ -263,17 +277,19 @@
 **幂等**: 是
 
 **请求体**:
+
 ```json
 {
   "files": [
-    {"filename": "photo1.jpg", "content_type": "image/jpeg", "size": 1024000},
-    {"filename": "photo2.jpg", "content_type": "image/jpeg", "size": 2048000}
+    { "filename": "photo1.jpg", "content_type": "image/jpeg", "size": 1024000 },
+    { "filename": "photo2.jpg", "content_type": "image/jpeg", "size": 2048000 }
   ],
   "idempotency_key": "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
 }
 ```
 
 **响应体**:
+
 ```json
 {
   "code": 0,
@@ -299,6 +315,7 @@
 ```
 
 **业务规则**:
+
 - 单次最多 9 个文件
 - 总大小不超过 20MB
 
@@ -311,6 +328,7 @@
 **认证**: 是
 
 **响应体**:
+
 ```json
 {
   "code": 0,
@@ -321,6 +339,7 @@
 ```
 
 **业务规则**:
+
 - 删除后 CDN URL 立即失效
 - 已在业务中使用的图片不建议删除
 
@@ -335,6 +354,7 @@
 **连接后 10 秒内必须发送鉴权帧**:
 
 **客户端发送（鉴权帧）**:
+
 ```json
 {
   "type": "auth",
@@ -344,6 +364,7 @@
 ```
 
 **服务端响应（成功）**:
+
 ```json
 {
   "type": "auth_ok",
@@ -355,6 +376,7 @@
 ```
 
 **服务端响应（失败）**:
+
 ```json
 {
   "type": "auth_failed",
@@ -364,6 +386,7 @@
 ```
 
 **业务规则**:
+
 - 鉴权失败后连接立即断开
 - 多实例场景使用 Redis 维护用户在线状态
 
@@ -372,6 +395,7 @@
 ### 14.2 心跳
 
 **客户端发送（ping）**:
+
 ```json
 {
   "type": "ping",
@@ -380,6 +404,7 @@
 ```
 
 **服务端响应（pong）**:
+
 ```json
 {
   "type": "pong",
@@ -388,6 +413,7 @@
 ```
 
 **业务规则**:
+
 - 心跳间隔 30 秒
 - 客户端超过 90 秒未发心跳，服务端主动断开连接
 
@@ -396,6 +422,7 @@
 ### 14.3 服务端推送：通知消息
 
 **服务端发送**:
+
 ```json
 {
   "type": "notification",
@@ -419,6 +446,7 @@
 ### 14.4 服务端推送：订单状态变更
 
 **服务端发送**:
+
 ```json
 {
   "type": "order_status_changed",
@@ -440,6 +468,7 @@
 ### 14.5 服务端推送：心愿状态变更
 
 **服务端发送**:
+
 ```json
 {
   "type": "wish_status_changed",
@@ -461,6 +490,7 @@
 ### 14.6 服务端推送：积分变动
 
 **服务端发送**:
+
 ```json
 {
   "type": "love_point_changed",
@@ -482,6 +512,7 @@
 ### 14.7 服务端推送：履约提醒
 
 **服务端发送**:
+
 ```json
 {
   "type": "wish_fulfill_reminder",
@@ -502,6 +533,7 @@
 ### 14.8 客户端发送：订阅组消息
 
 **客户端发送**:
+
 ```json
 {
   "type": "subscribe",
@@ -510,6 +542,7 @@
 ```
 
 **服务端响应**:
+
 ```json
 {
   "type": "subscribed",
@@ -518,6 +551,7 @@
 ```
 
 **业务规则**:
+
 - 连接鉴权后默认订阅用户所在的所有组
 - 可通过此接口动态订阅/取消订阅组
 
@@ -541,6 +575,7 @@
 | `group_id` | integer | 否 | 筛选特定组 |
 
 **响应体**:
+
 ```json
 {
   "code": 0,
@@ -576,6 +611,7 @@
 **认证**: 是（管理员）
 
 **响应体**:
+
 ```json
 {
   "code": 0,
@@ -623,6 +659,7 @@
 **幂等**: 是
 
 **请求体**:
+
 ```json
 {
   "status": "BANNED",
@@ -631,13 +668,14 @@
 }
 ```
 
-| 字段 | 类型 | 必填 | 说明 |
-|------|------|------|------|
-| `status` | string | 是 | ACTIVE / BANNED |
-| `reason` | string | 否 | 操作原因 |
-| `idempotency_key` | string | 是 | 幂等键 |
+| 字段              | 类型   | 必填 | 说明            |
+| ----------------- | ------ | ---- | --------------- |
+| `status`          | string | 是   | ACTIVE / BANNED |
+| `reason`          | string | 否   | 操作原因        |
+| `idempotency_key` | string | 是   | 幂等键          |
 
 **响应体**:
+
 ```json
 {
   "code": 0,
@@ -653,6 +691,7 @@
 ```
 
 **业务规则**:
+
 - 禁用后用户无法登录
 - 禁用用户的订单/心愿保持不变，待处理
 - 写入审计日志
@@ -674,6 +713,7 @@
 | `level_min` | integer | 否 | 最低等级 |
 
 **响应体**:
+
 ```json
 {
   "code": 0,
@@ -708,6 +748,7 @@
 **认证**: 是（管理员）
 
 **响应体**:
+
 ```json
 {
   "code": 0,
@@ -746,6 +787,7 @@
 **幂等**: 是
 
 **请求体**:
+
 ```json
 {
   "normal_order_love_point": 15,
@@ -762,6 +804,7 @@
 ```
 
 **响应体**:
+
 ```json
 {
   "code": 0,
@@ -779,6 +822,7 @@
 ```
 
 **业务规则**:
+
 - 组级配置是管理员可按小组覆盖默认值的机制
 - 变更写入审计日志
 
@@ -796,6 +840,7 @@
 | `category` | string | 否 | 配置分类：REWARDS / SIGN_IN / WISH / ORDER / RISK |
 
 **响应体**:
+
 ```json
 {
   "code": 0,
@@ -875,6 +920,7 @@
 **幂等**: 是
 
 **请求体**:
+
 ```json
 {
   "value": 10,
@@ -884,6 +930,7 @@
 ```
 
 **响应体**:
+
 ```json
 {
   "code": 0,
@@ -900,6 +947,7 @@
 ```
 
 **业务规则**:
+
 - 配置变更必须写入审计日志
 - 敏感配置变更需二次确认
 
@@ -914,6 +962,7 @@
 **幂等**: 是
 
 **请求体**:
+
 ```json
 {
   "user_id": 10001,
@@ -925,16 +974,17 @@
 }
 ```
 
-| 字段 | 类型 | 必填 | 说明 |
-|------|------|------|------|
-| `user_id` | integer | 是 | 用户 ID |
-| `type` | string | 是 | ADD=增加，REDUCE=扣减 |
-| `amount` | integer | 是 | 数量 |
-| `biz_type` | string | 是 | SYSTEM_COMPENSATION / ADMIN_GIFT |
-| `remark` | string | 是 | 补偿说明（写入审计） |
-| `idempotency_key` | string | 是 | 幂等键 |
+| 字段              | 类型    | 必填 | 说明                             |
+| ----------------- | ------- | ---- | -------------------------------- |
+| `user_id`         | integer | 是   | 用户 ID                          |
+| `type`            | string  | 是   | ADD=增加，REDUCE=扣减            |
+| `amount`          | integer | 是   | 数量                             |
+| `biz_type`        | string  | 是   | SYSTEM_COMPENSATION / ADMIN_GIFT |
+| `remark`          | string  | 是   | 补偿说明（写入审计）             |
+| `idempotency_key` | string  | 是   | 幂等键                           |
 
 **响应体**:
+
 ```json
 {
   "code": 0,
@@ -956,6 +1006,7 @@
 ```
 
 **业务规则**:
+
 - 经济修复必须走补偿流水
 - 禁止后台直接改余额
 - 补偿流水写入 love_point_transactions（type=ADJUST）
@@ -972,6 +1023,7 @@
 **幂等**: 是
 
 **请求体**:
+
 ```json
 {
   "type": "ADD",
@@ -984,6 +1036,7 @@
 **响应体**: 同 15.9 结构
 
 **业务规则**:
+
 - 补偿流水写入 diamond_transactions（type=ADJUST）
 - 写入审计日志
 
@@ -1003,6 +1056,7 @@
 | `risk_status` | string | 否 | 风险状态：SUSPECT / BLOCKED |
 
 **响应体**:
+
 ```json
 {
   "code": 0,
@@ -1046,6 +1100,7 @@
 **幂等**: 是
 
 **请求体**:
+
 ```json
 {
   "action": "APPROVE",
@@ -1056,15 +1111,16 @@
 }
 ```
 
-| 字段 | 类型 | 必填 | 说明 |
-|------|------|------|------|
-| `action` | string | 是 | APPROVE=批准发放，REJECT=拒绝发放 |
-| `point_grant_status` | string | 否 | APPROVE时可设置：GRANTED / REJECTED |
-| `exp_grant_status` | string | 否 | APPROVE时可设置：GRANTED / REJECTED |
-| `remark` | string | 否 | 审核备注 |
-| `idempotency_key` | string | 是 | 幂等键 |
+| 字段                 | 类型   | 必填 | 说明                                |
+| -------------------- | ------ | ---- | ----------------------------------- |
+| `action`             | string | 是   | APPROVE=批准发放，REJECT=拒绝发放   |
+| `point_grant_status` | string | 否   | APPROVE时可设置：GRANTED / REJECTED |
+| `exp_grant_status`   | string | 否   | APPROVE时可设置：GRANTED / REJECTED |
+| `remark`             | string | 否   | 审核备注                            |
+| `idempotency_key`    | string | 是   | 幂等键                              |
 
 **响应体**:
+
 ```json
 {
   "code": 0,
@@ -1081,6 +1137,7 @@
 ```
 
 **业务规则**:
+
 - APPROVE 后补发爱心积分和组经验流水
 - REJECT 后原 PENDING_REVIEW 转为 REJECTED，不发放
 - 审核结果写入审计日志
@@ -1104,6 +1161,7 @@
 | `end_date` | string | 否 | 结束日期 |
 
 **响应体**:
+
 ```json
 {
   "code": 0,
@@ -1143,6 +1201,7 @@
 **认证**: 是（组内成员）
 
 **响应体**:
+
 ```json
 {
   "code": 0,
@@ -1164,8 +1223,8 @@
       "love_points_earned": 20,
       "group_exp_earned": 10,
       "sign_in": {
-        "user_10001": {"signed": true, "consecutive_days": 5},
-        "user_10002": {"signed": false, "consecutive_days": 3}
+        "user_10001": { "signed": true, "consecutive_days": 5 },
+        "user_10002": { "signed": false, "consecutive_days": 3 }
       }
     },
     "this_month": {
@@ -1202,6 +1261,7 @@
 | `end_date` | string | 否 | 结束日期，默认当天 |
 
 **响应体**:
+
 ```json
 {
   "code": 0,
@@ -1268,6 +1328,7 @@
 | `granularity` | string | 否 | DAY / HOUR，默认 DAY |
 
 **响应体**:
+
 ```json
 {
   "code": 0,
@@ -1276,9 +1337,9 @@
     "metric": "ORDERS",
     "granularity": "DAY",
     "data_points": [
-      {"date": "2026-06-01", "value": 8200},
-      {"date": "2026-06-02", "value": 8400},
-      {"date": "2026-06-03", "value": 8500}
+      { "date": "2026-06-01", "value": 8200 },
+      { "date": "2026-06-02", "value": 8400 },
+      { "date": "2026-06-03", "value": 8500 }
     ]
   },
   "trace_id": "550e8400-e29b-41d4-a716-446655440000"
@@ -1289,70 +1350,70 @@
 
 ## 附录：错误码完整表
 
-| 错误码 | 说明 |
-|--------|------|
-| `AUTH_INVALID_TOKEN` | 登录态无效或已过期 |
-| `AUTH_TOKEN_REVOKED` | 令牌已被撤销 |
-| `AUTH_ACCOUNT_BANNED` | 账号已被禁用 |
-| `AUTH_CODE_INVALID` | 微信 code 无效 |
-| `USER_NOT_FOUND` | 用户不存在 |
-| `USER_PHONE_ALREADY_BOUND` | 手机号已被其他用户绑定 |
-| `USER_NICKNAME_INVALID` | 昵称包含敏感词或超出长度 |
-| `USER_ALREADY_IN_GROUP` | 你已在其他小组 |
-| `USER_GROUP_NOT_EMPTY` | 仍有关联的小组，请先退出 |
-| `GROUP_NOT_FOUND` | 小组不存在 |
-| `GROUP_MEMBER_LIMIT_EXCEEDED` | 小组成员超过 2 人 |
-| `GROUP_EXIT_SETTLEMENT_REQUIRED` | 退出组前仍有未结清订单、心愿、冻结积分 |
-| `INVITE_CODE_INVALID` | 邀请码无效或已过期 |
-| `INVITE_CODE_USED` | 邀请码已使用 |
-| `INVITE_USER_MISMATCH` | 当前用户与邀请用户不匹配 |
-| `ROLE_SWAP_BLOCKED_BY_ORDER` | 存在未完结订单，禁止互换 |
-| `ROLE_SWAP_BLOCKED_BY_WISH` | 操作人存在在途心愿，禁止互换 |
-| `PERMISSION_DENIED` | 无权限 |
-| `ROLE_NOT_ALLOWED` | 当前角色不允许操作 |
-| `FOOD_NOT_FOUND` | 菜品不存在 |
-| `FOOD_CAPACITY_EXCEEDED` | 菜品数量已达上限 |
-| `ORDER_NOT_FOUND` | 订单不存在 |
-| `ORDER_STATUS_INVALID` | 订单状态不允许当前操作 |
-| `ORDER_TYPE_INVALID` | 订单类型不支持当前操作 |
-| `DAILY_REWARD_LIMIT_REACHED` | 每日积分或经验上限已达 |
-| `WISH_NOT_FOUND` | 心愿不存在 |
-| `WISH_STATUS_INVALID` | 心愿状态不允许当前操作 |
-| `WISH_NOT_YOURS` | 你不是该心愿的发起人或履约人 |
-| `LOVE_POINT_INSUFFICIENT` | 爱心积分不足 |
-| `AGREEMENT_NOT_MUTUAL` | 需双方均确认后才能进入心愿池 |
-| `QUALITY_ALREADY_REVIEWED` | 该心愿已进行过质量评价 |
-| `WISH_NOT_FINISHED` | 心愿未完成，无法查看质量 |
-| `DIAMOND_INSUFFICIENT` | 组钻石不足 |
-| `ADMIN_DAILY_DIAMOND_LIMIT_REACHED` | 管理员今日钻石发放已达上限 |
-| `SIGN_IN_ALREADY_DONE` | 今天已经签到过了 |
-| `UPLOAD_SIZE_EXCEEDED` | 文件大小超出限制（最大 5MB） |
-| `UPLOAD_TYPE_NOT_ALLOWED` | 不支持的文件类型 |
-| `UPLOAD_CONTENT_REJECTED` | 上传内容审核未通过 |
-| `IDEMPOTENCY_CONFLICT` | 幂等键对应请求内容冲突 |
-| `INVALID_PARAMETER` | 参数校验失败 |
-| `INTERNAL_ERROR` | 服务器内部错误 |
+| 错误码                              | 说明                                   |
+| ----------------------------------- | -------------------------------------- |
+| `AUTH_INVALID_TOKEN`                | 登录态无效或已过期                     |
+| `AUTH_TOKEN_REVOKED`                | 令牌已被撤销                           |
+| `AUTH_ACCOUNT_BANNED`               | 账号已被禁用                           |
+| `AUTH_CODE_INVALID`                 | 微信 code 无效                         |
+| `USER_NOT_FOUND`                    | 用户不存在                             |
+| `USER_PHONE_ALREADY_BOUND`          | 手机号已被其他用户绑定                 |
+| `USER_NICKNAME_INVALID`             | 昵称包含敏感词或超出长度               |
+| `USER_ALREADY_IN_GROUP`             | 你已在其他小组                         |
+| `USER_GROUP_NOT_EMPTY`              | 仍有关联的小组，请先退出               |
+| `GROUP_NOT_FOUND`                   | 小组不存在                             |
+| `GROUP_MEMBER_LIMIT_EXCEEDED`       | 小组成员超过 2 人                      |
+| `GROUP_EXIT_SETTLEMENT_REQUIRED`    | 退出组前仍有未结清订单、心愿、冻结积分 |
+| `INVITE_CODE_INVALID`               | 邀请码无效或已过期                     |
+| `INVITE_CODE_USED`                  | 邀请码已使用                           |
+| `INVITE_USER_MISMATCH`              | 当前用户与邀请用户不匹配               |
+| `ROLE_SWAP_BLOCKED_BY_ORDER`        | 存在未完结订单，禁止互换               |
+| `ROLE_SWAP_BLOCKED_BY_WISH`         | 操作人存在在途心愿，禁止互换           |
+| `PERMISSION_DENIED`                 | 无权限                                 |
+| `ROLE_NOT_ALLOWED`                  | 当前角色不允许操作                     |
+| `FOOD_NOT_FOUND`                    | 菜品不存在                             |
+| `FOOD_CAPACITY_EXCEEDED`            | 菜品数量已达上限                       |
+| `ORDER_NOT_FOUND`                   | 订单不存在                             |
+| `ORDER_STATUS_INVALID`              | 订单状态不允许当前操作                 |
+| `ORDER_TYPE_INVALID`                | 订单类型不支持当前操作                 |
+| `DAILY_REWARD_LIMIT_REACHED`        | 每日积分或经验上限已达                 |
+| `WISH_NOT_FOUND`                    | 心愿不存在                             |
+| `WISH_STATUS_INVALID`               | 心愿状态不允许当前操作                 |
+| `WISH_NOT_YOURS`                    | 你不是该心愿的发起人或履约人           |
+| `LOVE_POINT_INSUFFICIENT`           | 爱心积分不足                           |
+| `AGREEMENT_NOT_MUTUAL`              | 需双方均确认后才能进入心愿池           |
+| `QUALITY_ALREADY_REVIEWED`          | 该心愿已进行过质量评价                 |
+| `WISH_NOT_FINISHED`                 | 心愿未完成，无法查看质量               |
+| `DIAMOND_INSUFFICIENT`              | 组钻石不足                             |
+| `ADMIN_DAILY_DIAMOND_LIMIT_REACHED` | 管理员今日钻石发放已达上限             |
+| `SIGN_IN_ALREADY_DONE`              | 今天已经签到过了                       |
+| `UPLOAD_SIZE_EXCEEDED`              | 文件大小超出限制（最大 5MB）           |
+| `UPLOAD_TYPE_NOT_ALLOWED`           | 不支持的文件类型                       |
+| `UPLOAD_CONTENT_REJECTED`           | 上传内容审核未通过                     |
+| `IDEMPOTENCY_CONFLICT`              | 幂等键对应请求内容冲突                 |
+| `INVALID_PARAMETER`                 | 参数校验失败                           |
+| `INTERNAL_ERROR`                    | 服务器内部错误                         |
 
 ---
 
 ## 附录：WebSocket 消息类型汇总
 
-| 方向 | type | 说明 |
-|------|------|------|
-| C→S | `auth` | 鉴权帧 |
-| S→C | `auth_ok` | 鉴权成功 |
-| S→C | `auth_failed` | 鉴权失败 |
-| C→S | `ping` | 心跳 |
-| S→C | `pong` | 心跳响应 |
-| C→S | `subscribe` | 订阅组消息 |
-| S→C | `subscribed` | 订阅确认 |
-| S→C | `notification` | 通知消息 |
-| S→C | `order_status_changed` | 订单状态变更 |
-| S→C | `wish_status_changed` | 心愿状态变更 |
-| S→C | `love_point_changed` | 积分变动 |
-| S→C | `diamond_changed` | 钻石变动 |
-| S→C | `wish_fulfill_reminder` | 履约提醒 |
-| S→C | `sign_in_reminder` | 签到提醒 |
+| 方向 | type                    | 说明         |
+| ---- | ----------------------- | ------------ |
+| C→S  | `auth`                  | 鉴权帧       |
+| S→C  | `auth_ok`               | 鉴权成功     |
+| S→C  | `auth_failed`           | 鉴权失败     |
+| C→S  | `ping`                  | 心跳         |
+| S→C  | `pong`                  | 心跳响应     |
+| C→S  | `subscribe`             | 订阅组消息   |
+| S→C  | `subscribed`            | 订阅确认     |
+| S→C  | `notification`          | 通知消息     |
+| S→C  | `order_status_changed`  | 订单状态变更 |
+| S→C  | `wish_status_changed`   | 心愿状态变更 |
+| S→C  | `love_point_changed`    | 积分变动     |
+| S→C  | `diamond_changed`       | 钻石变动     |
+| S→C  | `wish_fulfill_reminder` | 履约提醒     |
+| S→C  | `sign_in_reminder`      | 签到提醒     |
 
 ---
 

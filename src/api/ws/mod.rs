@@ -11,6 +11,7 @@ use tokio::net::TcpListener;
 use tokio_tungstenite::{accept_async, tungstenite::Message};
 
 use crate::api::ws::connection::ConnectionManager;
+use crate::utils::response::ApiResponse;
 
 /// WebSocket 全局连接管理器
 static CONNECTION_MANAGER: once_cell::sync::OnceCell<Arc<ConnectionManager>> =
@@ -62,7 +63,7 @@ pub async fn ws_info() -> impl web::Responder {
         "wechatMiniProgram": "wx.connectSocket({ url: 'ws://127.0.0.1:9832' })"
     });
 
-    web::HttpResponse::Ok().json(&info)
+    ApiResponse::success(info)
 }
 
 /// WebSocket 状态端点
@@ -80,7 +81,7 @@ pub async fn ws_status() -> impl web::Responder {
     let online_count = manager.online_count().await;
     let online_users = manager.online_users().await;
 
-    web::HttpResponse::Ok().json(&serde_json::json!({
+    ApiResponse::success(serde_json::json!({
         "status": "running",
         "onlineCount": online_count,
         "onlineUsers": online_users,

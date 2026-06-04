@@ -36,5 +36,9 @@ pub enum LoginMethod {
     PhoneCode,
     OAuth,
     Mixed,
+    // 数据库里存的是 'WEIXIN',SCREAMING_SNAKE_CASE 默认会渲染成 'WEI_XIN'。
+    // 用 #[sqlx(rename = "WEIXIN")] 覆盖,否则 real wechat-login 的用户在
+    // 反序列化 users.login_method 时会抛 "invalid value \"WEIXIN\" for enum LoginMethod"。
+    #[sqlx(rename = "WEIXIN")]
     WeiXin,
 }

@@ -24,17 +24,17 @@ Rust + ntex 的后端服务，包含用户/菜品/订单/心愿/看板接口，�
 
 项目自带 PostgreSQL schema：
 
-- [src/schema_v2_pg.sql](src/schema_v2_pg.sql)
+- [src/v3.sql](src/v3.sql)
 
 示例（按你的连接信息修改）：
 
 ```bash
-psql "postgres://postgres:<password>@localhost:5432/store" -f src/schema_v2_pg.sql
+psql "postgres://postgres:<password>@localhost:5432/store_v2" -f src/v3.sql
 ```
 
-如你在从旧结构升级，可参考迁移脚本（按需执行）：
+历史迁移脚本（已归档，仅作存档参考，不要在干净的 v3 数据库上执行）：
 
-- [src/migration_tags_update.sql](src/migration_tags_update.sql)
+- [src/utils/migrations_legacy/](src/utils/migrations_legacy/)
 
 ### 3) 配置环境变量
 
@@ -42,7 +42,7 @@ psql "postgres://postgres:<password>@localhost:5432/store" -f src/schema_v2_pg.s
 
 **必填**：
 
-- `DATABASE_URL`：PostgreSQL 连接串（例如 `postgres://postgres:<password>@localhost:5432/store`）
+- `DATABASE_URL`：PostgreSQL 连接串（例如 `postgres://postgres:<password>@localhost:5432/store_v2`）
 - `REDIS_URL`：Redis 连接串（例如 `redis://127.0.0.1/`）
 
 **可选**：
@@ -85,7 +85,7 @@ docker build -t may-store .
 
 ```bash
 docker run --rm -p 9831:9831 \
-	-e DATABASE_URL="postgres://postgres:<password>@<host>:5432/store" \
+	-e DATABASE_URL="postgres://postgres:<password>@<host>:5432/store_v2" \
 	-e REDIS_URL="redis://<host>:6379/" \
 	-e FRONTEND_ORIGIN="*" \
 	may-store

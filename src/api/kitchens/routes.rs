@@ -15,6 +15,7 @@ use utoipa::ToSchema;
 use crate::config::AppState;
 use crate::errors::CustomError;
 use crate::middlewares::auth::UserToken;
+use crate::utils::response::ApiResponse;
 
 /// 配置做客厨房路由
 pub fn configure(cfg: &mut ServiceConfig) {
@@ -69,8 +70,8 @@ async fn access_kitchen(
     // 查找邀请
     let invite = sqlx::query_as::<_, (i64, chrono::DateTime<chrono::Utc>, i64, i64)>(
         r#"SELECT gi.group_id, gi.expires_at, gi.max_uses, gi.used_count
-           FROM group_invitations gi
-           WHERE gi.invite_code = $1 AND gi.revoked = false"#,
+           FROM guest_invitations gi
+           WHERE gi.invite_code = $1 AND gi.status = 'ACTIVE'"#,
     )
     .bind(&code)
     .fetch_optional(db)
@@ -110,7 +111,7 @@ async fn access_kitchen(
         None => return Err(CustomError::NotFound("组不存在".into())),
     };
 
-    Ok(HttpResponse::Ok().json(&serde_json::json!({
+    Ok(ApiResponse::success(serde_json::json!({
         "groupId": row.get::<i64, _>("group_id"),
         "groupName": row.get::<String, _>("group_name"),
         "buyerNickName": row.get::<Option<String>, _>("buyer_nick"),
@@ -200,7 +201,7 @@ async fn get_kitchen_foods(
         })
         .collect();
 
-    Ok(HttpResponse::Ok().json(&result))
+    Ok(ApiResponse::success(result))
 }
 
 /// 创建做客订单响应
@@ -245,8 +246,8 @@ async fn create_guest_order(
     // 验证邀请码并获取主人家组
     let invite_row = sqlx::query_as::<_, (i64, i64)>(
         r#"SELECT gi.group_id, gi.id
-           FROM group_invitations gi
-           WHERE gi.invite_code = $1 AND gi.revoked = false
+           FROM guest_invitations gi
+           WHERE gi.invite_code = $1 AND gi.status = 'ACTIVE'
            AND gi.expires_at > NOW() AND gi.used_count < gi.max_uses"#,
     )
     .bind(&code)
@@ -267,12 +268,12 @@ async fn create_guest_order(
     let order_id = idgenerator::IdInstance::next_id();
 
     sqlx::query(
-        r#"INSERT INTO orders (order_id, group_id, type, creator_id, assignee_id, creator_role_snapshot, status, title, content, guest_user_id, guest_invite_id, guest_remark, created_at)
-           VALUES ($1, $2, 'GUEST', $3, $4, 'BUYER', 'CREATED', $5, $6, $7, $8, $9, NOW())"#
+        r#"INSERT INTO orders (order_id, user_id, group_id, type, status, creator_role_snapshot, assignee_id, assignee_role_snapshot, title, content, guest_user_id, guest_invite_id, guest_remark, is_guest, created_at)
+           VALUES ($1, $2, $3, 'GUEST', 'CREATED', 'ORDERING', $4, 'RECEIVING', $5, $6, $7, $8, $9, true, NOW())"#
     )
     .bind(order_id)
-    .bind(group_id)
     .bind(token.user_id)
+    .bind(group_id)
     .bind(seller_id)
     .bind(&input.title)
     .bind(&input.content)
@@ -288,7 +289,7 @@ async fn create_guest_order(
         .execute(db)
         .await?;
 
-    Ok(HttpResponse::Created().json(&serde_json::json!({
+    Ok(ApiResponse::success(serde_json::json!({
         "orderId": order_id,
         "status": "ok"
     })))

@@ -7,8 +7,8 @@ use ntex::{
 };
 use serde::{Deserialize, Serialize};
 
-use crate::config::{AppState, TOKEN_SECRET_KEY};
-use crate::domain::user::{UserPublic, UserRecord};
+use crate::config::AppState;
+use crate::domain::user::{Gender, LoginMethod, UserPublic, UserRecord, UserRole};
 use crate::errors::CustomError;
 
 // ========== Token Claims ==========
@@ -16,6 +16,8 @@ use crate::errors::CustomError;
 #[serde(rename_all = "camelCase")]
 pub struct UserTokenClaims {
     pub exp: i64,
+    // token 生成时用的是 `sub`（JWT 标准 claim），这里用 alias 兼容 `sub` 和 `user_id` 两种命名
+    #[serde(alias = "sub")]
     pub user_id: i64,
 }
 
@@ -49,7 +51,7 @@ impl<E: ErrorRenderer> FromRequest<E> for UserToken {
                 raw = stripped.trim().to_string();
             }
 
-            let decoding_key = DecodingKey::from_secret(TOKEN_SECRET_KEY);
+            let decoding_key = DecodingKey::from_secret(state.jwt_secret.as_bytes());
             let validation = Validation::new(Algorithm::HS256);
             let data = decode::<UserTokenClaims>(&raw, &decoding_key, &validation)
                 .map_err(|e| CustomError::unauthorized(format!("decode token error: {}", e)))?;
@@ -60,17 +62,34 @@ impl<E: ErrorRenderer> FromRequest<E> for UserToken {
                 redis_cache.get_user_public(&uid).await.ok().flatten();
             if public.is_none() {
                 let db = &state.db_pool;
-                if let Ok(record) = sqlx::query_as::<_, UserRecord>(
+                // query_as! 宏在编译期校验 SQL 与 UserRecord 的字段类型/可空性。
+                // 三个 NOT NULL 列被映射为 Option<T> 字段,需要 "col!: Option<T>" 强制类型覆盖。
+                // 三个 Postgres enum(role/gender/login_method)被 ::text 强转再用 "col: T" 覆盖类型。
+                // group_id 子查询需要 "col!: Option<i64>" 给出可空 BIGINT 的提示。
+                // u.status 不在 UserRecord 里,从 SELECT 中省略。
+                if let Ok(record) = sqlx::query_as!(
+                    UserRecord,
                     r#"
-                    SELECT u.user_id, u.username, u.email, u.nick_name, u.role, u.love_point, u.diamond, u.avatar, u.phone,
-                           u.open_id, u.status, u.created_at, u.updated_at, u.password_hash,
-                           u.password_algo, u.gender, u.birthday, u.username_change, u.login_method,
-                           u.last_login_at, u.password_updated_at, u.is_temp_password, u.push_id, u.last_role_switch_at,
-                           (SELECT agm.group_id FROM association_group_members agm JOIN association_groups g ON g.group_id=agm.group_id AND g.status=1 WHERE agm.user_id=u.user_id ORDER BY agm.is_primary DESC, agm.group_id ASC LIMIT 1) AS group_id
-                    FROM users u WHERE u.user_id=$1 AND u.status=1
-                    "#
+                    SELECT u.user_id, u.username, u.email, u.nick_name,
+                           u.role::text AS "role!: UserRole",
+                           u.love_point, u.diamond,
+                           u.avatar AS "avatar!: Option<String>",
+                           u.phone, u.open_id, u.created_at, u.updated_at, u.password_hash, u.password_algo,
+                           u.gender::text AS "gender!: Gender",
+                           u.birthday,
+                           u.username_change AS "username_change!: Option<bool>",
+                           u.login_method::text AS "login_method!: LoginMethod",
+                           u.last_login_at, u.password_updated_at,
+                           u.is_temp_password AS "is_temp_password!: Option<bool>",
+                           u.push_id, u.last_role_switch_at,
+                           (SELECT agm.group_id FROM association_group_members agm
+                              JOIN association_groups g ON g.group_id=agm.group_id AND g.status='ACTIVE'
+                              WHERE agm.user_id=u.user_id
+                              ORDER BY agm.is_primary DESC, agm.group_id ASC LIMIT 1) AS "group_id!: Option<i64>"
+                    FROM users u WHERE u.user_id=$1 AND u.status='ACTIVE'
+                    "#,
+                    uid
                 )
-                .bind(uid)
                 .fetch_one(db)
                 .await
                 {

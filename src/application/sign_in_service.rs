@@ -59,15 +59,21 @@ impl SignService {
 
         let consecutive_days = last_sign.map(|(_, cd)| cd + 1).unwrap_or(1);
 
-        // 获取签到奖励配置
+        // 获取签到奖励配置 (使用组配置中的每日签到奖励数组)
         let sign_reward = if let Some(gid) = group_id {
-            let cfg: Option<GroupPointConfig> = sqlx::query_as(
-                "SELECT group_id, sign_reward_daily, sign_reward_consecutive, order_point_percent FROM group_point_configs WHERE group_id = $1"
+            let cfg: Option<(Vec<i32>,)> = sqlx::query_as(
+                "SELECT daily_checkin_rewards FROM group_point_configs WHERE group_id = $1"
             )
             .bind(gid)
             .fetch_optional(db)
             .await?;
-            cfg.map(|c| c.sign_reward_daily).unwrap_or(5)
+            match cfg {
+                Some((rewards,)) if !rewards.is_empty() => {
+                    // 取第一个元素（基本奖励）
+                    rewards[0] as i32
+                }
+                _ => 5 // 默认奖励
+            }
         } else {
             5 // 默认奖励
         };
@@ -100,12 +106,13 @@ impl SignService {
             .execute(db)
             .await?;
 
-        // 记录钻石流水
+        // 记录钻石流水 (user diamond, not group diamond)
         sqlx::query(
-            "INSERT INTO diamond_flow (user_id, group_id, amount, balance, scene) VALUES ($1, $2, $3, $4, 'sign')"
+            "INSERT INTO diamond_flow (user_id, type, scene, diamond_num, balance_after) VALUES ($1, $2, $3, $4, $5)"
         )
         .bind(user_id as i64)
-        .bind(group_id)
+        .bind(1) // type 1 = earn
+        .bind("sign")
         .bind(diamonds_earned)
         .bind(new_total)
         .execute(db)
@@ -306,12 +313,13 @@ impl SignService {
             .execute(db)
             .await?;
 
-        // 记录钻石流水
+        // 记录钻石流水 (user diamond, not group diamond)
         sqlx::query(
-            "INSERT INTO diamond_flow (user_id, group_id, amount, balance, scene) VALUES ($1, $2, $3, $4, 'sign')"
+            "INSERT INTO diamond_flow (user_id, type, scene, diamond_num, balance_after) VALUES ($1, $2, $3, $4, $5)"
         )
         .bind(user_id as i64)
-        .bind(group_id)
+        .bind(1) // type 1 = earn
+        .bind("sign")
         .bind(diamonds_earned)
         .bind(new_total)
         .execute(db)

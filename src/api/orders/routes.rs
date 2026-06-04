@@ -20,6 +20,7 @@ use crate::domain::order::{
 use crate::errors::CustomError;
 use crate::middlewares::auth::UserToken;
 use crate::models::pagination::CursorPage;
+use crate::utils::response::ApiResponse;
 
 /// 配置订单路由
 pub fn configure(cfg: &mut ServiceConfig) {
@@ -59,7 +60,7 @@ pub async fn create_order(
 ) -> Result<impl Responder, CustomError> {
     let out = AppOrderService::create_order(&state.db_pool, user_token.user_id, &data.into_inner())
         .await?;
-    Ok(HttpResponse::Created().json(&out))
+    Ok(ApiResponse::success(out))
 }
 
 #[utoipa::path(
@@ -75,7 +76,7 @@ pub async fn get_orders(
     query: Query<OrderQuery>,
 ) -> Result<impl Responder, CustomError> {
     let page = AppOrderService::get_orders(&state.db_pool, &token, &query.into_inner()).await?;
-    Ok(HttpResponse::Ok().json(&page))
+    Ok(ApiResponse::success(page))
 }
 
 #[utoipa::path(
@@ -91,7 +92,7 @@ pub async fn get_order_detail(
     id: Path<i64>,
 ) -> Result<impl Responder, CustomError> {
     let out = AppOrderService::get_order_by_id(&state.db_pool, *id).await?;
-    Ok(HttpResponse::Ok().json(&out))
+    Ok(ApiResponse::success(out))
 }
 
 #[utoipa::path(
@@ -115,7 +116,7 @@ pub async fn create_order_rating(
         &body.into_inner(),
     )
     .await?;
-    Ok(HttpResponse::Created().json(&out))
+    Ok(ApiResponse::success(out))
 }
 
 #[utoipa::path(
@@ -132,7 +133,7 @@ pub async fn get_order_rating(
 ) -> Result<impl Responder, CustomError> {
     let out =
         AppOrderService::get_order_rating(&state.db_pool, user_token.user_id, *order_id).await?;
-    Ok(HttpResponse::Ok().json(&out))
+    Ok(ApiResponse::success(out))
 }
 
 // ============== FSD v2 独立接口: 接单/完成/确认 ==============
@@ -165,7 +166,7 @@ pub async fn accept_order(
     };
     let out =
         AppOrderService::update_order_status(&state.db_pool, user_token.user_id, &input).await?;
-    Ok(HttpResponse::Ok().json(&out))
+    Ok(ApiResponse::success(out))
 }
 
 /// 完成订单 - Seller 完成任务制作/履约
@@ -196,7 +197,7 @@ pub async fn complete_order(
     };
     let out =
         AppOrderService::update_order_status(&state.db_pool, user_token.user_id, &input).await?;
-    Ok(HttpResponse::Ok().json(&out))
+    Ok(ApiResponse::success(out))
 }
 
 /// 确认订单 - Buyer 确认履约质量
@@ -238,7 +239,7 @@ pub async fn confirm_order(
         },
     )
     .await?;
-    Ok(HttpResponse::Ok().json(&out))
+    Ok(ApiResponse::success(out))
 }
 
 /// 取消订单
@@ -277,7 +278,7 @@ pub async fn cancel_order(
         },
     )
     .await?;
-    Ok(HttpResponse::Ok().json(&out))
+    Ok(ApiResponse::success(out))
 }
 
 /// 拒绝订单
@@ -316,7 +317,7 @@ pub async fn reject_order(
         },
     )
     .await?;
-    Ok(HttpResponse::Ok().json(&out))
+    Ok(ApiResponse::success(out))
 }
 
 /// 订单超时处理
@@ -352,7 +353,7 @@ pub async fn order_timeout(
         },
     )
     .await?;
-    Ok(HttpResponse::Ok().json(&out))
+    Ok(ApiResponse::success(out))
 }
 
 /// 更新做客订单备注
@@ -405,7 +406,7 @@ pub async fn update_guest_remark(
     .execute(&state.db_pool)
     .await?;
 
-    Ok(HttpResponse::Ok().json(&serde_json::json!({"status": "ok"})))
+    Ok(ApiResponse::ok())
 }
 
 /// 订单取消输入

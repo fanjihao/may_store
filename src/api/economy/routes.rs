@@ -14,6 +14,7 @@ use utoipa::ToSchema;
 use crate::config::AppState;
 use crate::errors::CustomError;
 use crate::middlewares::auth::UserToken;
+use crate::utils::response::ApiResponse;
 
 /// 配置经济查询路由
 pub fn configure(cfg: &mut ServiceConfig) {
@@ -213,7 +214,7 @@ async fn get_points_balance(
 
     let today_remaining = (daily_limit as i64 - today_earned).max(0);
 
-    Ok(HttpResponse::Ok().json(&PointsBalanceResponse {
+    Ok(ApiResponse::success(PointsBalanceResponse {
         group_id: gid,
         user_id,
         available_love_point: available,
@@ -312,7 +313,7 @@ async fn get_points_transactions(
         None
     };
 
-    Ok(HttpResponse::Ok().json(&PointsTransactionsResponse {
+    Ok(ApiResponse::success(PointsTransactionsResponse {
         transactions,
         next_cursor,
         has_more,
@@ -377,7 +378,7 @@ async fn get_diamonds_balance(
     .fetch_one(db)
     .await?;
 
-    Ok(HttpResponse::Ok().json(&DiamondsBalanceResponse {
+    Ok(ApiResponse::success(DiamondsBalanceResponse {
         group_id: gid,
         diamond_balance: diamond_balance as i64,
         diamond_capacity: Some(footprint_capacity as i64),
@@ -469,7 +470,7 @@ async fn get_diamonds_transactions(
         None
     };
 
-    Ok(HttpResponse::Ok().json(&DiamondsTransactionsResponse {
+    Ok(ApiResponse::success(DiamondsTransactionsResponse {
         transactions,
         next_cursor,
         has_more,
@@ -541,7 +542,7 @@ async fn get_group_exp(
     let daily_limit = 200;
     let today_remaining = (daily_limit as i64 - today_exp).max(0);
 
-    Ok(HttpResponse::Ok().json(&GroupExpResponse {
+    Ok(ApiResponse::success(GroupExpResponse {
         group_id: gid,
         level,
         exp,
@@ -639,7 +640,7 @@ async fn get_exp_transactions(
         None
     };
 
-    Ok(HttpResponse::Ok().json(&ExpTransactionsResponse {
+    Ok(ApiResponse::success(ExpTransactionsResponse {
         transactions,
         next_cursor,
         has_more,

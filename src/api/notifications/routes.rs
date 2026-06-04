@@ -14,6 +14,7 @@ use utoipa::ToSchema;
 use crate::config::AppState;
 use crate::errors::CustomError;
 use crate::middlewares::auth::UserToken;
+use crate::utils::response::ApiResponse;
 
 /// 配置通知路由
 pub fn configure(cfg: &mut ServiceConfig) {
@@ -171,7 +172,7 @@ pub async fn get_notifications(
         None
     };
 
-    Ok(HttpResponse::Ok().json(&NotificationsResponse {
+    Ok(ApiResponse::success(NotificationsResponse {
         notifications,
         next_cursor,
         has_more,
@@ -226,7 +227,7 @@ pub async fn get_unread_count(
         by_type_map.insert(notif_type, serde_json::Value::Number(count.into()));
     }
 
-    Ok(HttpResponse::Ok().json(&UnreadCountResponse {
+    Ok(ApiResponse::success(UnreadCountResponse {
         total,
         by_type: Some(serde_json::Value::Object(by_type_map)),
     }))
@@ -271,7 +272,7 @@ pub async fn mark_single_as_read(
         return Err(CustomError::NotFound("通知不存在".into()));
     }
 
-    Ok(HttpResponse::Ok().json(&MarkReadResponse {
+    Ok(ApiResponse::success(MarkReadResponse {
         status: "ok".to_string(),
     }))
 }
@@ -336,7 +337,7 @@ pub async fn mark_all_as_read(
             .rows_affected() as i32
     };
 
-    Ok(HttpResponse::Ok().json(&MarkAllReadResponse { updated_count }))
+    Ok(ApiResponse::success(MarkAllReadResponse { updated_count }))
 }
 
 /// 批量标记已读请求
@@ -383,7 +384,7 @@ pub async fn delete_notification(
         return Err(CustomError::NotFound("通知不存在".into()));
     }
 
-    Ok(HttpResponse::Ok().json(&DeleteNotificationResponse {
+    Ok(ApiResponse::success(DeleteNotificationResponse {
         status: "ok".to_string(),
     }))
 }

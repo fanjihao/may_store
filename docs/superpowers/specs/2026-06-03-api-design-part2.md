@@ -18,6 +18,7 @@
 **状态机约束**: 无（新建心愿）
 
 **请求体**:
+
 ```json
 {
   "name": "一起看电影",
@@ -28,15 +29,16 @@
 }
 ```
 
-| 字段 | 类型 | 必填 | 说明 |
-|------|------|------|------|
-| `name` | string | 是 | 心愿名称，2-50字符 |
-| `description` | text | 否 | 心愿描述 |
-| `initial_cost` | integer | 是 | 初始报价（爱心积分），需 > 0 |
-| `fulfillment_deadline_hours` | integer | 否 | 履约期限（小时），默认 72，最大 720 |
-| `idempotency_key` | string | 是 | 幂等键 |
+| 字段                         | 类型    | 必填 | 说明                                |
+| ---------------------------- | ------- | ---- | ----------------------------------- |
+| `name`                       | string  | 是   | 心愿名称，2-50字符                  |
+| `description`                | text    | 否   | 心愿描述                            |
+| `initial_cost`               | integer | 是   | 初始报价（爱心积分），需 > 0        |
+| `fulfillment_deadline_hours` | integer | 否   | 履约期限（小时），默认 72，最大 720 |
+| `idempotency_key`            | string  | 是   | 幂等键                              |
 
 **响应体**:
+
 ```json
 {
   "code": 0,
@@ -66,6 +68,7 @@
 ```
 
 **业务规则**:
+
 - 创建者为 `requester_id`（发起人），另一成员自动为 `fulfiller_id`（履约人）
 - 心愿角色与自然人用户 ID 绑定，与当前 Buyer/Seller 角色无关
 - 创建后心愿处于 DRAFT 状态，双方需线上确认积分和期限后进入 CREATED
@@ -89,6 +92,7 @@
 | `role` | string | 否 | 按角色筛选：REQUESTER / FULFILLER |
 
 **响应体**:
+
 ```json
 {
   "code": 0,
@@ -128,6 +132,7 @@
 **认证**: 是
 
 **响应体**:
+
 ```json
 {
   "code": 0,
@@ -195,6 +200,7 @@
 **状态机约束**: `DRAFT` 或 `NEGOTIATING` 状态
 
 **请求体**:
+
 ```json
 {
   "cost": 60,
@@ -202,12 +208,13 @@
 }
 ```
 
-| 字段 | 类型 | 必填 | 说明 |
-|------|------|------|------|
-| `cost` | integer | 是 | 协商报价爱心积分，需 > 0 |
-| `idempotency_key` | string | 是 | 幂等键 |
+| 字段              | 类型    | 必填 | 说明                     |
+| ----------------- | ------- | ---- | ------------------------ |
+| `cost`            | integer | 是   | 协商报价爱心积分，需 > 0 |
+| `idempotency_key` | string  | 是   | 幂等键                   |
 
 **响应体**:
+
 ```json
 {
   "code": 0,
@@ -229,6 +236,7 @@
 ```
 
 **业务规则**:
+
 - 任一方可报价（QUOTE/COUNTER）
 - 报价后心愿进入 NEGOTIATING 状态
 - 报价仅记录本次协商记录，不改变 final_cost
@@ -248,6 +256,7 @@
 **状态机约束**: `DRAFT` 或 `NEGOTIATING` 状态
 
 **请求体**:
+
 ```json
 {
   "deadline_hours": 48,
@@ -272,6 +281,7 @@
 **状态机约束**: `NEGOTIATING` 状态
 
 **请求体**:
+
 ```json
 {
   "final_cost": 50,
@@ -280,13 +290,14 @@
 }
 ```
 
-| 字段 | 类型 | 必填 | 说明 |
-|------|------|------|------|
-| `final_cost` | integer | 是 | 双方最终确认的爱心积分 |
-| `fulfillment_deadline_hours` | integer | 是 | 履约期限（小时） |
-| `idempotency_key` | string | 是 | 幂等键 |
+| 字段                         | 类型    | 必填 | 说明                   |
+| ---------------------------- | ------- | ---- | ---------------------- |
+| `final_cost`                 | integer | 是   | 双方最终确认的爱心积分 |
+| `fulfillment_deadline_hours` | integer | 是   | 履约期限（小时）       |
+| `idempotency_key`            | string  | 是   | 幂等键                 |
 
 **响应体**:
+
 ```json
 {
   "code": 0,
@@ -303,6 +314,7 @@
 ```
 
 **业务规则**:
+
 - 双方都需要调用此接口确认（系统记录双方确认状态）
 - 全部双方确认后心愿进入 CREATED（心愿池）
 - 取消确认需要另一方先取消
@@ -322,6 +334,7 @@
 **状态机约束**: `DRAFT` 或 `NEGOTIATING` 状态
 
 **请求体**:
+
 ```json
 {
   "reason": "价格太高了",
@@ -330,6 +343,7 @@
 ```
 
 **响应体**:
+
 ```json
 {
   "code": 0,
@@ -360,6 +374,7 @@
 **状态机约束**: `CREATED` 状态
 
 **请求体**:
+
 ```json
 {
   "idempotency_key": "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
@@ -367,6 +382,7 @@
 ```
 
 **响应体**:
+
 ```json
 {
   "code": 0,
@@ -387,6 +403,7 @@
 ```
 
 **业务规则**:
+
 - 仅发起人（requester）可选择心愿并冻结积分
 - 选择时检查发起人爱心积分可用余额，余额不足拒绝
 - 冻结成功后生成冻结流水（EARN_FREEZE），减少可用余额，增加冻结余额
@@ -395,6 +412,7 @@
 - 冻结积分不打正式扣减，等打卡反馈完成才扣减
 
 **错误码**:
+
 - `WISH_STATUS_INVALID`: 心愿状态不是 CREATED
 - `LOVE_POINT_INSUFFICIENT`: 爱心积分不足
 
@@ -413,25 +431,31 @@
 **状态机约束**: `CLAIMED` 状态
 
 **请求体**:
+
 ```json
 {
   "content": "电影看完了！非常开心",
   "location": "CGV影城（万象城店）",
   "images": [
-    {"url": "https://example.com/footprint/1.jpg", "width": 800, "height": 600}
+    {
+      "url": "https://example.com/footprint/1.jpg",
+      "width": 800,
+      "height": 600
+    }
   ],
   "idempotency_key": "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
 }
 ```
 
-| 字段 | 类型 | 必填 | 说明 |
-|------|------|------|------|
-| `content` | text | 是 | 打卡内容，最多 500 字符 |
-| `location` | string | 否 | 位置（可选） |
-| `images` | array | 否 | 图片列表，最多 9 张 |
-| `idempotency_key` | string | 是 | 幂等键 |
+| 字段              | 类型   | 必填 | 说明                    |
+| ----------------- | ------ | ---- | ----------------------- |
+| `content`         | text   | 是   | 打卡内容，最多 500 字符 |
+| `location`        | string | 否   | 位置（可选）            |
+| `images`          | array  | 否   | 图片列表，最多 9 张     |
+| `idempotency_key` | string | 是   | 幂等键                  |
 
 **响应体**:
+
 ```json
 {
   "code": 0,
@@ -451,6 +475,7 @@
 ```
 
 **业务规则**:
+
 - 仅发起人（requester）可提交打卡反馈
 - 提交后冻结积分转正式扣减，生成扣减流水（DEDUCT）
 - 心愿进入 FINISHED 终态
@@ -469,6 +494,7 @@
 **状态机约束**: `CLAIMED` 状态且已超过履约截止时间
 
 **响应体**:
+
 ```json
 {
   "code": 0,
@@ -487,6 +513,7 @@
 ```
 
 **业务规则**:
+
 - 履约人（Fulfiller）逾期未履约，退还冻结积分
 - 生成解冻流水（UNFREEZE），退还冻结积分
 - 记录履约人的逾期履约记录
@@ -507,6 +534,7 @@
 **状态机约束**: 非 FINISHED / EXPIRED / CLOSED 终态
 
 **请求体**:
+
 ```json
 {
   "reason": "不想做了",
@@ -515,6 +543,7 @@
 ```
 
 **响应体**:
+
 ```json
 {
   "code": 0,
@@ -531,6 +560,7 @@
 ```
 
 **业务规则**:
+
 - 任意非终态，双方协商一致可关闭
 - 如存在冻结积分，必须解冻
 - CLOSED 为终态，不可恢复
@@ -546,6 +576,7 @@
 **认证**: 是
 
 **响应体**:
+
 ```json
 {
   "code": 0,
@@ -577,6 +608,7 @@
 **幂等**: 是
 
 **请求体**:
+
 ```json
 {
   "quality_level": "GOOD",
@@ -586,14 +618,15 @@
 }
 ```
 
-| 字段 | 类型 | 必填 | 说明 |
-|------|------|------|------|
-| `quality_level` | string | 是 | 质量等级：NONE / NORMAL / GOOD / EXCELLENT |
-| `quality_remark` | string | 否 | 质量备注 |
-| `diamond_reward` | integer | 否 | 奖励钻石数量（可配置默认奖励） |
-| `idempotency_key` | string | 是 | 幂等键 |
+| 字段              | 类型    | 必填 | 说明                                       |
+| ----------------- | ------- | ---- | ------------------------------------------ |
+| `quality_level`   | string  | 是   | 质量等级：NONE / NORMAL / GOOD / EXCELLENT |
+| `quality_remark`  | string  | 否   | 质量备注                                   |
+| `diamond_reward`  | integer | 否   | 奖励钻石数量（可配置默认奖励）             |
+| `idempotency_key` | string  | 是   | 幂等键                                     |
 
 **响应体**:
+
 ```json
 {
   "code": 0,
@@ -613,6 +646,7 @@
 ```
 
 **业务规则**:
+
 - 仅 FINISHED 状态心愿可发放质量奖励
 - 钻石奖励必须走 diamond_transactions（type=EARN）
 - 同一心愿额外钻石奖励必须幂等
@@ -667,6 +701,7 @@ CLOSED（终态）
 **认证**: 是
 
 **响应体**:
+
 ```json
 {
   "code": 0,
@@ -701,6 +736,7 @@ CLOSED（终态）
 | `biz_type` | string | 否 | 业务类型：ORDER_REWARD / WISH_FREEZE / WISH_DEDUCT / ADMIN_ADJUST |
 
 **响应体**:
+
 ```json
 {
   "code": 0,
@@ -763,6 +799,7 @@ CLOSED（终态）
 **认证**: 是
 
 **响应体**:
+
 ```json
 {
   "code": 0,
@@ -793,6 +830,7 @@ CLOSED（终态）
 | `type` | string | 否 | 流水类型：EARN / CONSUME / ADJUST |
 
 **响应体**:
+
 ```json
 {
   "code": 0,
@@ -836,6 +874,7 @@ CLOSED（终态）
 **认证**: 是
 
 **响应体**:
+
 ```json
 {
   "code": 0,
@@ -855,6 +894,7 @@ CLOSED（终态）
 ```
 
 **业务规则**:
+
 - 等级由管理员配置的等级经验表决定
 - 升级后每日积分上限和每日经验上限扩大
 
@@ -874,6 +914,7 @@ CLOSED（终态）
 | `type` | string | 否 | 流水类型：EARN / ADJUST / REVOKE |
 
 **响应体**:
+
 ```json
 {
   "code": 0,
@@ -911,6 +952,7 @@ CLOSED（终态）
 **幂等**: 是
 
 **请求体**:
+
 ```json
 {
   "user_id": 10001,
@@ -921,15 +963,16 @@ CLOSED（终态）
 }
 ```
 
-| 字段 | 类型 | 必填 | 说明 |
-|------|------|------|------|
-| `user_id` | integer | 是 | 用户 ID |
-| `type` | string | 是 | ADD=增加，REDUCE=扣减 |
-| `amount` | integer | 是 | 数量 |
-| `reason` | string | 是 | 调整原因 |
-| `idempotency_key` | string | 是 | 幂等键 |
+| 字段              | 类型    | 必填 | 说明                  |
+| ----------------- | ------- | ---- | --------------------- |
+| `user_id`         | integer | 是   | 用户 ID               |
+| `type`            | string  | 是   | ADD=增加，REDUCE=扣减 |
+| `amount`          | integer | 是   | 数量                  |
+| `reason`          | string  | 是   | 调整原因              |
+| `idempotency_key` | string  | 是   | 幂等键                |
 
 **响应体**:
+
 ```json
 {
   "code": 0,
@@ -949,6 +992,7 @@ CLOSED（终态）
 ```
 
 **业务规则**:
+
 - 所有经济修复必须走补偿流水，不允许后台直接改余额
 - 补偿流水写入 love_point_transactions（type=ADJUST）
 - 写入审计日志
@@ -968,6 +1012,7 @@ CLOSED（终态）
 **幂等**: 是
 
 **请求体**:
+
 ```json
 {
   "idempotency_key": "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
@@ -975,6 +1020,7 @@ CLOSED（终态）
 ```
 
 **响应体**:
+
 ```json
 {
   "code": 0,
@@ -995,6 +1041,7 @@ CLOSED（终态）
 ```
 
 **业务规则**:
+
 - 同一天同一用户同一组只能签到一次
 - 签到奖励发放组钻石
 - 双方当日均签到时可触发额外组钻石奖励（full_team_bonus）
@@ -1017,6 +1064,7 @@ CLOSED（终态）
 | `year_month` | string | 否 | 年月，如 2026-06 |
 
 **响应体**:
+
 ```json
 {
   "code": 0,
@@ -1054,6 +1102,7 @@ CLOSED（终态）
 **认证**: 是
 
 **响应体**:
+
 ```json
 {
   "code": 0,
@@ -1091,12 +1140,17 @@ CLOSED（终态）
 **幂等**: 是
 
 **请求体**:
+
 ```json
 {
   "content": "今天一起做了红烧肉，幸福的味道",
   "location": "家里厨房",
   "images": [
-    {"url": "https://example.com/footprint/1.jpg", "width": 800, "height": 600}
+    {
+      "url": "https://example.com/footprint/1.jpg",
+      "width": 800,
+      "height": 600
+    }
   ],
   "related_order_id": 10001,
   "related_wish_id": null,
@@ -1104,16 +1158,17 @@ CLOSED（终态）
 }
 ```
 
-| 字段 | 类型 | 必填 | 说明 |
-|------|------|------|------|
-| `content` | text | 是 | 文字内容，最多 500 字符 |
-| `location` | string | 否 | 可选位置 |
-| `images` | array | 否 | 图片列表，最多 9 张 |
-| `related_order_id` | integer | 否 | 关联订单 ID |
-| `related_wish_id` | integer | 否 | 关联心愿 ID |
-| `idempotency_key` | string | 是 | 幂等键 |
+| 字段               | 类型    | 必填 | 说明                    |
+| ------------------ | ------- | ---- | ----------------------- |
+| `content`          | text    | 是   | 文字内容，最多 500 字符 |
+| `location`         | string  | 否   | 可选位置                |
+| `images`           | array   | 否   | 图片列表，最多 9 张     |
+| `related_order_id` | integer | 否   | 关联订单 ID             |
+| `related_wish_id`  | integer | 否   | 关联心愿 ID             |
+| `idempotency_key`  | string  | 是   | 幂等键                  |
 
 **响应体**:
+
 ```json
 {
   "code": 0,
@@ -1134,6 +1189,7 @@ CLOSED（终态）
 ```
 
 **业务规则**:
+
 - 足迹仅组内可见
 - 图片需要通过内容安全审核
 - 订单完成/心愿完成后可自动生成纪念足迹
@@ -1157,6 +1213,7 @@ CLOSED（终态）
 | `user_id` | integer | 否 | 按用户筛选 |
 
 **响应体**:
+
 ```json
 {
   "code": 0,
@@ -1193,6 +1250,7 @@ CLOSED（终态）
 **认证**: 是
 
 **响应体**:
+
 ```json
 {
   "code": 0,
@@ -1203,6 +1261,7 @@ CLOSED（终态）
 ```
 
 **业务规则**:
+
 - 仅足迹创建者可删除
 - 软删除或硬删除均可
 
@@ -1217,6 +1276,7 @@ CLOSED（终态）
 **幂等**: 是
 
 **请求体**:
+
 ```json
 {
   "expand_by": 20,
@@ -1224,12 +1284,13 @@ CLOSED（终态）
 }
 ```
 
-| 字段 | 类型 | 必填 | 说明 |
-|------|------|------|------|
-| `expand_by` | integer | 是 | 扩容数量 |
-| `idempotency_key` | string | 是 | 幂等键 |
+| 字段              | 类型    | 必填 | 说明     |
+| ----------------- | ------- | ---- | -------- |
+| `expand_by`       | integer | 是   | 扩容数量 |
+| `idempotency_key` | string  | 是   | 幂等键   |
 
 **响应体**:
+
 ```json
 {
   "code": 0,
@@ -1246,6 +1307,7 @@ CLOSED（终态）
 ```
 
 **业务规则**:
+
 - 消耗组钻石扩容
 - 扩容费用按配置计算
 
@@ -1265,6 +1327,7 @@ CLOSED（终态）
 | `category` | string | 否 | USER / GROUP |
 
 **响应体**:
+
 ```json
 {
   "code": 0,
@@ -1305,6 +1368,7 @@ CLOSED（终态）
 **认证**: 是
 
 **响应体**:
+
 ```json
 {
   "code": 0,
@@ -1339,6 +1403,7 @@ CLOSED（终态）
 **触发事件**: `AchievementUnlockedEvent`
 
 **业务规则**:
+
 - 成就由事件驱动异步判定
 - 成就规则通过配置表管理
 - 成就解锁必须幂等（通过流水唯一键防重）

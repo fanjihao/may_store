@@ -4,7 +4,7 @@
 use ntex::web::{
     self,
     types::{Path, Query, State},
-    HttpResponse, Responder, ServiceConfig,
+    Responder, ServiceConfig,
 };
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -13,17 +13,23 @@ use utoipa::ToSchema;
 use crate::config::AppState;
 use crate::errors::CustomError;
 use crate::middlewares::auth::UserToken;
+use crate::utils::response::ApiResponse;
 
 /// 配置数据看板路由
 pub fn configure(cfg: &mut ServiceConfig) {
+    // 使用更具体的 scope，避免与 /api/auth, /api/users/me 等子 scope 冲突
+    // 原实现 web::scope("/api") 会吞掉所有 /api/* 请求，导致 404
+
+    // 用户组内看板
     cfg.service(
-        web::scope("/api")
-            // 用户组内看板
-            .route("/groups/{group_id}/dashboard", web::get().to(get_group_dashboard))
-            // 管理员运营看板
-            .route("/admin/dashboard", web::get().to(get_admin_dashboard))
-            // 管理员趋势数据
-            .route("/admin/dashboard/trends", web::get().to(get_dashboard_trends)),
+        web::scope("/api/groups/{group_id}/dashboard")
+            .route("", web::get().to(get_group_dashboard)),
+    );
+    // 管理员看板（运营 + 趋势）
+    cfg.service(
+        web::scope("/api/admin/dashboard")
+            .route("", web::get().to(get_admin_dashboard))
+            .route("/trends", web::get().to(get_dashboard_trends)),
     );
 }
 
@@ -332,7 +338,7 @@ pub async fn get_group_dashboard(
         "user2_consecutive_days": user2_sign
     });
 
-    Ok(HttpResponse::Ok().json(&GroupDashboardResponse {
+    Ok(ApiResponse::success(GroupDashboardResponse {
         group: GroupInfo {
             group_id: gid,
             name,
@@ -504,7 +510,7 @@ pub async fn get_admin_dashboard(
     .fetch_one(db)
     .await?;
 
-    Ok(HttpResponse::Ok().json(&AdminDashboardResponse {
+    Ok(ApiResponse::success(AdminDashboardResponse {
         overview: OverviewStats {
             total_users,
             total_groups,
@@ -611,7 +617,7 @@ pub async fn get_dashboard_trends(
         _ => vec![],
     };
 
-    Ok(HttpResponse::Ok().json(&TrendsResponse {
+    Ok(ApiResponse::success(TrendsResponse {
         metric: metric.clone(),
         granularity: granularity.to_string(),
         data_points,

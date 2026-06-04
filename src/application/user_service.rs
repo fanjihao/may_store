@@ -80,7 +80,7 @@ impl UserService {
 
         let record = sqlx::query_as::<_, UserRecord>(
             r#"SELECT u.user_id, u.username, u.nick_name, u.email, u.role, u.love_point, u.diamond, u.avatar, u.phone, u.open_id, u.status, u.created_at, u.updated_at, u.password_hash, u.password_algo, u.gender, u.birthday, u.username_change, u.login_method, u.last_login_at, u.password_updated_at, u.is_temp_password, u.push_id, u.last_role_switch_at,
-               (SELECT agm.group_id FROM association_group_members agm JOIN association_groups g ON g.group_id=agm.group_id AND g.status=1 WHERE agm.user_id=u.user_id ORDER BY agm.is_primary DESC, agm.group_id ASC LIMIT 1) AS group_id
+               (SELECT agm.group_id FROM association_group_members agm JOIN association_groups g ON g.group_id=agm.group_id AND g.status='ACTIVE' WHERE agm.user_id=u.user_id ORDER BY agm.is_primary DESC, agm.group_id ASC LIMIT 1) AS group_id
                FROM users u WHERE u.username = $1 OR u.open_id = $1"#
         )
         .bind(&account)
@@ -152,7 +152,7 @@ impl UserService {
         let db = &state.db_pool;
         let rec = sqlx::query_as::<_, UserRecord>(r#"
             SELECT u.user_id, u.username, u.email, u.nick_name, u.role, u.love_point, u.diamond, u.avatar, u.phone, u.open_id, u.status, u.created_at, u.updated_at, u.password_hash, u.password_algo, u.gender, u.birthday, u.username_change, u.login_method, u.last_login_at, u.password_updated_at, u.is_temp_password, u.push_id, u.last_role_switch_at,
-                   (SELECT agm.group_id FROM association_group_members agm JOIN association_groups g ON g.group_id=agm.group_id AND g.status=1 WHERE agm.user_id=u.user_id ORDER BY agm.is_primary DESC, agm.group_id ASC LIMIT 1) AS group_id
+                   (SELECT agm.group_id FROM association_group_members agm JOIN association_groups g ON g.group_id=agm.group_id AND g.status='ACTIVE' WHERE agm.user_id=u.user_id ORDER BY agm.is_primary DESC, agm.group_id ASC LIMIT 1) AS group_id
             FROM users u WHERE u.user_id = $1
         "#)
         .bind(user_id)
@@ -169,7 +169,7 @@ impl UserService {
         let db = &state.db_pool;
         let rec = sqlx::query_as::<_, UserRecord>(r#"
             SELECT u.user_id, u.username, u.email, u.nick_name, u.role, u.love_point, u.diamond, u.avatar, u.phone, u.open_id, u.status, u.created_at, u.updated_at, u.password_hash, u.password_algo, u.gender, u.birthday, u.username_change, u.login_method, u.last_login_at, u.password_updated_at, u.is_temp_password, u.push_id, u.last_role_switch_at,
-                   (SELECT agm.group_id FROM association_group_members agm JOIN association_groups g ON g.group_id=agm.group_id AND g.status=1 WHERE agm.user_id=u.user_id ORDER BY agm.is_primary DESC, agm.group_id ASC LIMIT 1) AS group_id
+                   (SELECT agm.group_id FROM association_group_members agm JOIN association_groups g ON g.group_id=agm.group_id AND g.status='ACTIVE' WHERE agm.user_id=u.user_id ORDER BY agm.is_primary DESC, agm.group_id ASC LIMIT 1) AS group_id
             FROM users u WHERE u.username = $1
         "#)
         .bind(username)
@@ -205,89 +205,104 @@ impl UserService {
     }
 
     /// 修改用户信息
+    ///
+    /// 使用 `COALESCE($N, col)` 模式:每个可选字段都绑定一个 `Option<T>`,
+    /// 当 bind 为 `None` 时 `COALESCE` 保留列的现有值。这避免了 `format!`
+    /// 拼接列名带来的占位符编号冲突和 SQL 注入面。 模式:每个可选字段都绑定一个 `Option<T>`,
+    /// 当 bind 为 `None` 时 `COALESCE` 保留列的现有值。这避免了 `format!`
+    /// 拼接列名带来的占位符编号冲突和 SQL 注入面。
     pub async fn change_info(
+        user_id: i64,
         input: ProfileUpdateInput,
         state: &Arc<AppState>,
     ) -> Result<UserPublic, CustomError> {
         let db = &state.db_pool;
 
-        // 如果要修改用户名，检查是否已被使用
+        // 如果要修改用户名,检查是否已被使用
         if let Some(ref new_username) = input.new_username {
-            let exists_row =
-                sqlx::query("SELECT COUNT(*) FROM users WHERE username = $1 AND user_id != $2")
-                    .bind(new_username)
-                    .bind(0) // 需要用户ID，但这里没有传入，先跳过
-                    .fetch_one(db)
-                    .await?;
-            let exists: i64 = exists_row.get(0);
+            let exists: i64 = sqlx::query(
+                "SELECT COUNT(*) FROM users WHERE username = $1 AND user_id != $2",
+            )
+            .bind(new_username)
+            .bind(user_id)
+            .fetch_one(db)
+            .await?
+            .get(0);
             if exists > 0 {
                 return Err(CustomError::BadRequest("用户名已被使用".into()));
             }
         }
 
-        // 构建动态更新SQL
-        let mut updates = Vec::new();
-        let mut param_count = 1;
-
-        if input.nick_name.is_some() {
-            updates.push(format!("nick_name = ${}", param_count));
-            param_count += 1;
-        }
-        if input.avatar.is_some() {
-            updates.push(format!("avatar = ${}", param_count));
-            param_count += 1;
-        }
-        if input.gender.is_some() {
-            updates.push(format!("gender = ${}", param_count));
-            param_count += 1;
-        }
-        if input.birthday.is_some() {
-            updates.push(format!("birthday = ${}", param_count));
-            param_count += 1;
-        }
-        if input.new_username.is_some() {
-            updates.push(format!("username = ${}", param_count));
-            param_count += 1;
-        }
-
-        if updates.is_empty() {
-            return Err(CustomError::BadRequest("没有需要更新的字段".into()));
-        }
-
-        // 更新密码
-        if let Some(ref new_pwd) = input.new_password {
-            if let Some(ref old_pwd) = input.old_password {
-                // 验证旧密码
-                let user_row = sqlx::query("SELECT password_hash FROM users WHERE user_id = $1")
-                    .bind(0) // 需要用户ID
-                    .fetch_one(db)
-                    .await?;
-                let stored_hash: String = user_row.get(0);
+        // 验证旧密码,并准备新密码哈希(若需更新)
+        let (new_hash, new_algo): (Option<String>, Option<String>) =
+            if let (Some(ref old_pwd), Some(ref new_pwd)) =
+                (&input.old_password, &input.new_password)
+            {
+                let row: Option<(Option<String>,)> =
+                    sqlx::query_as("SELECT password_hash FROM users WHERE user_id = $1")
+                        .bind(user_id)
+                        .fetch_optional(db)
+                        .await?;
+                let stored_hash = row.and_then(|(h,)| h).unwrap_or_default();
                 if !Self::verify_password(old_pwd, &stored_hash).unwrap_or(false) {
                     return Err(CustomError::BadRequest("旧密码错误".into()));
                 }
-                let (_pwd_hash, _algo) =
+                let (hash, algo) =
                     Self::hash_password(new_pwd).map_err(|e| CustomError::internal(e))?;
-                updates.push(format!("password_hash = ${}", param_count));
-                param_count += 1;
-                updates.push(format!("password_algo = ${}", param_count));
-            }
+                (Some(hash), Some(algo))
+            } else {
+                (None, None)
+            };
+
+        // 至少要有一个待更新字段,否则视为客户端错误
+        if input.nick_name.is_none()
+            && input.avatar.is_none()
+            && input.phone.is_none()
+            && input.gender.is_none()
+            && input.birthday.is_none()
+            && input.new_username.is_none()
+            && new_hash.is_none()
+        {
+            return Err(CustomError::BadRequest("没有需要更新的字段".into()));
         }
 
-        let query = format!(
-            "UPDATE users SET {} WHERE user_id = $1 RETURNING user_id, username, nick_name, avatar, role, group_id",
-            updates.join(", ")
-        );
-
-        let rec = sqlx::query_as::<_, UserRecord>(&query)
-            .bind(0) // 需要用户ID
-            .bind(&input.nick_name)
-            .bind(&input.avatar)
-            .bind(&input.gender)
-            .bind(&input.birthday)
-            .bind(&input.new_username)
-            .fetch_one(db)
-            .await?;
+        // 静态 SQL:每个 $N 占位符与 Option 字段一一对应,
+        // 不会与 WHERE user_id = $1 冲突。RETURNING 子句与
+        // get_current_info 的投影保持一致,UserRecord 可直接解码。
+        let rec = sqlx::query_as::<_, UserRecord>(
+            r#"
+            UPDATE users SET
+                nick_name     = COALESCE($2, nick_name),
+                avatar        = COALESCE($3, avatar),
+                phone         = COALESCE($4, phone),
+                gender        = COALESCE($5, gender),
+                birthday      = COALESCE($6, birthday),
+                username      = COALESCE($7, username),
+                password_hash = COALESCE($8, password_hash),
+                password_algo = COALESCE($9, password_algo)
+            WHERE user_id = $1
+            RETURNING user_id, username, email, nick_name, role, love_point, diamond,
+                      avatar, phone, open_id, status, created_at, updated_at,
+                      password_hash, password_algo, gender, birthday, username_change,
+                      login_method, last_login_at, password_updated_at, is_temp_password,
+                      push_id, last_role_switch_at,
+                      (SELECT agm.group_id FROM association_group_members agm
+                         JOIN association_groups g ON g.group_id = agm.group_id AND g.status = 'ACTIVE'
+                         WHERE agm.user_id = users.user_id
+                         ORDER BY agm.is_primary DESC, agm.group_id ASC LIMIT 1) AS group_id
+            "#,
+        )
+        .bind(user_id)
+        .bind(&input.nick_name)
+        .bind(&input.avatar)
+        .bind(&input.phone)
+        .bind(input.gender)
+        .bind(&input.birthday)
+        .bind(&input.new_username)
+        .bind(new_hash)
+        .bind(new_algo)
+        .fetch_one(db)
+        .await?;
 
         Ok(UserPublic::from(rec))
     }
@@ -401,232 +416,48 @@ impl UserService {
 pub struct GroupService;
 
 impl GroupService {
-    /// 获取邀请列表
+    /// 获取邀请列表 - Note: invitations table doesn't exist in v3.sql
+    /// This functionality is not implemented
+    #[allow(dead_code)]
     pub async fn get_invitation(
-        user_id: i64,
-        state: &Arc<AppState>,
+        _user_id: i64,
+        _state: &Arc<AppState>,
     ) -> Result<InvitationListOut, CustomError> {
-        let db = &state.db_pool;
-
-        // 获取收到的邀请（to_user_id = user_id）
-        let incoming_rows = sqlx::query(
-            r#"SELECT i.id, i.from_user_id, i.to_user_id, i.status, i.created_at,
-                      fu.username as from_username, fu.nick_name as from_nick_name, fu.avatar as from_avatar,
-                      tu.username as to_username, tu.nick_name as to_nick_name, tu.avatar as to_avatar
-               FROM invitations i
-               JOIN users fu ON i.from_user_id = fu.user_id
-               JOIN users tu ON i.to_user_id = tu.user_id
-               WHERE i.to_user_id = $1 AND i.status = 'PENDING'
-               ORDER BY i.created_at DESC"#
-        )
-        .bind(user_id)
-        .fetch_all(db)
-        .await?;
-
-        let incoming: Vec<InvitationRequestOut> = incoming_rows
-            .into_iter()
-            .map(|r| InvitationRequestOut {
-                id: r.get("id"),
-                from_user_id: r.get("from_user_id"),
-                from_username: r.get("from_username"),
-                from_nick_name: r.get("from_nick_name"),
-                from_avatar: r.get("from_avatar"),
-                to_user_id: r.get("to_user_id"),
-                to_username: r.get("to_username"),
-                to_nick_name: r.get("to_nick_name"),
-                to_avatar: r.get("to_avatar"),
-                status: r.get("status"),
-                created_at: r.get("created_at"),
-            })
-            .collect();
-
-        // 获取发出的邀请（from_user_id = user_id）
-        let outgoing_rows = sqlx::query(
-            r#"SELECT i.id, i.from_user_id, i.to_user_id, i.status, i.created_at,
-                      fu.username as from_username, fu.nick_name as from_nick_name, fu.avatar as from_avatar,
-                      tu.username as to_username, tu.nick_name as to_nick_name, tu.avatar as to_avatar
-               FROM invitations i
-               JOIN users fu ON i.from_user_id = fu.user_id
-               JOIN users tu ON i.to_user_id = tu.user_id
-               WHERE i.from_user_id = $1
-               ORDER BY i.created_at DESC"#
-        )
-        .bind(user_id)
-        .fetch_all(db)
-        .await?;
-
-        let outgoing: Vec<InvitationRequestOut> = outgoing_rows
-            .into_iter()
-            .map(|r| InvitationRequestOut {
-                id: r.get("id"),
-                from_user_id: r.get("from_user_id"),
-                from_username: r.get("from_username"),
-                from_nick_name: r.get("from_nick_name"),
-                from_avatar: r.get("from_avatar"),
-                to_user_id: r.get("to_user_id"),
-                to_username: r.get("to_username"),
-                to_nick_name: r.get("to_nick_name"),
-                to_avatar: r.get("to_avatar"),
-                status: r.get("status"),
-                created_at: r.get("created_at"),
-            })
-            .collect();
-
-        Ok(InvitationListOut { incoming, outgoing })
+        Ok(InvitationListOut {
+            incoming: vec![],
+            outgoing: vec![],
+        })
     }
 
-    /// 创建邀请
+    /// 创建邀请 - Note: invitations table doesn't exist in v3.sql
+    /// This functionality is not implemented
+    #[allow(dead_code)]
     pub async fn new_invitation(
-        user_id: i64,
-        input: NewInvitationInput,
-        state: &Arc<AppState>,
+        _user_id: i64,
+        _input: NewInvitationInput,
+        _state: &Arc<AppState>,
     ) -> Result<(), CustomError> {
-        let db = &state.db_pool;
-
-        // 查找目标用户
-        let target_user: Option<(i64,)> =
-            sqlx::query_as("SELECT user_id FROM users WHERE username = $1")
-                .bind(&input.to_username)
-                .fetch_optional(db)
-                .await?
-                .map(|r| r);
-
-        let target_id = match target_user {
-            Some((id,)) => id,
-            None => return Err(CustomError::NotFound("目标用户不存在".into())),
-        };
-
-        // 不能邀请自己
-        if target_id == user_id {
-            return Err(CustomError::BadRequest("不能邀请自己".into()));
-        }
-
-        // 检查是否已有邀请记录
-        let existing: Option<(i64,)> = sqlx::query_as(
-            r#"SELECT id FROM invitations
-               WHERE ((from_user_id = $1 AND to_user_id = $2) OR (from_user_id = $2 AND to_user_id = $1))
-               AND status = 'PENDING'"#
-        )
-        .bind(user_id)
-        .bind(target_id)
-        .fetch_optional(db)
-        .await?;
-
-        if existing.is_some() {
-            return Err(CustomError::BadRequest("已有待处理的邀请".into()));
-        }
-
-        // 创建邀请
-        sqlx::query(
-            r#"INSERT INTO invitations (from_user_id, to_user_id, status, created_at)
-               VALUES ($1, $2, 'PENDING', $3)"#,
-        )
-        .bind(user_id)
-        .bind(target_id)
-        .bind(Utc::now())
-        .execute(db)
-        .await?;
-
-        Ok(())
+        Err(CustomError::NotFound("邀请功能暂未实现".into()))
     }
 
-    /// 确认邀请（接受或拒绝）
+    /// 确认邀请 - Note: invitations table doesn't exist in v3.sql
+    #[allow(dead_code)]
     pub async fn confirm_invitation(
-        user_id: i64,
-        invitation_id: i64,
-        input: ConfirmInvitationInput,
-        state: &Arc<AppState>,
+        _user_id: i64,
+        _invitation_id: i64,
+        _input: ConfirmInvitationInput,
+        _state: &Arc<AppState>,
     ) -> Result<(), CustomError> {
-        let db = &state.db_pool;
-
-        // 查找邀请记录
-        let invitation: Option<(i64, i64, String)> =
-            sqlx::query_as("SELECT id, to_user_id, status FROM invitations WHERE id = $1")
-                .bind(invitation_id)
-                .fetch_optional(db)
-                .await?;
-
-        let (to_user_id, status) = match invitation {
-            Some((_, tu, s)) => (tu, s),
-            None => return Err(CustomError::NotFound("邀请不存在".into())),
-        };
-
-        // 只能被邀请人确认
-        if to_user_id != user_id {
-            return Err(CustomError::Forbidden("无权操作此邀请".into()));
-        }
-
-        // 检查邀请状态
-        if status != "PENDING" {
-            return Err(CustomError::BadRequest("邀请已被处理".into()));
-        }
-
-        if input.accept {
-            // 接受邀请：更新邀请状态
-            sqlx::query("UPDATE invitations SET status = 'ACCEPTED' WHERE id = $1")
-                .bind(invitation_id)
-                .execute(db)
-                .await?;
-
-            // 获取邀请人的组信息
-            let inviter_group_id: Option<(i64,)> = sqlx::query_as(
-                r#"SELECT agm.group_id FROM association_group_members agm
-                   WHERE agm.user_id = $1 AND agm.is_primary = true LIMIT 1"#,
-            )
-            .bind(user_id)
-            .fetch_optional(db)
-            .await?
-            .map(|r| r);
-
-            // 如果邀请人有组，将当前用户加入该组
-            if let Some((group_id,)) = inviter_group_id {
-                sqlx::query(
-                    r#"INSERT INTO association_group_members (user_id, group_id, is_primary, created_at)
-                       VALUES ($1, $2, true, $3)
-                       ON CONFLICT DO NOTHING"#
-                )
-                .bind(user_id)
-                .bind(group_id)
-                .bind(Utc::now())
-                .execute(db)
-                .await?;
-            }
-        } else {
-            // 拒绝邀请
-            sqlx::query("UPDATE invitations SET status = 'REJECTED' WHERE id = $1")
-                .bind(invitation_id)
-                .execute(db)
-                .await?;
-        }
-
-        Ok(())
+        Err(CustomError::NotFound("邀请功能暂未实现".into()))
     }
 
-    /// 取消邀请
+    /// 取消邀请 - Note: invitations table doesn't exist in v3.sql
+    #[allow(dead_code)]
     pub async fn cancel_invitation(
-        invitation_id: i64,
-        state: &Arc<AppState>,
+        _invitation_id: i64,
+        _state: &Arc<AppState>,
     ) -> Result<(), CustomError> {
-        let db = &state.db_pool;
-
-        // 检查邀请是否存在且状态为PENDING
-        let existing: Option<(i64, String)> =
-            sqlx::query_as("SELECT id, status FROM invitations WHERE id = $1")
-                .bind(invitation_id)
-                .fetch_optional(db)
-                .await?;
-
-        match existing {
-            Some((_, status)) if status == "PENDING" => {
-                sqlx::query("UPDATE invitations SET status = 'CANCELLED' WHERE id = $1")
-                    .bind(invitation_id)
-                    .execute(db)
-                    .await?;
-                Ok(())
-            }
-            Some(_) => Err(CustomError::BadRequest("邀请已被处理，无法取消".into())),
-            None => Err(CustomError::NotFound("邀请不存在".into())),
-        }
+        Err(CustomError::NotFound("邀请功能暂未实现".into()))
     }
 
     /// 解绑请求
@@ -662,18 +493,8 @@ impl GroupService {
             return Err(CustomError::BadRequest("组内只剩您一人，无需解绑".into()));
         }
 
-        // 创建解绑请求记录
-        sqlx::query(
-            r#"INSERT INTO unbind_requests (user_id, group_id, reason, status, created_at)
-               VALUES ($1, $2, $3, 'PENDING', $4)"#,
-        )
-        .bind(user_id)
-        .bind(group_id)
-        .bind(&input.reason)
-        .bind(Utc::now())
-        .execute(db)
-        .await?;
-
+        // Note: unbind_requests table doesn't exist in v3.sql
+        // Only remove user from group (association_group_members DELETE exists)
         // 从组中移除用户
         sqlx::query("DELETE FROM association_group_members WHERE user_id = $1 AND group_id = $2")
             .bind(user_id)
@@ -691,18 +512,26 @@ impl GroupService {
     ) -> Result<GroupInfoOut, CustomError> {
         let db = &state.db_pool;
 
-        // 获取群组信息
+        // 获取群组信息 (member_count derived dynamically)
         let group_row = sqlx::query(
-            "SELECT group_id, group_name, member_count, diamond, footprint_capacity, settings FROM association_groups WHERE group_id = $1"
+            "SELECT group_id, group_name, diamond, footprint_capacity, settings FROM association_groups WHERE group_id = $1"
         )
         .bind(group_id)
         .fetch_optional(db)
         .await?;
 
-        let (group_name, member_count): (String, i32) = match group_row {
-            Some(r) => (r.get("group_name"), r.get("member_count")),
+        let (group_name,): (String,) = match group_row {
+            Some(r) => (r.get("group_name"),),
             None => return Err(CustomError::NotFound("群组不存在".into())),
         };
+
+        // 获取组成员数量
+        let member_count: i32 =
+            sqlx::query("SELECT COUNT(*) FROM association_group_members WHERE group_id = $1 AND member_status='ACTIVE'")
+                .bind(group_id)
+                .fetch_one(db)
+                .await?
+                .get::<i64, _>(0) as i32;
 
         // 获取群组成员
         let members = sqlx::query_as::<_, UserRecord>(
@@ -758,9 +587,9 @@ impl GroupService {
 
         // 将目标用户绑定到组
         sqlx::query(
-            r#"INSERT INTO association_group_members (user_id, group_id, is_primary, created_at)
+            r#"INSERT INTO association_group_members (user_id, group_id, is_primary, joined_at)
                VALUES ($1, $2, true, $3)
-               ON CONFLICT (user_id) DO UPDATE SET group_id = $2, is_primary = true"#,
+               ON CONFLICT (user_id) DO UPDATE SET group_id = $2, is_primary = true"#
         )
         .bind(input.user_id)
         .bind(group_id)
@@ -768,14 +597,7 @@ impl GroupService {
         .execute(db)
         .await?;
 
-        // 更新组成员数量
-        sqlx::query(
-            "UPDATE association_groups SET member_count = member_count + 1 WHERE group_id = $1",
-        )
-        .bind(group_id)
-        .execute(db)
-        .await?;
-
+        // Note: member_count is not a real column - group membership is counted dynamically
         Ok(())
     }
 
