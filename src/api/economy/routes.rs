@@ -267,23 +267,42 @@ async fn get_points_transactions(
         return Err(CustomError::Forbidden("无权访问该组".into()));
     }
 
-    // 构建查询
-    let type_filter = if let Some(t) = tx_type {
-        format!("AND type = '{}'", t)
-    } else {
-        String::new()
+    // 参数化查询 + 枚举白名单,避免 SQL 注入
+    let tx_type_filter: Option<&str> = match tx_type.as_deref() {
+        Some(t) if matches!(t, "EARN" | "FREEZE" | "UNFREEZE" | "DEDUCT" | "ADJUST") => Some(t),
+        Some(_) => return Err(CustomError::BadRequest("tx_type 非法".into())),
+        None => None,
     };
 
-    let sql = format!(
-        r#"SELECT id, type, amount, available_before, available_after, frozen_before, frozen_after,
-                  biz_type, biz_id, idempotency_key, created_at
-           FROM love_point_transactions
-           WHERE user_id=$1 AND group_id=$2 {}
-           ORDER BY created_at DESC
-           LIMIT $3"#, type_filter
-    );
-
-    let rows = sqlx::query(&sql).bind(user_id).bind(gid).bind(limit + 1).fetch_all(db).await?;
+    let rows = match tx_type_filter {
+        Some(t) => sqlx::query(
+            r#"SELECT id, type, amount, available_before, available_after, frozen_before, frozen_after,
+                      biz_type, biz_id, idempotency_key, created_at
+               FROM love_point_transactions
+               WHERE user_id=$1 AND group_id=$2 AND type=$3
+               ORDER BY created_at DESC
+               LIMIT $4"#,
+        )
+        .bind(user_id)
+        .bind(gid)
+        .bind(t)
+        .bind(limit + 1)
+        .fetch_all(db)
+        .await?,
+        None => sqlx::query(
+            r#"SELECT id, type, amount, available_before, available_after, frozen_before, frozen_after,
+                      biz_type, biz_id, idempotency_key, created_at
+               FROM love_point_transactions
+               WHERE user_id=$1 AND group_id=$2
+               ORDER BY created_at DESC
+               LIMIT $3"#,
+        )
+        .bind(user_id)
+        .bind(gid)
+        .bind(limit + 1)
+        .fetch_all(db)
+        .await?,
+    };
 
     let has_more = rows.len() > limit as usize;
     let transactions: Vec<PointsTransactionItem> = rows
@@ -428,21 +447,38 @@ async fn get_diamonds_transactions(
         return Err(CustomError::Forbidden("无权访问该组".into()));
     }
 
-    let type_filter = if let Some(t) = tx_type {
-        format!("AND type = '{}'", t)
-    } else {
-        String::new()
+    // 参数化查询 + 枚举白名单
+    let tx_type_filter: Option<&str> = match query.tx_type.as_deref() {
+        Some(t) if matches!(t, "EARN" | "CONSUME" | "ADJUST") => Some(t),
+        Some(_) => return Err(CustomError::BadRequest("tx_type 非法".into())),
+        None => None,
     };
 
-    let sql = format!(
-        r#"SELECT id, type, amount, balance_before, balance_after, biz_type, biz_id, idempotency_key, created_at
-           FROM diamond_transactions
-           WHERE group_id=$1 {}
-           ORDER BY created_at DESC
-           LIMIT $2"#, type_filter
-    );
-
-    let rows = sqlx::query(&sql).bind(gid).bind(limit + 1).fetch_all(db).await?;
+    let rows = match tx_type_filter {
+        Some(t) => sqlx::query(
+            r#"SELECT id, type, amount, balance_before, balance_after, biz_type, biz_id, idempotency_key, created_at
+               FROM diamond_transactions
+               WHERE group_id=$1 AND type=$2
+               ORDER BY created_at DESC
+               LIMIT $3"#,
+        )
+        .bind(gid)
+        .bind(t)
+        .bind(limit + 1)
+        .fetch_all(db)
+        .await?,
+        None => sqlx::query(
+            r#"SELECT id, type, amount, balance_before, balance_after, biz_type, biz_id, idempotency_key, created_at
+               FROM diamond_transactions
+               WHERE group_id=$1
+               ORDER BY created_at DESC
+               LIMIT $2"#,
+        )
+        .bind(gid)
+        .bind(limit + 1)
+        .fetch_all(db)
+        .await?,
+    };
 
     let has_more = rows.len() > limit as usize;
     let transactions: Vec<DiamondsTransactionItem> = rows
@@ -596,21 +632,38 @@ async fn get_exp_transactions(
         return Err(CustomError::Forbidden("无权访问该组".into()));
     }
 
-    let type_filter = if let Some(t) = tx_type {
-        format!("AND type = '{}'", t)
-    } else {
-        String::new()
+    // 参数化查询 + 枚举白名单
+    let tx_type_filter: Option<&str> = match query.tx_type.as_deref() {
+        Some(t) if matches!(t, "EARN" | "ADJUST" | "REVOKE") => Some(t),
+        Some(_) => return Err(CustomError::BadRequest("tx_type 非法".into())),
+        None => None,
     };
 
-    let sql = format!(
-        r#"SELECT id, type, amount, exp_before, exp_after, level_before, level_after, biz_type, biz_id, idempotency_key, created_at
-           FROM group_exp_transactions
-           WHERE group_id=$1 {}
-           ORDER BY created_at DESC
-           LIMIT $2"#, type_filter
-    );
-
-    let rows = sqlx::query(&sql).bind(gid).bind(limit + 1).fetch_all(db).await?;
+    let rows = match tx_type_filter {
+        Some(t) => sqlx::query(
+            r#"SELECT id, type, amount, exp_before, exp_after, level_before, level_after, biz_type, biz_id, idempotency_key, created_at
+               FROM group_exp_transactions
+               WHERE group_id=$1 AND type=$2
+               ORDER BY created_at DESC
+               LIMIT $3"#,
+        )
+        .bind(gid)
+        .bind(t)
+        .bind(limit + 1)
+        .fetch_all(db)
+        .await?,
+        None => sqlx::query(
+            r#"SELECT id, type, amount, exp_before, exp_after, level_before, level_after, biz_type, biz_id, idempotency_key, created_at
+               FROM group_exp_transactions
+               WHERE group_id=$1
+               ORDER BY created_at DESC
+               LIMIT $2"#,
+        )
+        .bind(gid)
+        .bind(limit + 1)
+        .fetch_all(db)
+        .await?,
+    };
 
     let has_more = rows.len() > limit as usize;
     let transactions: Vec<ExpTransactionItem> = rows

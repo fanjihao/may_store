@@ -29,6 +29,57 @@ pub struct UserToken {
     pub user: Option<UserPublic>,
 }
 
+/// 公开的 JWT 解码工具 —— 给 AdminToken 等其他提取器复用
+pub fn decode_jwt(token: &str, secret: &str) -> Result<UserTokenClaims, CustomError> {
+    let decoding_key = DecodingKey::from_secret(secret.as_bytes());
+    let validation = Validation::new(Algorithm::HS256);
+    decode::<UserTokenClaims>(token, &decoding_key, &validation)
+        .map(|d| d.claims)
+        .map_err(|e| CustomError::unauthorized(format!("decode token error: {}", e)))
+}
+
+/// 公开的用户公开信息加载工具
+pub async fn load_user_public_for_token(
+    state: &AppState,
+    user_id: i64,
+) -> Option<UserPublic> {
+    if let Ok(Some(p)) = state.redis_cache.get_user_public(&user_id).await {
+        return Some(p);
+    }
+    let db = &state.db_pool;
+    if let Ok(record) = sqlx::query_as!(
+        UserRecord,
+        r#"
+        SELECT u.user_id, u.username, u.email, u.nick_name,
+               u.role::text AS "role!: UserRole",
+               u.love_point, u.diamond,
+               u.avatar AS "avatar!: Option<String>",
+               u.phone, u.open_id, u.created_at, u.updated_at, u.password_hash, u.password_algo,
+               u.gender::text AS "gender!: Gender",
+               u.birthday,
+               u.username_change AS "username_change!: Option<bool>",
+               u.login_method::text AS "login_method!: LoginMethod",
+               u.last_login_at, u.password_updated_at,
+               u.is_temp_password AS "is_temp_password!: Option<bool>",
+               u.push_id, u.last_role_switch_at,
+               (SELECT agm.group_id FROM association_group_members agm
+                  JOIN association_groups g ON g.group_id=agm.group_id AND g.status='ACTIVE'
+                  WHERE agm.user_id=u.user_id
+                  ORDER BY agm.is_primary DESC, agm.group_id ASC LIMIT 1) AS "group_id!: Option<i64>"
+        FROM users u WHERE u.user_id=$1 AND u.status='ACTIVE'
+        "#,
+        user_id
+    )
+    .fetch_one(db)
+    .await
+    {
+        let p: UserPublic = record.into();
+        let _ = state.redis_cache.set_user_public(&p, 3600).await;
+        return Some(p);
+    }
+    None
+}
+
 impl<E: ErrorRenderer> FromRequest<E> for UserToken {
     type Error = CustomError;
 
@@ -56,6 +107,22 @@ impl<E: ErrorRenderer> FromRequest<E> for UserToken {
             let data = decode::<UserTokenClaims>(&raw, &decoding_key, &validation)
                 .map_err(|e| CustomError::unauthorized(format!("decode token error: {}", e)))?;
             let uid = data.claims.user_id;
+
+            // 检查 token 黑名单(logout 后被加入)
+            let blacklist_key = format!("token_blacklist:{}:{}", uid, data.claims.exp);
+            let mut conn = match state.redis_cache.get_conn().await {
+                Ok(c) => c,
+                Err(_) => {
+                    // Redis 故障不应阻塞正常业务,放行(降级策略)
+                    // 严格场景下应返回 500
+                    return Err(CustomError::internal(String::from("Redis 不可用")));
+                }
+            };
+            use redis::AsyncCommands;
+            let is_revoked: Option<String> = conn.get(&blacklist_key).await.unwrap_or(None);
+            if is_revoked.is_some() {
+                return Err(CustomError::unauthorized("token 已被撤销"));
+            }
 
             // 从缓存或数据库获取用户信息
             let mut public: Option<UserPublic> =

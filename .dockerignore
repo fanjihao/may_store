@@ -3,3 +3,7 @@ node_modules
 .vscode
 logs
 target
+.env
+Cargo.lock
+README.md
+docs

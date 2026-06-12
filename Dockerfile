@@ -1,69 +1,51 @@
-# #使用最新的Rust官方镜像
-# FROM rust:latest
-# # 1. This tells docker to use the Rust official image
+# 第一阶段：使用 Rust 工具链构建 Rust 应用
+FROM rust:latest AS builder
 
-# RUN rustup target add x86_64-unknown-linux-musl
-
-# # 2. Copy the files in your machine to the Docker image
-# COPY ./ ./
-
-# EXPOSE 9831
-# # Build your program for release
-# RUN cargo build --release
-
-# # Run the binary
-# CMD ["./target/release/may-store"]
-
-## 查看镜像
-# docker ps -a
-## 传输文件
-# docker cp 72be1c824770:/target/x86_64-unknown-linux-gnu/release/may-store /rust-app
-
-# 第一阶段：使用Rust工具链构建Rust应用
-FROM rust:latest as builder
-
-# 设置CARGO_HOME环境变量，指定Rust的依赖项源
 ENV CARGO_HOME=/usr/local/cargo
-ENV DATABASE_URL=postgres://postgres:root@124.223.60.157:5432/store
 
 WORKDIR /app
 
-# 将Cargo.toml和Cargo.lock拷贝到容器中并下载依赖
+# 先拷贝 manifest 缓存依赖(利用 Docker 缓存)
 COPY Cargo.toml Cargo.lock ./
-# RUN cargo build --release
+RUN mkdir -p src && echo "fn main(){}" > src/main.rs && \
+    cargo build --release && \
+    rm -rf src
 
-# 拷贝应用源代码并构建可执行文件
+# 拷贝真实源码并构建
 COPY src ./src
-COPY static ./static
+COPY static ./static 2>/dev/null || true
 RUN cargo build --release
 
-CMD ["/bin/sh"]
+# 第二阶段：精简运行时镜像
+FROM debian:bookworm-slim
 
-# 第二阶段：创建最终的Docker镜像
-FROM ubuntu:latest
+# 安装运行时依赖
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libssl3 ca-certificates curl \
+    && rm -rf /var/lib/apt/lists/*
 
-RUN sed -i 's/archive.ubuntu.com/mirrors.aliyun.com/g' /etc/apt/sources.list
-
-# 安装所需的运行时依赖
-# RUN apk add --no-cache libgcc
-# RUN apk add --no-cache libc6-compat
-# RUN apk add --no-cache musl
-RUN apt-get update && apt-get install -y libssl-dev
-# RUN apk add --no-cache openssl-dev
-# RUN ln -s /usr/local/lib/libssl.so.3 /usr/lib/libssl.so.3
-# RUN ln -s /usr/local/lib/libcrypto.so.3 /usr/lib/libcrypto.so.3
-EXPOSE 9831
+# 创建非 root 用户
+RUN groupadd -r maystore && useradd -r -g maystore -d /app -s /sbin/nologin maystore
 
 WORKDIR /app
 
-# 从第一阶段中复制可执行文件
-COPY --from=builder /app/target/release/may-store .
-COPY --from=builder /app/static .
-COPY --from=builder /app/Cargo.lock .
-COPY --from=builder /app/Cargo.toml .
+# 从 builder 阶段复制产物
+COPY --from=builder /app/target/release/may-store /app/may-store
+COPY --from=builder /app/Cargo.lock /app/Cargo.lock
+COPY --from=builder /app/Cargo.toml /app/Cargo.toml
 
-ENV DATABASE_URL=postgres://postgres:root@124.223.60.157:5432/store
+# 容器元数据(运行时通过 -e 注入,严禁在此处硬编码)
+# 必填:DATABASE_URL / REDIS_URL / JWT_SECRET
+# 选填:WX_APP_ID / WX_APP_SECRET / QINIU_* / TENCENT_IM_* / FRONTEND_ORIGIN
 
-# 设置启动命令
-CMD ["./may-store"]
+EXPOSE 9831
 
+# 健康检查:每 30s 调一次,5s 超时,连续 3 次失败视为不健康
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
+    CMD curl -fsS http://127.0.0.1:9831/api-doc/openapi.json || exit 1
+
+# 切换到非 root 用户
+USER maystore
+
+# 启动入口
+CMD ["/app/may-store"]

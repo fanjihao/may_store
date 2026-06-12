@@ -84,7 +84,9 @@ pub struct LogoutInput {
 /// 注销登录
 /// POST /api/auth/logout
 ///
-/// 使当前 refresh_token 失效
+/// 将当前 access_token / refresh_token 加入 Redis 黑名单,
+/// 黑名单 TTL 与 token 剩余有效期一致,过期后自动清理。
+/// 后续 Auth 中间件会拒绝黑名单中的 token。
 #[utoipa::path(
     post,
     path = "/api/auth/logout",
@@ -99,13 +101,42 @@ pub struct LogoutInput {
 pub async fn logout(
     token: UserToken,
     state: State<Arc<AppState>>,
-    input: Json<LogoutInput>,
+    _input: Json<LogoutInput>,
 ) -> Result<impl Responder, CustomError> {
-    let db = &state.db_pool;
+    let redis = &state.redis_cache;
+    let now = chrono::Utc::now().timestamp();
+    let ttl = (token.exp - now).max(0) as usize;
 
-    // Note: last_logout_at field does not exist in users table
-    // If logout_all is requested, it's a no-op since user_sessions table doesn't exist
-    // The token itself will naturally become invalid when its expiry time is reached
+    if ttl == 0 {
+        // token 已自然过期,无需加入黑名单
+        return Ok(ApiResponse::success(serde_json::json!({
+            "code": 0,
+            "message": "success",
+            "data": null
+        })));
+    }
+
+    // 写入黑名单:key=token_blacklist:<user_id>:<token_sub>  value="1"  TTL=token 剩余秒数
+    let blacklist_key = format!("token_blacklist:{}:{}", token.user_id, token.exp);
+    use redis::AsyncCommands;
+    let mut conn = match redis.get_conn().await {
+        Ok(c) => c,
+        Err(e) => {
+            log::error!("Redis 连接失败: {}", e);
+            return Err(CustomError::internal(String::from("Redis 不可用")));
+        }
+    };
+    let _: Result<(), _> = conn.set_ex(&blacklist_key, "1", ttl).await;
+
+    // 同时清除该用户的 user_public 缓存(强制下次重新加载,可选)
+    let user_cache_key = format!("user:{}", token.user_id);
+    let _: Result<(), _> = conn.del::<_, ()>(&user_cache_key).await;
+
+    log::info!(
+        "user {} 已注销,token 剩余有效期 {}s 已加入黑名单",
+        token.user_id,
+        ttl
+    );
 
     Ok(ApiResponse::success(serde_json::json!({
         "code": 0,

@@ -289,39 +289,86 @@ pub async fn list_footprints(
         return Err(CustomError::Forbidden("非组成员".into()));
     }
 
-    // 构建筛选条件
-    let user_filter = if let Some(uid) = query.user_id {
-        format!("AND f.user_id = {}", uid)
-    } else {
-        String::new()
+    // 参数化查询:user_id 与 cursor 都走占位符,cursor 必须是数字
+    let cursor_id: Option<i64> = match query.cursor.as_deref() {
+        Some(c) => Some(
+            c.parse::<i64>()
+                .map_err(|_| CustomError::BadRequest("cursor 必须是整数足迹ID".into()))?,
+        ),
+        None => None,
     };
 
-    let cursor_filter = if let Some(ref cursor) = query.cursor {
-        format!("AND f.footprint_id < {}", cursor)
-    } else {
-        String::new()
-    };
-
-    // 获取足迹列表
-    let sql = format!(
-        r#"
-        SELECT f.footprint_id, f.user_id, f.content, f.location, f.images,
-               f.related_order_id, f.related_wish_id, f.created_at,
-               u.nick_name as user_nickname, u.avatar as user_avatar
-        FROM footprints f
-        JOIN users u ON u.user_id = f.user_id
-        WHERE f.group_id = $1 {} {}
-        ORDER BY f.created_at DESC
-        LIMIT $2
-        "#,
-        user_filter, cursor_filter
-    );
-
-    let rows = sqlx::query(&sql)
+    // 4 种组合 (user_id × cursor) 全部参数化
+    let rows = match (query.user_id, cursor_id) {
+        (Some(uid), Some(cid)) => sqlx::query(
+            r#"
+            SELECT f.footprint_id, f.user_id, f.content, f.location, f.images,
+                   f.related_order_id, f.related_wish_id, f.created_at,
+                   u.nick_name as user_nickname, u.avatar as user_avatar
+            FROM footprints f
+            JOIN users u ON u.user_id = f.user_id
+            WHERE f.group_id = $1 AND f.user_id = $2 AND f.footprint_id < $3
+            ORDER BY f.footprint_id DESC
+            LIMIT $4
+            "#,
+        )
+        .bind(gid)
+        .bind(uid)
+        .bind(cid)
+        .bind(limit + 1)
+        .fetch_all(db)
+        .await?,
+        (Some(uid), None) => sqlx::query(
+            r#"
+            SELECT f.footprint_id, f.user_id, f.content, f.location, f.images,
+                   f.related_order_id, f.related_wish_id, f.created_at,
+                   u.nick_name as user_nickname, u.avatar as user_avatar
+            FROM footprints f
+            JOIN users u ON u.user_id = f.user_id
+            WHERE f.group_id = $1 AND f.user_id = $2
+            ORDER BY f.footprint_id DESC
+            LIMIT $3
+            "#,
+        )
+        .bind(gid)
+        .bind(uid)
+        .bind(limit + 1)
+        .fetch_all(db)
+        .await?,
+        (None, Some(cid)) => sqlx::query(
+            r#"
+            SELECT f.footprint_id, f.user_id, f.content, f.location, f.images,
+                   f.related_order_id, f.related_wish_id, f.created_at,
+                   u.nick_name as user_nickname, u.avatar as user_avatar
+            FROM footprints f
+            JOIN users u ON u.user_id = f.user_id
+            WHERE f.group_id = $1 AND f.footprint_id < $2
+            ORDER BY f.footprint_id DESC
+            LIMIT $3
+            "#,
+        )
+        .bind(gid)
+        .bind(cid)
+        .bind(limit + 1)
+        .fetch_all(db)
+        .await?,
+        (None, None) => sqlx::query(
+            r#"
+            SELECT f.footprint_id, f.user_id, f.content, f.location, f.images,
+                   f.related_order_id, f.related_wish_id, f.created_at,
+                   u.nick_name as user_nickname, u.avatar as user_avatar
+            FROM footprints f
+            JOIN users u ON u.user_id = f.user_id
+            WHERE f.group_id = $1
+            ORDER BY f.footprint_id DESC
+            LIMIT $2
+            "#,
+        )
         .bind(gid)
         .bind(limit + 1)
         .fetch_all(db)
-        .await?;
+        .await?,
+    };
 
     let has_more = rows.len() > limit as usize;
 

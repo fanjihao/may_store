@@ -104,28 +104,45 @@ pub async fn get_achievements(
         return Err(CustomError::Forbidden("非组成员".into()));
     }
 
-    // 构建类别过滤
-    let category_filter = if let Some(ref cat) = query.category {
-        format!("AND a.category = '{}'", cat)
-    } else {
-        String::new()
+    // 参数化查询 + 枚举白名单,避免 SQL 注入
+    let category_filter: Option<&str> = match query.category.as_deref() {
+        Some(c) if matches!(c, "USER" | "GROUP") => Some(c),
+        Some(_) => return Err(CustomError::BadRequest("category 非法".into())),
+        None => None,
     };
 
     // 获取成就定义和用户解锁状态
-    let sql = format!(
-        r#"
-        SELECT a.code as achievement_id, a.name, a.description, a.category, a.icon,
-               ua.unlocked_at,
-               CASE WHEN ua.id IS NOT NULL THEN true ELSE false END as unlocked
-        FROM achievements a
-        LEFT JOIN user_achievements ua ON ua.achievement_id = a.id AND ua.user_id = $1
-        WHERE a.is_active = true {}
-        ORDER BY a.category, a.display_order
-        "#,
-        category_filter
-    );
-
-    let rows = sqlx::query(&sql).bind(token.user_id).fetch_all(db).await?;
+    let rows = match category_filter {
+        Some(c) => sqlx::query(
+            r#"
+            SELECT a.code as achievement_id, a.name, a.description, a.category, a.icon,
+                   ua.unlocked_at,
+                   CASE WHEN ua.id IS NOT NULL THEN true ELSE false END as unlocked
+            FROM achievements a
+            LEFT JOIN user_achievements ua ON ua.achievement_id = a.id AND ua.user_id = $1
+            WHERE a.is_active = true AND a.category = $2
+            ORDER BY a.category, a.display_order
+            "#,
+        )
+        .bind(token.user_id)
+        .bind(c)
+        .fetch_all(db)
+        .await?,
+        None => sqlx::query(
+            r#"
+            SELECT a.code as achievement_id, a.name, a.description, a.category, a.icon,
+                   ua.unlocked_at,
+                   CASE WHEN ua.id IS NOT NULL THEN true ELSE false END as unlocked
+            FROM achievements a
+            LEFT JOIN user_achievements ua ON ua.achievement_id = a.id AND ua.user_id = $1
+            WHERE a.is_active = true
+            ORDER BY a.category, a.display_order
+            "#,
+        )
+        .bind(token.user_id)
+        .fetch_all(db)
+        .await?,
+    };
 
     let achievements: Vec<AchievementItem> = rows
         .iter()

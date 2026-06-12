@@ -1,6 +1,6 @@
 // src/cache.rs
 use crate::domain::user::UserPublic;
-use redis::{AsyncCommands, Client};
+use redis::{aio::Connection, AsyncCommands, Client};
 use serde_json;
 
 // 定义Redis缓存服务
@@ -15,6 +15,11 @@ impl RedisCache {
     pub fn new(redis_url: &str) -> Result<Self, redis::RedisError> {
         let client = Client::open(redis_url)?;
         Ok(Self { client })
+    }
+
+    /// 获取一个异步连接(供业务代码直接使用)
+    pub async fn get_conn(&self) -> Result<Connection, redis::RedisError> {
+        self.client.get_async_connection().await
     }
 
     pub async fn get_user(&self, user_id: &i32) -> Result<Option<UserPublic>, redis::RedisError> {

@@ -122,6 +122,23 @@ docker run --rm -p 9831:9831 \
 
 ## 安全提醒（开发/上线前必看）
 
-当前仓库中存在部分第三方服务 key/secret 的硬编码常量（见 [src/utils.rs](src/utils.rs)）。
-建议在上线前改为使用环境变量/密钥管理，并避免将真实密钥提交到代码仓库。
+**必填环境变量**（缺失则服务启动失败）：
+
+- `DATABASE_URL` —— PostgreSQL 连接串
+- `REDIS_URL` —— Redis 连接串
+- `JWT_SECRET` —— **至少 32 字节随机字符串**（生成方式：`openssl rand -base64 32`）
+
+**选填环境变量**（缺失则对应功能降级或不可用）：
+
+- `FRONTEND_ORIGIN` —— 前端 origin 白名单。**生产环境必须明确设置**（不能为 `*`）
+- `WX_APP_ID` / `WX_APP_SECRET` —— 微信小程序登录
+- `QINIU_ACCESS_KEY` / `QINIU_SECRET_KEY` / `QINIU_BUCKET` / `QINIU_REGION` —— 七牛云对象存储
+- `TENCENT_IM_SDK_APP_ID` / `TENCENT_IM_SECRET_KEY` —— 腾讯云 IM（小游戏联机）
+- `DB_MAX_CONNECTIONS` / `DB_MIN_CONNECTIONS` / `DB_ACQUIRE_TIMEOUT_SECS` / `DB_IDLE_TIMEOUT_SECS` / `DB_MAX_LIFETIME_SECS` —— 数据库连接池调优
+
+**严禁**：
+
+- 将任何真实密钥提交到代码仓库（包括 `Cargo.toml`、`Dockerfile`、注释）
+- 在生产环境使用弱 JWT_SECRET
+- 在生产环境省略 `FRONTEND_ORIGIN`（会回退到 `*` 通配模式）
 

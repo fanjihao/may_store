@@ -6,8 +6,6 @@ use sqlx::{postgres::PgPoolOptions, Pool, Postgres};
 use crate::cache::RedisCache;
 use crate::errors::CustomError;
 
-pub const TOKEN_SECRET_KEY: &[u8] = b"maystore";
-
 /// 七牛云对象存储配置
 /// 严格从环境变量读取，**严禁在代码库硬编码** AccessKey / SecretKey
 #[derive(Clone, Debug)]
@@ -59,21 +57,42 @@ pub struct AppState {
     pub qiniu: Arc<QiniuConfig>,
 }
 
+/// 启动时读取必须的环境变量,缺失立即 panic 防止弱默认值
+fn require_env(name: &str) -> String {
+    env::var(name).unwrap_or_else(|_| panic!("必须设置环境变量: {name}"))
+}
+
+/// 启动时读取可选环境变量,缺失返回空串(调用方自行判断启用/禁用)
+fn optional_env(name: &str) -> String {
+    env::var(name).unwrap_or_default()
+}
+
 pub async fn init_app_state() -> Result<Arc<AppState>, CustomError> {
-    let db_url = env::var("DATABASE_URL").expect("Please set DATABASE_URL");
-    let redis_url = env::var("REDIS_URL").expect("Please set REDIS_URL");
-    let jwt_secret = env::var("JWT_SECRET").unwrap_or_else(|_| "maystore_jwt_secret_key".to_string());
-    let wx_app_id = env::var("WX_APP_ID").unwrap_or_default();
-    let wx_app_secret = env::var("WX_APP_SECRET").unwrap_or_default();
+    // 必填项:DB / Redis / JWT 强校验,绝不接受默认值
+    let db_url = require_env("DATABASE_URL");
+    let redis_url = require_env("REDIS_URL");
+    let jwt_secret = require_env("JWT_SECRET");
+
+    // 校验 JWT 强度(至少 32 字节随机),防止弱密钥
+    if jwt_secret.len() < 32 {
+        panic!(
+            "JWT_SECRET 长度不足 32 字符(当前 {}),请使用 openssl rand -base64 32 生成",
+            jwt_secret.len()
+        );
+    }
+
+    // 可选项:微信 / Qiniu / Tencent IM,空值表示对应功能未启用
+    let wx_app_id = optional_env("WX_APP_ID");
+    let wx_app_secret = optional_env("WX_APP_SECRET");
 
     // 七牛云配置
     let qiniu = Arc::new(QiniuConfig {
-        access_key: env::var("QINIU_ACCESS_KEY").unwrap_or_default(),
-        secret_key: env::var("QINIU_SECRET_KEY").unwrap_or_default(),
+        access_key: optional_env("QINIU_ACCESS_KEY"),
+        secret_key: optional_env("QINIU_SECRET_KEY"),
         bucket: env::var("QINIU_BUCKET").unwrap_or_else(|_| "may-store".to_string()),
         region: parse_qiniu_region(&env::var("QINIU_REGION").unwrap_or_else(|_| "z0".to_string())),
-        upload_host: env::var("QINIU_UPLOAD_HOST").unwrap_or_default(),
-        cdn_domain: env::var("QINIU_CDN_DOMAIN").unwrap_or_default(),
+        upload_host: optional_env("QINIU_UPLOAD_HOST"),
+        cdn_domain: optional_env("QINIU_CDN_DOMAIN"),
         token_expire_secs: env::var("QINIU_TOKEN_EXPIRE_S")
             .ok()
             .and_then(|s| s.parse().ok())
@@ -88,8 +107,24 @@ pub async fn init_app_state() -> Result<Arc<AppState>, CustomError> {
         }
     };
 
+    // 生产级连接池配置
     let db_pool = PgPoolOptions::new()
-        .max_connections(10)
+        .max_connections(env::var("DB_MAX_CONNECTIONS")
+            .ok().and_then(|s| s.parse().ok()).unwrap_or(20))
+        .min_connections(env::var("DB_MIN_CONNECTIONS")
+            .ok().and_then(|s| s.parse().ok()).unwrap_or(2))
+        .acquire_timeout(std::time::Duration::from_secs(
+            env::var("DB_ACQUIRE_TIMEOUT_SECS")
+                .ok().and_then(|s| s.parse().ok()).unwrap_or(3),
+        ))
+        .idle_timeout(std::time::Duration::from_secs(
+            env::var("DB_IDLE_TIMEOUT_SECS")
+                .ok().and_then(|s| s.parse().ok()).unwrap_or(600),
+        ))
+        .max_lifetime(std::time::Duration::from_secs(
+            env::var("DB_MAX_LIFETIME_SECS")
+                .ok().and_then(|s| s.parse().ok()).unwrap_or(1800),
+        ))
         .connect(&db_url)
         .await?;
 

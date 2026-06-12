@@ -1,7 +1,7 @@
 // 应用服务层 - 用户服务
 // 包含用户登录、注册、信息管理、组服务等业务用例
 
-use crate::config::{AppState, TOKEN_SECRET_KEY};
+use crate::config::AppState;
 use crate::domain::user::entities::UserRecord;
 use crate::domain::user::{
     BindUserDirectlyInput, ConfirmInvitationInput, Gender, GroupInfoOut, GroupPointConfig,
@@ -75,7 +75,7 @@ impl UserService {
 
         // 微信登录
         if let Some(code) = &input.weixin_code {
-            account = Self::weixin_login(code).await?;
+            account = Self::weixin_login(code, state).await?;
         };
 
         let record = sqlx::query_as::<_, UserRecord>(
@@ -132,7 +132,7 @@ impl UserService {
         let token = encode(
             &Header::default(),
             &claims,
-            &EncodingKey::from_secret(TOKEN_SECRET_KEY),
+            &EncodingKey::from_secret(state.jwt_secret.as_bytes()),
         )
         .map_err(|e| CustomError::internal(e.to_string()))?;
 
@@ -379,15 +379,22 @@ impl UserService {
         Ok(argon.verify_password(plain.as_bytes(), &parsed).is_ok())
     }
 
-    async fn weixin_login(code: &str) -> Result<String, CustomError> {
-        use crate::private::{APP_ID, APP_SECRET};
+    async fn weixin_login(code: &str, state: &Arc<AppState>) -> Result<String, CustomError> {
+        let app_id = state.wx_app_id.clone();
+        let app_secret = state.wx_app_secret.clone();
+
+        if app_id.is_empty() || app_secret.is_empty() {
+            return Err(CustomError::internal(String::from(
+                "微信登录未配置(WX_APP_ID / WX_APP_SECRET 缺失)",
+            )));
+        }
 
         let res = reqwest::get(
             "https://api.weixin.qq.com/sns/jscode2session?grant_type=authorization_code&appid="
                 .to_string()
-                + APP_ID
+                + &app_id
                 + "&secret="
-                + APP_SECRET
+                + &app_secret
                 + "&js_code="
                 + code,
         )

@@ -161,47 +161,163 @@ pub async fn list_group_wishes(
         return Err(CustomError::Forbidden("非组成员".into()));
     }
 
-    // 构建筛选条件
-    let status_filter = if let Some(ref status) = query.status {
-        format!("AND w.status = '{}'", status)
-    } else {
-        String::new()
+    // 参数化查询:状态/角色/游标全部使用占位符 + 枚举白名单
+    let status_filter: Option<&str> = match query.status.as_deref() {
+        Some(s) if matches!(s,
+            "DRAFT" | "NEGOTIATING" | "CREATED" | "CLAIMED"
+            | "FINISHED" | "EXPIRED" | "CLOSED") => Some(s),
+        Some(_) => return Err(CustomError::BadRequest("status 非法".into())),
+        None => None,
     };
 
-    let role_filter = if let Some(ref role) = query.role {
-        match role.as_str() {
-            "REQUESTER" => format!("AND w.requester_id = {}", user_token.user_id),
-            "FULFILLER" => format!("AND w.fulfiller_id = {}", user_token.user_id),
-            _ => String::new()
+    // role 转换为对当前 user_id 的过滤条件(只用枚举白名单)
+    let role_filter: Option<&str> = match query.role.as_deref() {
+        Some("REQUESTER") | Some("FULFILLER") => query.role.as_deref(),
+        Some(_) => return Err(CustomError::BadRequest("role 非法".into())),
+        None => None,
+    };
+
+    // cursor 校验:必须是 RFC3339 时间戳格式,否则拒绝
+    let cursor_ts: Option<chrono::DateTime<chrono::Utc>> = match query.cursor.as_deref() {
+        Some(c) => Some(
+            chrono::DateTime::parse_from_rfc3339(c)
+                .map_err(|_| CustomError::BadRequest("cursor 必须是 RFC3339 时间戳".into()))?
+                .with_timezone(&chrono::Utc),
+        ),
+        None => None,
+    };
+
+    // 组合 8 种查询分支(2 状态 × 2 角色 × 2 游标),全部用参数化
+    let rows = match (status_filter, role_filter, cursor_ts) {
+        (Some(s), Some(r), Some(c)) => {
+            let col = if r == "REQUESTER" { "requester_id" } else { "fulfiller_id" };
+            let sql = format!(
+                r#"SELECT w.wish_id, w.wish_name, w.description, w.final_cost, w.fulfillment_deadline_hours,
+                          w.status, w.requester_id, w.fulfiller_id, w.selected_by, w.selected_at,
+                          w.fulfillment_due_at, w.created_at,
+                          u1.nick_name as requester_nickname,
+                          u2.nick_name as fulfiller_nickname
+                   FROM wishes w
+                   JOIN users u1 ON u1.user_id = w.requester_id
+                   JOIN users u2 ON u2.user_id = w.fulfiller_id
+                   WHERE w.group_id = $1 AND w.status = $2 AND w.{} = $3 AND w.created_at < $4
+                   ORDER BY w.created_at DESC
+                   LIMIT $5"#,
+                col
+            );
+            sqlx::query(&sql).bind(gid).bind(s).bind(user_token.user_id).bind(c).bind(limit + 1).fetch_all(db).await?
         }
-    } else {
-        String::new()
+        (Some(s), Some(r), None) => {
+            let col = if r == "REQUESTER" { "requester_id" } else { "fulfiller_id" };
+            let sql = format!(
+                r#"SELECT w.wish_id, w.wish_name, w.description, w.final_cost, w.fulfillment_deadline_hours,
+                          w.status, w.requester_id, w.fulfiller_id, w.selected_by, w.selected_at,
+                          w.fulfillment_due_at, w.created_at,
+                          u1.nick_name as requester_nickname,
+                          u2.nick_name as fulfiller_nickname
+                   FROM wishes w
+                   JOIN users u1 ON u1.user_id = w.requester_id
+                   JOIN users u2 ON u2.user_id = w.fulfiller_id
+                   WHERE w.group_id = $1 AND w.status = $2 AND w.{} = $3
+                   ORDER BY w.created_at DESC
+                   LIMIT $4"#,
+                col
+            );
+            sqlx::query(&sql).bind(gid).bind(s).bind(user_token.user_id).bind(limit + 1).fetch_all(db).await?
+        }
+        (Some(s), None, Some(c)) => sqlx::query(
+            r#"SELECT w.wish_id, w.wish_name, w.description, w.final_cost, w.fulfillment_deadline_hours,
+                      w.status, w.requester_id, w.fulfiller_id, w.selected_by, w.selected_at,
+                      w.fulfillment_due_at, w.created_at,
+                      u1.nick_name as requester_nickname,
+                      u2.nick_name as fulfiller_nickname
+               FROM wishes w
+               JOIN users u1 ON u1.user_id = w.requester_id
+               JOIN users u2 ON u2.user_id = w.fulfiller_id
+               WHERE w.group_id = $1 AND w.status = $2 AND w.created_at < $3
+               ORDER BY w.created_at DESC
+               LIMIT $4"#,
+        )
+        .bind(gid).bind(s).bind(c).bind(limit + 1).fetch_all(db).await?,
+        (Some(s), None, None) => sqlx::query(
+            r#"SELECT w.wish_id, w.wish_name, w.description, w.final_cost, w.fulfillment_deadline_hours,
+                      w.status, w.requester_id, w.fulfiller_id, w.selected_by, w.selected_at,
+                      w.fulfillment_due_at, w.created_at,
+                      u1.nick_name as requester_nickname,
+                      u2.nick_name as fulfiller_nickname
+               FROM wishes w
+               JOIN users u1 ON u1.user_id = w.requester_id
+               JOIN users u2 ON u2.user_id = w.fulfiller_id
+               WHERE w.group_id = $1 AND w.status = $2
+               ORDER BY w.created_at DESC
+               LIMIT $3"#,
+        )
+        .bind(gid).bind(s).bind(limit + 1).fetch_all(db).await?,
+        (None, Some(r), Some(c)) => {
+            let col = if r == "REQUESTER" { "requester_id" } else { "fulfiller_id" };
+            let sql = format!(
+                r#"SELECT w.wish_id, w.wish_name, w.description, w.final_cost, w.fulfillment_deadline_hours,
+                          w.status, w.requester_id, w.fulfiller_id, w.selected_by, w.selected_at,
+                          w.fulfillment_due_at, w.created_at,
+                          u1.nick_name as requester_nickname,
+                          u2.nick_name as fulfiller_nickname
+                   FROM wishes w
+                   JOIN users u1 ON u1.user_id = w.requester_id
+                   JOIN users u2 ON u2.user_id = w.fulfiller_id
+                   WHERE w.group_id = $1 AND w.{} = $2 AND w.created_at < $3
+                   ORDER BY w.created_at DESC
+                   LIMIT $4"#,
+                col
+            );
+            sqlx::query(&sql).bind(gid).bind(user_token.user_id).bind(c).bind(limit + 1).fetch_all(db).await?
+        }
+        (None, Some(r), None) => {
+            let col = if r == "REQUESTER" { "requester_id" } else { "fulfiller_id" };
+            let sql = format!(
+                r#"SELECT w.wish_id, w.wish_name, w.description, w.final_cost, w.fulfillment_deadline_hours,
+                          w.status, w.requester_id, w.fulfiller_id, w.selected_by, w.selected_at,
+                          w.fulfillment_due_at, w.created_at,
+                          u1.nick_name as requester_nickname,
+                          u2.nick_name as fulfiller_nickname
+                   FROM wishes w
+                   JOIN users u1 ON u1.user_id = w.requester_id
+                   JOIN users u2 ON u2.user_id = w.fulfiller_id
+                   WHERE w.group_id = $1 AND w.{} = $2
+                   ORDER BY w.created_at DESC
+                   LIMIT $3"#,
+                col
+            );
+            sqlx::query(&sql).bind(gid).bind(user_token.user_id).bind(limit + 1).fetch_all(db).await?
+        }
+        (None, None, Some(c)) => sqlx::query(
+            r#"SELECT w.wish_id, w.wish_name, w.description, w.final_cost, w.fulfillment_deadline_hours,
+                      w.status, w.requester_id, w.fulfiller_id, w.selected_by, w.selected_at,
+                      w.fulfillment_due_at, w.created_at,
+                      u1.nick_name as requester_nickname,
+                      u2.nick_name as fulfiller_nickname
+               FROM wishes w
+               JOIN users u1 ON u1.user_id = w.requester_id
+               JOIN users u2 ON u2.user_id = w.fulfiller_id
+               WHERE w.group_id = $1 AND w.created_at < $2
+               ORDER BY w.created_at DESC
+               LIMIT $3"#,
+        )
+        .bind(gid).bind(c).bind(limit + 1).fetch_all(db).await?,
+        (None, None, None) => sqlx::query(
+            r#"SELECT w.wish_id, w.wish_name, w.description, w.final_cost, w.fulfillment_deadline_hours,
+                      w.status, w.requester_id, w.fulfiller_id, w.selected_by, w.selected_at,
+                      w.fulfillment_due_at, w.created_at,
+                      u1.nick_name as requester_nickname,
+                      u2.nick_name as fulfiller_nickname
+               FROM wishes w
+               JOIN users u1 ON u1.user_id = w.requester_id
+               JOIN users u2 ON u2.user_id = w.fulfiller_id
+               WHERE w.group_id = $1
+               ORDER BY w.created_at DESC
+               LIMIT $2"#,
+        )
+        .bind(gid).bind(limit + 1).fetch_all(db).await?,
     };
-
-    let cursor_filter = if let Some(ref cursor) = query.cursor {
-        format!("AND w.created_at < '{}'", cursor)
-    } else {
-        String::new()
-    };
-
-    let sql = format!(
-        r#"
-        SELECT w.wish_id, w.wish_name, w.description, w.final_cost, w.fulfillment_deadline_hours,
-               w.status, w.requester_id, w.fulfiller_id, w.selected_by, w.selected_at,
-               w.fulfillment_due_at, w.created_at,
-               u1.nick_name as requester_nickname,
-               u2.nick_name as fulfiller_nickname
-        FROM wishes w
-        JOIN users u1 ON u1.user_id = w.requester_id
-        JOIN users u2 ON u2.user_id = w.fulfiller_id
-        WHERE w.group_id = $1 {} {} {}
-        ORDER BY w.created_at DESC
-        LIMIT $2
-        "#,
-        status_filter, role_filter, cursor_filter
-    );
-
-    let rows = sqlx::query(&sql).bind(gid).bind(limit + 1).fetch_all(db).await?;
 
     let has_more = rows.len() > limit as usize;
 
@@ -619,24 +735,37 @@ pub async fn pending_fulfillment(
     query: Query<PendingFulfillmentQuery>,
 ) -> Result<impl Responder, CustomError> {
     let db = &state.db_pool;
-    let group_filter = if let Some(gid) = query.group_id {
-        format!(" AND w.group_id = {}", gid)
-    } else {
-        String::new()
+    let rows = match query.group_id {
+        Some(gid) => sqlx::query(
+            r#"
+            SELECT w.wish_id, w.wish_name, w.final_cost, w.fulfillment_due_at, w.status, w.group_id,
+                   u.nick_name as requester_nickname,
+                   CASE WHEN w.fulfillment_due_at < NOW() THEN true ELSE false END as is_overdue
+            FROM wishes w
+            JOIN users u ON u.user_id = w.requester_id
+            WHERE w.fulfiller_id = $1 AND w.status = 'CLAIMED' AND w.group_id = $2
+            ORDER BY w.fulfillment_due_at ASC
+            "#,
+        )
+        .bind(user_token.user_id)
+        .bind(gid)
+        .fetch_all(db)
+        .await?,
+        None => sqlx::query(
+            r#"
+            SELECT w.wish_id, w.wish_name, w.final_cost, w.fulfillment_due_at, w.status, w.group_id,
+                   u.nick_name as requester_nickname,
+                   CASE WHEN w.fulfillment_due_at < NOW() THEN true ELSE false END as is_overdue
+            FROM wishes w
+            JOIN users u ON u.user_id = w.requester_id
+            WHERE w.fulfiller_id = $1 AND w.status = 'CLAIMED'
+            ORDER BY w.fulfillment_due_at ASC
+            "#,
+        )
+        .bind(user_token.user_id)
+        .fetch_all(db)
+        .await?,
     };
-    let sql = format!(
-        r#"
-        SELECT w.wish_id, w.wish_name, w.final_cost, w.fulfillment_due_at, w.status, w.group_id,
-               u.nick_name as requester_nickname,
-               CASE WHEN w.fulfillment_due_at < NOW() THEN true ELSE false END as is_overdue
-        FROM wishes w
-        JOIN users u ON u.user_id = w.requester_id
-        WHERE w.fulfiller_id = $1 AND w.status = 'CLAIMED'{}
-        ORDER BY w.fulfillment_due_at ASC
-        "#,
-        group_filter
-    );
-    let rows = sqlx::query(&sql).bind(user_token.user_id).fetch_all(db).await?;
     let items: Vec<serde_json::Value> = rows
         .iter()
         .map(|r| {

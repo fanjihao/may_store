@@ -6,6 +6,112 @@
 --              Complete database design for 心愿菜单 MVP
 -- =========================================================
 
+-- =========================================================
+-- DROP existing objects (idempotent re-run support)
+-- =========================================================
+
+-- Drop tables (CASCADE removes dependent objects automatically)
+DROP TABLE IF EXISTS support_tickets CASCADE;
+DROP TABLE IF EXISTS admin_users CASCADE;
+DROP TABLE IF EXISTS group_configs CASCADE;
+DROP TABLE IF EXISTS global_configs CASCADE;
+DROP TABLE IF EXISTS group_achievements CASCADE;
+DROP TABLE IF EXISTS user_achievements CASCADE;
+DROP TABLE IF EXISTS achievements CASCADE;
+DROP TABLE IF EXISTS audit_logs CASCADE;
+DROP TABLE IF EXISTS upload_files CASCADE;
+DROP TABLE IF EXISTS notifications CASCADE;
+DROP TABLE IF EXISTS group_footprint_capacity CASCADE;
+DROP TABLE IF EXISTS footprints CASCADE;
+DROP TABLE IF EXISTS sign_in_records CASCADE;
+DROP TABLE IF EXISTS group_invites CASCADE;
+DROP TABLE IF EXISTS memorial_day CASCADE;
+DROP TABLE IF EXISTS event_log CASCADE;
+DROP TABLE IF EXISTS achievement_definitions CASCADE;
+DROP TABLE IF EXISTS user_record CASCADE;
+DROP TABLE IF EXISTS record_group CASCADE;
+DROP TABLE IF EXISTS group_diamond_flow CASCADE;
+DROP TABLE IF EXISTS diamond_flow CASCADE;
+DROP TABLE IF EXISTS user_diamond CASCADE;
+DROP TABLE IF EXISTS group_point_configs CASCADE;
+DROP TABLE IF EXISTS wx_subscription_templates CASCADE;
+DROP TABLE IF EXISTS food_stats CASCADE;
+DROP TABLE IF EXISTS cart_items CASCADE;
+DROP TABLE IF EXISTS carts CASCADE;
+DROP TABLE IF EXISTS feedback CASCADE;
+DROP TABLE IF EXISTS user_message_state CASCADE;
+DROP TABLE IF EXISTS messages CASCADE;
+DROP TABLE IF EXISTS message_categories CASCADE;
+DROP TABLE IF EXISTS lottery_draw_results CASCADE;
+DROP TABLE IF EXISTS lottery_draws CASCADE;
+DROP TABLE IF EXISTS order_ratings CASCADE;
+DROP TABLE IF EXISTS sweet_talks CASCADE;
+DROP TABLE IF EXISTS sign_records CASCADE;
+DROP TABLE IF EXISTS point_transactions CASCADE;
+DROP TABLE IF EXISTS daily_reward_counters CASCADE;
+DROP TABLE IF EXISTS diamond_transactions CASCADE;
+DROP TABLE IF EXISTS group_exp_transactions CASCADE;
+DROP TABLE IF EXISTS love_point_transactions CASCADE;
+DROP TABLE IF EXISTS wish_feedbacks CASCADE;
+DROP TABLE IF EXISTS wish_checkins CASCADE;
+DROP TABLE IF EXISTS wish_negotiations CASCADE;
+DROP TABLE IF EXISTS wishes CASCADE;
+DROP TABLE IF EXISTS order_status_history CASCADE;
+DROP TABLE IF EXISTS order_items CASCADE;
+DROP TABLE IF EXISTS orders CASCADE;
+DROP TABLE IF EXISTS food_audit_logs CASCADE;
+DROP TABLE IF EXISTS user_food_mark CASCADE;
+DROP TABLE IF EXISTS ingredients CASCADE;
+DROP TABLE IF EXISTS foods CASCADE;
+DROP TABLE IF EXISTS tags CASCADE;
+DROP TABLE IF EXISTS guest_invitations CASCADE;
+DROP TABLE IF EXISTS association_group_requests CASCADE;
+DROP TABLE IF EXISTS user_group_points CASCADE;
+DROP TABLE IF EXISTS association_group_members CASCADE;
+DROP TABLE IF EXISTS association_groups CASCADE;
+DROP TABLE IF EXISTS users CASCADE;
+
+-- Drop enum types
+DROP TYPE IF EXISTS login_method_enum CASCADE;
+DROP TYPE IF EXISTS gender_enum CASCADE;
+DROP TYPE IF EXISTS mark_type_enum CASCADE;
+DROP TYPE IF EXISTS cart_status_enum CASCADE;
+DROP TYPE IF EXISTS feedback_status_enum CASCADE;
+DROP TYPE IF EXISTS message_status_enum CASCADE;
+DROP TYPE IF EXISTS lottery_success_enum CASCADE;
+DROP TYPE IF EXISTS point_tx_type_enum CASCADE;
+DROP TYPE IF EXISTS event_status_enum CASCADE;
+DROP TYPE IF EXISTS guest_invite_status_enum CASCADE;
+DROP TYPE IF EXISTS diamond_tx_type_enum CASCADE;
+DROP TYPE IF EXISTS group_exp_tx_type_enum CASCADE;
+DROP TYPE IF EXISTS love_point_tx_type_enum CASCADE;
+DROP TYPE IF EXISTS config_category_enum CASCADE;
+DROP TYPE IF EXISTS admin_role_enum CASCADE;
+DROP TYPE IF EXISTS achievement_category_enum CASCADE;
+DROP TYPE IF EXISTS audit_action_enum CASCADE;
+DROP TYPE IF EXISTS upload_business_ref_enum CASCADE;
+DROP TYPE IF EXISTS content_check_status_enum CASCADE;
+DROP TYPE IF EXISTS notification_type_enum CASCADE;
+DROP TYPE IF EXISTS group_invite_status_enum CASCADE;
+DROP TYPE IF EXISTS food_status_v2_enum CASCADE;
+DROP TYPE IF EXISTS wish_quality_level_enum CASCADE;
+DROP TYPE IF EXISTS wish_quality_status_enum CASCADE;
+DROP TYPE IF EXISTS wish_negotiation_action_enum CASCADE;
+DROP TYPE IF EXISTS wish_status_enum CASCADE;
+DROP TYPE IF EXISTS risk_status_enum CASCADE;
+DROP TYPE IF EXISTS exp_grant_status_enum CASCADE;
+DROP TYPE IF EXISTS point_grant_status_enum CASCADE;
+DROP TYPE IF EXISTS order_type_enum CASCADE;
+DROP TYPE IF EXISTS order_status_enum CASCADE;
+DROP TYPE IF EXISTS apply_status_enum CASCADE;
+DROP TYPE IF EXISTS submit_role_enum CASCADE;
+DROP TYPE IF EXISTS food_status_enum CASCADE;
+DROP TYPE IF EXISTS group_member_status_enum CASCADE;
+DROP TYPE IF EXISTS group_member_role_enum CASCADE;
+DROP TYPE IF EXISTS group_type_enum CASCADE;
+DROP TYPE IF EXISTS user_role_enum CASCADE;
+DROP TYPE IF EXISTS user_status_enum CASCADE;
+
 -- ================= ENUM TYPE DEFINITIONS =================
 
 -- User status

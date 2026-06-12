@@ -13,7 +13,7 @@ use utoipa::ToSchema;
 
 use crate::config::AppState;
 use crate::errors::CustomError;
-use crate::middlewares::auth::UserToken;
+use crate::middlewares::admin_auth::AdminToken;
 use crate::utils::response::ApiResponse;
 
 /// 配置后台管理路由
@@ -142,18 +142,9 @@ pub struct OrderRewardReviewResponse {
 )]
 pub async fn get_stats(
     state: State<Arc<AppState>>,
-    token: UserToken,
+    admin: AdminToken,
 ) -> Result<impl Responder, CustomError> {
-    // 检查是否为管理员角色
-    let is_admin = token
-        .user
-        .as_ref()
-        .map(|u| u.role == crate::domain::user::UserRole::Admin)
-        .unwrap_or(false);
-    if !is_admin {
-        return Err(CustomError::Forbidden("需要管理员权限".into()));
-    }
-
+    let _ = admin; // AdminToken 已在 FromRequest 阶段校验通过
     let db = &state.db_pool;
 
     // 获取各项统计数据
@@ -210,17 +201,8 @@ pub async fn get_stats(
 )]
 pub async fn list_groups(
     state: State<Arc<AppState>>,
-    token: UserToken,
+    _admin: AdminToken,
 ) -> Result<impl Responder, CustomError> {
-    let is_admin = token
-        .user
-        .as_ref()
-        .map(|u| u.role == crate::domain::user::UserRole::Admin)
-        .unwrap_or(false);
-    if !is_admin {
-        return Err(CustomError::Forbidden("需要管理员权限".into()));
-    }
-
     let groups = sqlx::query(
         "SELECT group_id, group_name, diamond, member_count, created_at FROM association_groups ORDER BY created_at DESC LIMIT 100"
     )
@@ -257,17 +239,8 @@ pub async fn list_groups(
 )]
 pub async fn list_all_users(
     state: State<Arc<AppState>>,
-    token: UserToken,
+    _admin: AdminToken,
 ) -> Result<impl Responder, CustomError> {
-    let is_admin = token
-        .user
-        .as_ref()
-        .map(|u| u.role == crate::domain::user::UserRole::Admin)
-        .unwrap_or(false);
-    if !is_admin {
-        return Err(CustomError::Forbidden("需要管理员权限".into()));
-    }
-
     let users = sqlx::query(
         "SELECT user_id, username, nick_name, role, love_point, diamond, created_at FROM users ORDER BY created_at DESC LIMIT 100"
     )
@@ -305,28 +278,38 @@ pub async fn list_all_users(
     security(("cookie_auth" = []))
 )]
 pub async fn get_config(
-    _state: State<Arc<AppState>>,
-    token: UserToken,
+    state: State<Arc<AppState>>,
+    _admin: AdminToken,
 ) -> Result<impl Responder, CustomError> {
-    let is_admin = token
-        .user
-        .as_ref()
-        .map(|u| u.role == crate::domain::user::UserRole::Admin)
-        .unwrap_or(false);
-    if !is_admin {
-        return Err(CustomError::Forbidden("需要管理员权限".into()));
+    let db = &state.db_pool;
+    // 从 global_configs 表读取
+    let rows = sqlx::query(
+        r#"SELECT config_key, config_value, category, description
+           FROM global_configs
+           WHERE category IS NOT NULL
+           ORDER BY category, config_key"#,
+    )
+    .fetch_all(db)
+    .await
+    .unwrap_or_default();
+
+    let mut config = serde_json::Map::new();
+    for r in rows {
+        let key: String = r.get("config_key");
+        let val: Option<serde_json::Value> = r.get("config_value");
+        config.insert(key, val.unwrap_or(serde_json::Value::Null));
     }
 
-    // 返回默认配置（简化实现）
-    let config = serde_json::json!({
-        "signRewardDaily": 5,
-        "signRewardConsecutive": 10,
-        "orderPointPercent": 100,
-        "diamondUnlockCost": 100,
-        "defaultFootprintCapacity": 50
-    });
+    if config.is_empty() {
+        // 数据库未初始化时回退到默认配置
+        config.insert("signRewardDaily".into(), serde_json::json!(5));
+        config.insert("signRewardConsecutive".into(), serde_json::json!(10));
+        config.insert("orderPointPercent".into(), serde_json::json!(100));
+        config.insert("diamondUnlockCost".into(), serde_json::json!(100));
+        config.insert("defaultFootprintCapacity".into(), serde_json::json!(50));
+    }
 
-    Ok(ApiResponse::success(config))
+    Ok(ApiResponse::success(serde_json::Value::Object(config)))
 }
 
 /// 更新系统配置
@@ -344,96 +327,54 @@ pub async fn get_config(
 )]
 pub async fn update_config(
     state: State<Arc<AppState>>,
-    token: UserToken,
+    admin: AdminToken,
     body: web::types::Json<serde_json::Value>,
 ) -> Result<impl Responder, CustomError> {
-    let is_admin = token
-        .user
-        .as_ref()
-        .map(|u| u.role == crate::domain::user::UserRole::Admin)
-        .unwrap_or(false);
-    if !is_admin {
-        return Err(CustomError::Forbidden("需要管理员权限".into()));
-    }
-
     let db = &state.db_pool;
     let config = body.into_inner();
 
-    // 验证并更新配置项
-    if let Some(sign_reward_daily) = config.get("signRewardDaily").and_then(|v| v.as_i64()) {
-        if sign_reward_daily < 1 || sign_reward_daily > 100 {
-            return Err(CustomError::BadRequest(
-                "每日签到奖励必须在1-100之间".into(),
-            ));
+    // 校验范围 + 写入 global_configs(原 system_config 表已删除,改用 FSD §11.22 设计表)
+    let entries: &[(&str, i64, i64, &str)] = &[
+        ("signRewardDaily", 1, 100, "SIGN_IN"),
+        ("signRewardConsecutive", 1, 100, "SIGN_IN"),
+        ("orderPointPercent", 1, 200, "ORDER"),
+        ("diamondUnlockCost", 10, 10000, "REWARDS"),
+        ("defaultFootprintCapacity", 10, 1000, "GENERAL"),
+    ];
+
+    for (key, lo, hi, cat) in entries {
+        if let Some(v) = config.get(*key).and_then(|v| v.as_i64()) {
+            if v < *lo || v > *hi {
+                return Err(CustomError::BadRequest(
+                    format!("{} 必须在 {}-{} 之间", key, lo, hi),
+                ));
+            }
+            sqlx::query(
+                r#"INSERT INTO global_configs (config_key, config_value, category, updated_by, updated_at)
+                   VALUES ($1, $2::jsonb, $3::config_category_enum, $4, NOW())
+                   ON CONFLICT (config_key) DO UPDATE
+                   SET config_value = EXCLUDED.config_value,
+                       updated_by = EXCLUDED.updated_by,
+                       updated_at = NOW()"#,
+            )
+            .bind(*key)
+            .bind(v as i32)
+            .bind(*cat)
+            .bind(admin.user_id)
+            .execute(db)
+            .await?;
         }
-        sqlx::query(
-            "INSERT INTO system_config (key, value, updated_at) VALUES ('sign_reward_daily', $1, NOW()) ON CONFLICT (key) DO UPDATE SET value = $1, updated_at = NOW()"
-        )
-        .bind(sign_reward_daily as i32)
-        .execute(db)
-        .await?;
     }
 
-    if let Some(sign_reward_consecutive) =
-        config.get("signRewardConsecutive").and_then(|v| v.as_i64())
-    {
-        if sign_reward_consecutive < 1 || sign_reward_consecutive > 100 {
-            return Err(CustomError::BadRequest(
-                "连续签到奖励必须在1-100之间".into(),
-            ));
-        }
-        sqlx::query(
-            "INSERT INTO system_config (key, value, updated_at) VALUES ('sign_reward_consecutive', $1, NOW()) ON CONFLICT (key) DO UPDATE SET value = $1, updated_at = NOW()"
-        )
-        .bind(sign_reward_consecutive as i32)
-        .execute(db)
-        .await?;
-    }
-
-    if let Some(order_point_percent) = config.get("orderPointPercent").and_then(|v| v.as_i64()) {
-        if order_point_percent < 1 || order_point_percent > 200 {
-            return Err(CustomError::BadRequest(
-                "订单积分百分比必须在1-200之间".into(),
-            ));
-        }
-        sqlx::query(
-            "INSERT INTO system_config (key, value, updated_at) VALUES ('order_point_percent', $1, NOW()) ON CONFLICT (key) DO UPDATE SET value = $1, updated_at = NOW()"
-        )
-        .bind(order_point_percent as i32)
-        .execute(db)
-        .await?;
-    }
-
-    if let Some(diamond_unlock_cost) = config.get("diamondUnlockCost").and_then(|v| v.as_i64()) {
-        if diamond_unlock_cost < 10 || diamond_unlock_cost > 10000 {
-            return Err(CustomError::BadRequest(
-                "钻石解锁费用必须在10-10000之间".into(),
-            ));
-        }
-        sqlx::query(
-            "INSERT INTO system_config (key, value, updated_at) VALUES ('diamond_unlock_cost', $1, NOW()) ON CONFLICT (key) DO UPDATE SET value = $1, updated_at = NOW()"
-        )
-        .bind(diamond_unlock_cost as i32)
-        .execute(db)
-        .await?;
-    }
-
-    if let Some(default_capacity) = config
-        .get("defaultFootprintCapacity")
-        .and_then(|v| v.as_i64())
-    {
-        if default_capacity < 10 || default_capacity > 1000 {
-            return Err(CustomError::BadRequest(
-                "默认足迹容量必须在10-1000之间".into(),
-            ));
-        }
-        sqlx::query(
-            "INSERT INTO system_config (key, value, updated_at) VALUES ('default_footprint_capacity', $1, NOW()) ON CONFLICT (key) DO UPDATE SET value = $1, updated_at = NOW()"
-        )
-        .bind(default_capacity as i32)
-        .execute(db)
-        .await?;
-    }
+    // 写审计日志
+    let _ = sqlx::query(
+        r#"INSERT INTO audit_logs (operator_id, operator_type, action_type, target_type, detail)
+           VALUES ($1, 'ADMIN', 'CONFIG_UPDATE', 'GLOBAL_CONFIG', $2)"#,
+    )
+    .bind(admin.user_id)
+    .bind(&config)
+    .execute(db)
+    .await;
 
     Ok(ApiResponse::success(serde_json::json!({"status": "ok"})))
 }
@@ -463,19 +404,10 @@ pub async fn update_config(
 )]
 pub async fn wish_quality_reward(
     state: State<Arc<AppState>>,
-    token: UserToken,
+    admin: AdminToken,
     path: Path<i64>,
     body: Json<WishQualityRewardInput>,
 ) -> Result<impl Responder, CustomError> {
-    let is_admin = token
-        .user
-        .as_ref()
-        .map(|u| u.role == crate::domain::user::UserRole::Admin)
-        .unwrap_or(false);
-    if !is_admin {
-        return Err(CustomError::Forbidden("需要管理员权限".into()));
-    }
-
     let wish_id = path.into_inner();
     let input = body.into_inner();
 
@@ -530,7 +462,7 @@ pub async fn wish_quality_reward(
         WHERE wish_id = $4
         "#,
     )
-    .bind(token.user_id)
+    .bind(admin.user_id)
     .bind(&input.remark)
     .bind(diamond_amount)
     .bind(wish_id)
@@ -599,19 +531,10 @@ pub async fn wish_quality_reward(
 )]
 pub async fn order_reward_review(
     state: State<Arc<AppState>>,
-    token: UserToken,
+    admin: AdminToken,
     path: Path<i64>,
     body: Json<OrderRewardReviewInput>,
 ) -> Result<impl web::Responder, CustomError> {
-    let is_admin = token
-        .user
-        .as_ref()
-        .map(|u| u.role == crate::domain::user::UserRole::Admin)
-        .unwrap_or(false);
-    if !is_admin {
-        return Err(CustomError::Forbidden("需要管理员权限".into()));
-    }
-
     let order_id = path.into_inner();
     let input = body.into_inner();
 
@@ -690,13 +613,9 @@ pub async fn order_reward_review(
 )]
 pub async fn get_pending_review_orders(
     state: State<Arc<AppState>>,
-    token: UserToken,
+    admin: AdminToken,
     query: Query<PendingReviewQuery>,
 ) -> Result<impl Responder, CustomError> {
-    let is_admin = check_admin(&token)?;
-    if !is_admin {
-        return Err(CustomError::Forbidden("需要管理员权限".into()));
-    }
 
     let db = &state.db_pool;
     let limit = query.limit.unwrap_or(20);
@@ -769,14 +688,10 @@ pub struct ReviewOrderInput {
 )]
 pub async fn review_order(
     state: State<Arc<AppState>>,
-    token: UserToken,
+    admin: AdminToken,
     path: Path<i64>,
     body: Json<ReviewOrderInput>,
 ) -> Result<impl Responder, CustomError> {
-    let is_admin = check_admin(&token)?;
-    if !is_admin {
-        return Err(CustomError::Forbidden("需要管理员权限".into()));
-    }
 
     let order_id = path.into_inner();
     let input = body.into_inner();
@@ -861,13 +776,9 @@ pub struct AuditLogQuery {
 )]
 pub async fn get_audit_logs(
     state: State<Arc<AppState>>,
-    token: UserToken,
+    admin: AdminToken,
     query: Query<AuditLogQuery>,
 ) -> Result<impl Responder, CustomError> {
-    let is_admin = check_admin(&token)?;
-    if !is_admin {
-        return Err(CustomError::Forbidden("需要管理员权限".into()));
-    }
 
     let db = &state.db_pool;
     let limit = query.limit.unwrap_or(50);
@@ -940,14 +851,10 @@ pub struct UpdateGroupConfigsInput {
 )]
 pub async fn update_group_configs(
     state: State<Arc<AppState>>,
-    token: UserToken,
+    admin: AdminToken,
     path: Path<i64>,
     body: Json<UpdateGroupConfigsInput>,
 ) -> Result<impl Responder, CustomError> {
-    let is_admin = check_admin(&token)?;
-    if !is_admin {
-        return Err(CustomError::Forbidden("需要管理员权限".into()));
-    }
 
     let group_id = path.into_inner();
     let input = body.into_inner();
@@ -1038,14 +945,10 @@ pub struct CompensatePointsInput {
 )]
 pub async fn compensate_points(
     state: State<Arc<AppState>>,
-    token: UserToken,
+    admin: AdminToken,
     path: Path<i64>,
     body: Json<CompensatePointsInput>,
 ) -> Result<impl Responder, CustomError> {
-    let is_admin = check_admin(&token)?;
-    if !is_admin {
-        return Err(CustomError::Forbidden("需要管理员权限".into()));
-    }
 
     let group_id = path.into_inner();
     let input = body.into_inner();
@@ -1139,14 +1042,10 @@ pub struct CompensateDiamondsInput {
 )]
 pub async fn compensate_diamonds(
     state: State<Arc<AppState>>,
-    token: UserToken,
+    admin: AdminToken,
     path: Path<i64>,
     body: Json<CompensateDiamondsInput>,
 ) -> Result<impl Responder, CustomError> {
-    let is_admin = check_admin(&token)?;
-    if !is_admin {
-        return Err(CustomError::Forbidden("需要管理员权限".into()));
-    }
 
     let group_id = path.into_inner();
     let input = body.into_inner();
@@ -1200,15 +1099,6 @@ pub async fn compensate_diamonds(
 }
 
 // ============== FSD v2 请求结构体 ==============
-
-/// 管理员检查辅助函数
-fn check_admin(token: &UserToken) -> Result<bool, CustomError> {
-    Ok(token
-        .user
-        .as_ref()
-        .map(|u| u.role == crate::domain::user::UserRole::Admin)
-        .unwrap_or(false))
-}
 
 /// 待审核订单查询参数
 #[derive(Debug, Deserialize, Serialize, ToSchema)]
@@ -1298,7 +1188,7 @@ pub struct FoodAuditInput {
 )]
 pub async fn list_pending_food_audits(
     state: State<Arc<AppState>>,
-    _token: UserToken,
+    _admin: AdminToken,
     query: Query<PendingFoodAuditQuery>,
 ) -> Result<HttpResponse, CustomError> {
     let limit = query.limit.unwrap_or(20).min(100);
@@ -1355,7 +1245,7 @@ pub async fn list_pending_food_audits(
 )]
 pub async fn audit_food(
     state: State<Arc<AppState>>,
-    token: UserToken,
+    admin: AdminToken,
     path: Path<i64>,
     body: Json<FoodAuditInput>,
 ) -> Result<HttpResponse, CustomError> {
@@ -1396,7 +1286,7 @@ pub async fn audit_food(
     .bind(if input.action == "APPROVE" { 2 } else { 3 })
     .bind(&current_status)
     .bind(new_status)
-    .bind(token.user_id)
+    .bind(admin.user_id)
     .bind(&input.remark)
     .execute(&mut *tx)
     .await?;
@@ -1406,7 +1296,7 @@ pub async fn audit_food(
         "UPDATE foods SET apply_status = $1, approved_at = NOW(), approved_by = $2 WHERE food_id = $3"
     )
     .bind(new_status)
-    .bind(token.user_id)
+    .bind(admin.user_id)
     .bind(food_id)
     .execute(&mut *tx)
     .await?;
@@ -1418,7 +1308,7 @@ pub async fn audit_food(
         r#"INSERT INTO audit_logs (operator_id, operator_type, action_type, target_type, target_id, detail)
            VALUES ($1, 'ADMIN', 'FOOD_AUDIT', 'FOOD', $2, $3)"#,
     )
-    .bind(token.user_id)
+    .bind(admin.user_id)
     .bind(food_id)
     .bind(serde_json::json!({ "action": input.action, "remark": input.remark }))
     .execute(&state.db_pool)
@@ -1428,6 +1318,6 @@ pub async fn audit_food(
         "food_id": food_id,
         "action": input.action,
         "new_status": new_status,
-        "audited_by": token.user_id
+        "audited_by": admin.user_id
     })))
 }
