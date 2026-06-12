@@ -172,7 +172,7 @@ impl AchievementService {
     ) -> Result<(), CustomError> {
         // 获取用户连续签到天数
         let last_sign: Option<(chrono::NaiveDate, i32)> = sqlx::query_as(
-            "SELECT sign_date, consecutive_days FROM sign_records WHERE user_id = $1 ORDER BY sign_date DESC LIMIT 1"
+            "SELECT sign_date, consecutive_days FROM sign_in_records WHERE user_id = $1 ORDER BY sign_date DESC LIMIT 1"
         )
         .bind(user_id as i64)
         .fetch_optional(db)

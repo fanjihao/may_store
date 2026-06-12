@@ -90,20 +90,20 @@ impl NotificationService {
         state: &Arc<AppState>,
         user_id: i64,
         consecutive_days: i32,
-        diamonds_earned: i32,
+        diamond_reward: i32,
     ) -> Result<(), CustomError> {
         let message = if consecutive_days >= 7 {
             format!(
                 "太棒了！连续签到{}天，获得{}钻石",
-                consecutive_days, diamonds_earned
+                consecutive_days, diamond_reward
             )
         } else if consecutive_days >= 3 {
             format!(
                 "连续签到{}天，获得{}钻石，继续加油！",
-                consecutive_days, diamonds_earned
+                consecutive_days, diamond_reward
             )
         } else {
-            format!("签到成功，获得{}钻石", diamonds_earned)
+            format!("签到成功，获得{}钻石", diamond_reward)
         };
 
         Self::send_template_message(state, user_id, &message).await?;

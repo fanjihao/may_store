@@ -117,7 +117,7 @@ pub async fn get_achievements(
         SELECT a.code as achievement_id, a.name, a.description, a.category, a.icon,
                ua.unlocked_at,
                CASE WHEN ua.id IS NOT NULL THEN true ELSE false END as unlocked
-        FROM achievement_definitions a
+        FROM achievements a
         LEFT JOIN user_achievements ua ON ua.achievement_id = a.id AND ua.user_id = $1
         WHERE a.is_active = true {}
         ORDER BY a.category, a.display_order
@@ -189,12 +189,12 @@ pub async fn get_achievement_wall(
 
     // 获取总成就数和已解锁数
     let total_count: i32 =
-        sqlx::query_scalar("SELECT COUNT(*) FROM achievement_definitions WHERE is_active = true")
+        sqlx::query_scalar("SELECT COUNT(*) FROM achievements WHERE is_active = true")
             .fetch_one(db)
             .await?;
 
     let unlocked_count: i32 = sqlx::query_scalar(
-        "SELECT COUNT(DISTINCT ua.achievement_id) FROM user_achievements ua JOIN achievement_definitions a ON a.id = ua.achievement_id WHERE ua.user_id = $1 AND a.is_active = true"
+        "SELECT COUNT(DISTINCT ua.achievement_id) FROM user_achievements ua JOIN achievements a ON a.id = ua.achievement_id WHERE ua.user_id = $1 AND a.is_active = true"
     )
     .bind(token.user_id)
     .fetch_one(db)
@@ -205,7 +205,7 @@ pub async fn get_achievement_wall(
         r#"
         SELECT a.code as achievement_id, a.name, a.category, ua.unlocked_at
         FROM user_achievements ua
-        JOIN achievement_definitions a ON a.id = ua.achievement_id
+        JOIN achievements a ON a.id = ua.achievement_id
         WHERE ua.user_id = $1 AND a.is_active = true
         ORDER BY ua.unlocked_at DESC
         LIMIT 20
@@ -238,7 +238,7 @@ pub async fn get_achievement_wall(
         let next_rows = sqlx::query(
             r#"
             SELECT a.code as achievement_id, a.name, 0 as progress, a.requirement_value as total
-            FROM achievement_definitions a
+            FROM achievements a
             LEFT JOIN user_achievements ua ON ua.achievement_id = a.id AND ua.user_id = $1
             WHERE a.is_active = true AND ua.id IS NULL AND a.category = 'USER'
             ORDER BY a.display_order

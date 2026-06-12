@@ -9,6 +9,11 @@ pub mod economy; // 经济查询 - FSD v2
 pub mod footprints; // 足迹 - FSD v2
 pub mod groups; // 双人组管理 - FSD v2
 pub mod kitchens; // 主人家厨房 - FSD v2
+pub mod memorial_days; // 纪念日 - FSD §24.9
+pub mod tags; // 菜品标签 - FSD §24.4
+pub mod footprint_groups; // 足迹分组 - FSD §24.10
+pub mod food_marks; // 菜品标记 - FSD §24.6
+pub mod support_tickets; // 客服工单 - FSD §15.3
 pub mod notifications; // 通知 - FSD v2
 pub mod orders;
 pub mod swagger;
@@ -34,6 +39,11 @@ pub fn configure(cfg: &mut ServiceConfig) {
     wishes::configure(cfg);
     groups::configure(cfg);
     kitchens::configure(cfg);
+    memorial_days::configure(cfg);
+    tags::configure(cfg);
+    footprint_groups::configure(cfg);
+    food_marks::configure(cfg);
+    support_tickets::configure(cfg);
     sign_in::configure(cfg);
     upload::configure(cfg);
     users::configure(cfg);

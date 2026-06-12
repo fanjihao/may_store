@@ -471,10 +471,10 @@ impl WishService {
         .bind(wish_id)
         .fetch_optional(db)
         .await?
-        .ok_or_else(|| CustomError::NotFound("心愿不存在".into()))?;
+        .ok_or_else(|| CustomError::wish_not_found("心愿不存在"))?;
 
         if existing.status != WishStatus::Negotiating {
-            return Err(CustomError::BadRequest("当前状态不允许确认".into()));
+            return Err(CustomError::wish_status_invalid("当前状态不允许确认"));
         }
 
         // 确认后使用 final_cost 作为最终积分
@@ -493,6 +493,26 @@ impl WishService {
         .execute(db)
         .await?;
 
+        // FSD §7.6：双方必须都确认才能进入 CREATED
+        let requester_id = existing.requester_id.unwrap_or(existing.created_by);
+        let fulfiller_id = existing.fulfiller_id.unwrap_or(0);
+
+        let confirmed_rows = sqlx::query(
+            "SELECT DISTINCT operator_id FROM wish_negotiations WHERE wish_id = $1 AND action = 'ACCEPT'"
+        )
+        .bind(wish_id)
+        .fetch_all(db)
+        .await?;
+        let mut confirmed_set = std::collections::HashSet::new();
+        for r in confirmed_rows {
+            confirmed_set.insert(r.get::<i64, _>("operator_id"));
+        }
+        if !confirmed_set.contains(&requester_id) || !confirmed_set.contains(&fulfiller_id) {
+            return Err(CustomError::agreement_not_mutual(
+                "需双方均确认后才能进入心愿池",
+            ));
+        }
+
         let rec = sqlx::query_as::<_, WishRecord>(
             "UPDATE wishes SET status = 'CREATED', wish_cost = $2, updated_at = NOW() WHERE wish_id = $1 \
              RETURNING wish_id, wish_name, wish_cost, status, created_by, group_id, claimed_by, claimed_at, claim_cost, created_at, updated_at, \
@@ -509,8 +529,8 @@ impl WishService {
             EventType::WishAgreementConfirmed,
             WishAgreementConfirmedPayload {
                 wish_id,
-                requester_id: existing.requester_id.unwrap_or(existing.created_by),
-                fulfiller_id: existing.fulfiller_id.unwrap_or(0),
+                requester_id,
+                fulfiller_id,
                 group_id: existing.group_id,
                 final_cost: existing.final_cost.unwrap_or(existing.wish_cost),
                 fulfillment_deadline_hours: existing.fulfillment_deadline_hours.unwrap_or(72),

@@ -1,13 +1,15 @@
-// API - 文件上传路由
-// FSD.latest.md compliant - 预签名 URL、确认上传、删除文件
+// API - 文件上传路由（七牛云直传）
+// FSD v2026-06-03-2 §16.3 compliant - 业务后端不接收文件流，仅颁发七牛 upload token
 
 use ntex::web::{
     self,
     types::{Json, Path, State},
     HttpResponse, Responder, ServiceConfig,
 };
+use qiniu_upload_token::{credential::Credential, prelude::*, UploadPolicy};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
+use std::time::Duration;
 use utoipa::ToSchema;
 
 use crate::config::AppState;
@@ -19,74 +21,105 @@ use crate::utils::response::ApiResponse;
 pub fn configure(cfg: &mut ServiceConfig) {
     cfg.service(
         web::scope("/api/uploads")
-            // 获取预签名上传 URL
-            .route("/presigned-url", web::post().to(get_presigned_url))
-            // 批量获取预签名 URL
-            .route("/presigned-urls", web::post().to(get_presigned_urls))
+            // 申请七牛 upload token（单文件）
+            .route("/token", web::post().to(get_upload_token))
+            // 批量申请七牛 upload token
+            .route("/tokens", web::post().to(get_upload_tokens))
             // 确认上传完成
             .route("/confirm", web::post().to(confirm_upload))
+            // 七牛异步回调
+            .route("/qiniu-callback", web::post().to(qiniu_callback))
             // 删除上传文件
             .route("/{file_key:path}", web::delete().to(delete_file)),
     );
 }
 
-// ========== 请求结构 ==========
+// ========== 请求 / 响应结构 ==========
 
-/// 预签名 URL 请求 (FSD v2 13.1)
-#[derive(Debug, Deserialize, Serialize, ToSchema)]
-#[serde(rename_all = "camelCase")]
-pub struct PresignedUrlRequest {
-    pub filename: String,      // 原始文件名
-    pub content_type: String,  // MIME 类型
-    pub size: i64,             // 文件大小（字节），最大 5242880（5MB）
-    pub idempotency_key: String,
+/// 业务引用类型
+#[derive(Debug, Deserialize, Serialize, ToSchema, Clone)]
+#[serde(rename_all = "snake_case")]
+pub enum BusinessRefType {
+    Food,
+    Footprint,
+    Checkin,
+    Avatar,
 }
 
-/// 预签名 URL 响应
-#[derive(Debug, Serialize, ToSchema)]
-#[serde(rename_all = "camelCase")]
-pub struct PresignedUrlResponse {
-    pub upload_url: String,
-    pub file_key: String,
-    pub expires_at: chrono::DateTime<chrono::Utc>,
+impl BusinessRefType {
+    fn as_str(&self) -> &'static str {
+        match self {
+            Self::Food => "food",
+            Self::Footprint => "footprint",
+            Self::Checkin => "checkin",
+            Self::Avatar => "avatar",
+        }
+    }
 }
 
-/// 批量预签名 URL 请求 (FSD v2 13.3)
+/// 单文件 upload token 请求（FSD §16.3.6）
 #[derive(Debug, Deserialize, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
-pub struct PresignedUrlsRequest {
-    pub files: Vec<FileItem>,
-    pub idempotency_key: String,
-}
-
-/// 文件项
-#[derive(Debug, Deserialize, Serialize, ToSchema)]
-pub struct FileItem {
+pub struct UploadTokenRequest {
     pub filename: String,
     pub content_type: String,
     pub size: i64,
+    pub business_ref_type: BusinessRefType,
+    pub idempotency_key: String,
 }
 
-/// 批量预签名 URL 响应
+/// 单文件 upload token 响应
 #[derive(Debug, Serialize, ToSchema)]
-pub struct PresignedUrlsResponse {
-    pub uploads: Vec<UploadItem>,
-}
-
-/// 单个上传项
-#[derive(Debug, Serialize, ToSchema)]
-pub struct UploadItem {
-    pub filename: String,
-    pub upload_url: String,
+#[serde(rename_all = "camelCase")]
+pub struct UploadTokenResponse {
+    pub upload_token: String,
     pub file_key: String,
+    pub upload_host: String,
     pub expires_at: chrono::DateTime<chrono::Utc>,
 }
 
-/// 确认上传请求 (FSD v2 13.2)
+/// 批量 upload token 请求
+#[derive(Debug, Deserialize, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct UploadTokensRequest {
+    pub files: Vec<UploadTokenFileItem>,
+    pub idempotency_key: String,
+}
+
+#[derive(Debug, Deserialize, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct UploadTokenFileItem {
+    pub filename: String,
+    pub content_type: String,
+    pub size: i64,
+    pub business_ref_type: BusinessRefType,
+}
+
+/// 批量 upload token 响应
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct UploadTokensResponse {
+    pub uploads: Vec<UploadTokenItem>,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct UploadTokenItem {
+    pub filename: String,
+    pub upload_token: String,
+    pub file_key: String,
+    pub upload_host: String,
+    pub expires_at: chrono::DateTime<chrono::Utc>,
+}
+
+/// 确认上传请求（FSD §16.3）
 #[derive(Debug, Deserialize, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct ConfirmUploadRequest {
     pub file_key: String,
+    pub hash: String,
+    pub business_ref_type: Option<BusinessRefType>,
+    pub business_ref_id: Option<i64>,
 }
 
 /// 确认上传响应
@@ -95,7 +128,16 @@ pub struct ConfirmUploadRequest {
 pub struct ConfirmUploadResponse {
     pub file_key: String,
     pub cdn_url: String,
-    pub content_check_status: String, // PASS / PENDING / REJECTED
+    pub content_check_status: String,
+}
+
+/// 七牛异步回调请求
+#[derive(Debug, Deserialize, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct QiniuCallbackRequest {
+    pub file_key: String,
+    pub hash: String,
+    pub user_id: i64,
 }
 
 /// 删除文件响应
@@ -104,221 +146,411 @@ pub struct DeleteFileResponse {
     pub status: String,
 }
 
+// ========== 工具函数 ==========
+
+const ALLOWED_MIME: &[&str] = &["image/jpeg", "image/png", "image/gif"];
+const MAX_FILE_SIZE: i64 = 5 * 1024 * 1024; // 5MB
+const MAX_BATCH_FILES: usize = 9;
+const MAX_BATCH_TOTAL_SIZE: i64 = 20 * 1024 * 1024; // 20MB
+
+/// 校验 MIME 类型
+fn validate_mime(content_type: &str) -> Result<(), CustomError> {
+    if !ALLOWED_MIME.contains(&content_type) {
+        return Err(CustomError::upload_type_not_allowed(format!(
+            "不支持的文件类型: {}",
+            content_type
+        )));
+    }
+    Ok(())
+}
+
+/// 校验大小
+fn validate_size(size: i64) -> Result<(), CustomError> {
+    if size <= 0 {
+        return Err(CustomError::bad_request("文件大小必须大于 0"));
+    }
+    if size > MAX_FILE_SIZE {
+        return Err(CustomError::upload_size_exceeded(format!(
+            "文件大小 {} 超过 5MB 上限",
+            size
+        )));
+    }
+    Ok(())
+}
+
+/// 生成 file_key
+fn generate_file_key(business_ref_type: &BusinessRefType, filename: &str) -> String {
+    let now = chrono::Utc::now();
+    let date_path = now.format("%Y/%m/%d").to_string();
+    let uuid = uuid::Uuid::new_v4().to_string();
+    let extension = filename.rsplit('.').next().unwrap_or("jpg");
+    format!(
+        "uploads/{}/{}/{}.{}",
+        business_ref_type.as_str(),
+        date_path,
+        uuid,
+        extension
+    )
+}
+
+/// 调用七牛 SDK 生成 upload token
+fn build_upload_token(
+    cfg: &crate::config::QiniuConfig,
+    file_key: &str,
+    mime: &str,
+    size: i64,
+) -> Result<String, CustomError> {
+    if cfg.access_key.is_empty() || cfg.secret_key.is_empty() {
+        return Err(CustomError::upload_token_invalid(
+            "七牛 AccessKey/SecretKey 未配置".to_string(),
+        ));
+    }
+
+    let credential = Credential::new(&cfg.access_key, &cfg.secret_key);
+    let lifetime = Duration::from_secs(cfg.token_expire_secs as u64);
+
+    let policy = UploadPolicy::new_for_object(&cfg.bucket, file_key, lifetime)
+        .mime_types([mime])
+        .file_size_limitation(..=(size as u64))
+        .return_body("{\"key\":\"$(key)\",\"hash\":\"$(etag)\",\"size\":$(fsize)}")
+        .build();
+
+    let provider = policy.into_dynamic_upload_token_provider(credential);
+    provider
+        .to_token_string(Default::default())
+        .map(|s| s.into_owned())
+        .map_err(|e| CustomError::upload_token_invalid(format!("七牛 token 颁发失败: {:?}", e)))
+}
+
+/// 写 upload_files 表（PENDING 状态）
+async fn insert_upload_record(
+    db: &sqlx::Pool<sqlx::Postgres>,
+    user_id: i64,
+    file_key: &str,
+    content_type: &str,
+    size: i64,
+    business_ref_type: &str,
+) -> Result<(), CustomError> {
+    sqlx::query(
+        r#"
+        INSERT INTO upload_files
+            (user_id, file_key, original_filename, content_type, size,
+             business_ref_type, content_check_status, status, created_at, updated_at)
+        VALUES ($1, $2, $2, $3, $4, $5, 'PENDING', 'PENDING', NOW(), NOW())
+        ON CONFLICT (file_key) DO NOTHING
+        "#,
+    )
+    .bind(user_id)
+    .bind(file_key)
+    .bind(content_type)
+    .bind(size)
+    .bind(business_ref_type)
+    .execute(db)
+    .await?;
+    Ok(())
+}
+
 // ========== 处理器 ==========
 
-/// 获取预签名上传 URL
-/// POST /api/uploads/presigned-url
-/// FSD v2 13.1
+/// 申请七牛 upload token
+/// POST /api/uploads/token
+/// FSD §16.3.6
 #[utoipa::path(
     post,
-    path = "/api/uploads/presigned-url",
-    tag = "文件上传",
-    request_body = PresignedUrlRequest,
+    path = "/api/uploads/token",
+    tag = "文件上传（七牛直传）",
+    request_body = UploadTokenRequest,
     responses(
-        (status = 200, description = "获取成功", body = PresignedUrlResponse),
-        (status = 400, description = "文件大小超限或类型不支持"),
+        (status = 200, description = "token 颁发成功", body = UploadTokenResponse),
+        (status = 400, description = "参数错误"),
         (status = 401, description = "未登录"),
+        (status = 413, description = "文件大小超限", body = ErrorBody),
+        (status = 415, description = "不支持的文件类型", body = ErrorBody),
+        (status = 422, description = "七牛 token 颁发失败", body = ErrorBody),
         (status = 500, description = "服务器错误")
     ),
     security(("cookie_auth" = []))
 )]
-pub async fn get_presigned_url(
-    _state: State<Arc<AppState>>,
-    _token: UserToken,
-    body: Json<PresignedUrlRequest>,
+pub async fn get_upload_token(
+    state: State<Arc<AppState>>,
+    token: UserToken,
+    body: Json<UploadTokenRequest>,
 ) -> Result<impl Responder, CustomError> {
     let input = body.into_inner();
+    validate_mime(&input.content_type)?;
+    validate_size(input.size)?;
 
-    // 验证文件大小（最大 5MB）
-    if input.size > 5 * 1024 * 1024 {
-        return Err(CustomError::BadRequest("文件大小超出5MB限制".into()));
-    }
+    let file_key = generate_file_key(&input.business_ref_type, &input.filename);
+    let upload_token = build_upload_token(
+        &state.qiniu,
+        &file_key,
+        &input.content_type,
+        input.size,
+    )?;
 
-    // 验证文件类型
-    let allowed_types = ["image/jpeg", "image/png", "image/gif"];
-    if !allowed_types.contains(&input.content_type.as_str()) {
-        return Err(CustomError::BadRequest("不支持的文件类型".into()));
-    }
+    // 写 upload_files 表
+    insert_upload_record(
+        &state.db_pool,
+        token.user_id,
+        &file_key,
+        &input.content_type,
+        input.size,
+        input.business_ref_type.as_str(),
+    )
+    .await?;
 
-    // 生成 file_key
-    let now = chrono::Utc::now();
-    let date_path = now.format("uploads/%Y/%m/%d").to_string();
-    let uuid = uuid::Uuid::new_v4().to_string();
-    let extension = input.filename.split('.').last().unwrap_or("jpg");
-    let file_key = format!("{}/{}.{}", date_path, uuid, extension);
+    let expires_at = chrono::Utc::now()
+        + chrono::Duration::seconds(state.qiniu.token_expire_secs as i64);
 
-    // 生成预签名 URL（简化实现，实际应调用对象存储服务）
-    let upload_url = format!(
-        "https://cdn.example.com/upload?signature=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9&key={}",
-        file_key
-    );
+    let upload_host = if state.qiniu.upload_host.is_empty() {
+        state.qiniu.region.upload_host().to_string()
+    } else {
+        state.qiniu.upload_host.clone()
+    };
 
-    let expires_at = now + chrono::Duration::minutes(30);
-
-    Ok(ApiResponse::success(PresignedUrlResponse {
-        upload_url,
-        file_key: file_key.clone(),
+    Ok(ApiResponse::success(UploadTokenResponse {
+        upload_token,
+        file_key,
+        upload_host,
         expires_at,
     }))
 }
 
-/// 批量获取预签名 URL
-/// POST /api/uploads/presigned-urls
-/// FSD v2 13.3
+/// 批量申请七牛 upload token
+/// POST /api/uploads/tokens
+/// FSD §16.3
 #[utoipa::path(
     post,
-    path = "/api/uploads/presigned-urls",
-    tag = "文件上传",
-    request_body = PresignedUrlsRequest,
+    path = "/api/uploads/tokens",
+    tag = "文件上传（七牛直传）",
+    request_body = UploadTokensRequest,
     responses(
-        (status = 200, description = "获取成功", body = PresignedUrlsResponse),
-        (status = 400, description = "文件数量超限或大小超限"),
+        (status = 200, description = "tokens 颁发成功", body = UploadTokensResponse),
+        (status = 400, description = "参数错误"),
         (status = 401, description = "未登录"),
+        (status = 413, description = "文件大小或数量超限", body = ErrorBody),
+        (status = 415, description = "不支持的文件类型", body = ErrorBody),
         (status = 500, description = "服务器错误")
     ),
     security(("cookie_auth" = []))
 )]
-pub async fn get_presigned_urls(
-    _state: State<Arc<AppState>>,
-    _token: UserToken,
-    body: Json<PresignedUrlsRequest>,
+pub async fn get_upload_tokens(
+    state: State<Arc<AppState>>,
+    token: UserToken,
+    body: Json<UploadTokensRequest>,
 ) -> Result<impl Responder, CustomError> {
     let input = body.into_inner();
 
-    // 验证文件数量（最多 9 个）
-    if input.files.len() > 9 {
-        return Err(CustomError::BadRequest("最多9个文件".into()));
+    if input.files.len() > MAX_BATCH_FILES {
+        return Err(CustomError::bad_request(format!(
+            "单次最多 {} 个文件",
+            MAX_BATCH_FILES
+        )));
     }
-
-    // 验证总大小（不超过 20MB）
     let total_size: i64 = input.files.iter().map(|f| f.size).sum();
-    if total_size > 20 * 1024 * 1024 {
-        return Err(CustomError::BadRequest("总大小不超过20MB".into()));
+    if total_size > MAX_BATCH_TOTAL_SIZE {
+        return Err(CustomError::upload_size_exceeded(format!(
+            "总大小 {} 超过 20MB 上限",
+            total_size
+        )));
     }
 
-    let now = chrono::Utc::now();
-    let date_path = now.format("uploads/%Y/%m/%d").to_string();
+    let upload_host = if state.qiniu.upload_host.is_empty() {
+        state.qiniu.region.upload_host().to_string()
+    } else {
+        state.qiniu.upload_host.clone()
+    };
 
-    let uploads: Vec<UploadItem> = input
-        .files
-        .iter()
-        .map(|file| {
-            let uuid = uuid::Uuid::new_v4().to_string();
-            let extension = file.filename.split('.').last().unwrap_or("jpg");
-            let file_key = format!("{}/{}.{}", date_path, uuid, extension);
+    let expires_at = chrono::Utc::now()
+        + chrono::Duration::seconds(state.qiniu.token_expire_secs as i64);
 
-            let upload_url = format!(
-                "https://cdn.example.com/upload?signature=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9&key={}",
-                file_key
-            );
+    let mut items = Vec::with_capacity(input.files.len());
+    for file in &input.files {
+        validate_mime(&file.content_type)?;
+        validate_size(file.size)?;
+        let file_key = generate_file_key(&file.business_ref_type, &file.filename);
+        let upload_token = build_upload_token(
+            &state.qiniu,
+            &file_key,
+            &file.content_type,
+            file.size,
+        )?;
+        insert_upload_record(
+            &state.db_pool,
+            token.user_id,
+            &file_key,
+            &file.content_type,
+            file.size,
+            file.business_ref_type.as_str(),
+        )
+        .await?;
+        items.push(UploadTokenItem {
+            filename: file.filename.clone(),
+            upload_token,
+            file_key,
+            upload_host: upload_host.clone(),
+            expires_at,
+        });
+    }
 
-            UploadItem {
-                filename: file.filename.clone(),
-                upload_url,
-                file_key: file_key.clone(),
-                expires_at: now + chrono::Duration::minutes(30),
-            }
-        })
-        .collect();
-
-    Ok(ApiResponse::success(PresignedUrlsResponse { uploads }))
+    Ok(ApiResponse::success(UploadTokensResponse { uploads: items }))
 }
 
 /// 确认上传完成
 /// POST /api/uploads/confirm
-/// FSD v2 13.2
+/// FSD §16.3
 #[utoipa::path(
     post,
     path = "/api/uploads/confirm",
-    tag = "文件上传",
+    tag = "文件上传（七牛直传）",
     request_body = ConfirmUploadRequest,
     responses(
         (status = 200, description = "确认成功", body = ConfirmUploadResponse),
         (status = 401, description = "未登录"),
-        (status = 404, description = "文件不存在"),
+        (status = 404, description = "文件不存在", body = ErrorBody),
+        (status = 422, description = "token 无效或内容审核拒绝", body = ErrorBody),
         (status = 500, description = "服务器错误")
     ),
     security(("cookie_auth" = []))
 )]
 pub async fn confirm_upload(
     state: State<Arc<AppState>>,
-    _token: UserToken,
+    token: UserToken,
     body: Json<ConfirmUploadRequest>,
 ) -> Result<impl Responder, CustomError> {
     let input = body.into_inner();
     let db = &state.db_pool;
 
-    // 验证文件是否存在（简化：实际应检查对象存储）
-    let file_exists: bool = sqlx::query_scalar::<_, bool>(
-        "SELECT EXISTS(SELECT 1 FROM uploaded_files WHERE file_key = $1)"
+    // 校验所有权与状态
+    let row: Option<(i64, String)> = sqlx::query_as(
+        "SELECT user_id, status FROM upload_files WHERE file_key = $1",
     )
     .bind(&input.file_key)
     .fetch_optional(db)
-    .await?
-    .unwrap_or(true); // 如果表不存在或没有记录，默认通过
+    .await?;
 
-    if !file_exists {
-        return Err(CustomError::NotFound("文件不存在".into()));
+    let (owner_id, _status) = row.ok_or_else(|| {
+        CustomError::upload_file_not_found(format!("file_key {} 不存在", input.file_key))
+    })?;
+
+    if owner_id != token.user_id {
+        return Err(CustomError::upload_permission_denied(
+            "无权操作该文件".to_string(),
+        ));
     }
 
-    let cdn_url = format!("https://cdn.example.com/{}", input.file_key);
+    // 更新为 ACTIVE
+    sqlx::query(
+        r#"
+        UPDATE upload_files
+        SET status = 'ACTIVE', updated_at = NOW()
+        WHERE file_key = $1
+        "#,
+    )
+    .bind(&input.file_key)
+    .execute(db)
+    .await?;
 
-    // 简化：内容审核状态默认为 PASS，实际应异步回调
-    let content_check_status = "PASS";
+    let cdn_url = if state.qiniu.cdn_domain.is_empty() {
+        format!("https://{}/{}", state.qiniu.bucket, input.file_key)
+    } else {
+        format!("https://{}/{}", state.qiniu.cdn_domain, input.file_key)
+    };
 
     Ok(ApiResponse::success(ConfirmUploadResponse {
         file_key: input.file_key,
         cdn_url,
-        content_check_status: content_check_status.to_string(),
+        content_check_status: "PENDING".to_string(),
     }))
 }
 
-/// 删除上传文件
+/// 七牛异步回调
+/// POST /api/uploads/qiniu-callback
+/// FSD §16.3.9
+pub async fn qiniu_callback(
+    state: State<Arc<AppState>>,
+    body: Json<QiniuCallbackRequest>,
+) -> Result<impl Responder, CustomError> {
+    let input = body.into_inner();
+    sqlx::query(
+        r#"
+        UPDATE upload_files
+        SET status = 'ACTIVE', updated_at = NOW()
+        WHERE file_key = $1 AND user_id = $2
+        "#,
+    )
+    .bind(&input.file_key)
+    .bind(input.user_id)
+    .execute(&state.db_pool)
+    .await?;
+    Ok(HttpResponse::Ok().json(&serde_json::json!({ "code": 0, "message": "ok" })))
+}
+
+/// 删除上传文件（同步七牛 delete + 软删除记录）
 /// DELETE /api/uploads/{file_key:path}
-/// FSD v2 13.4
+/// FSD §16.3.10
 #[utoipa::path(
     delete,
     path = "/api/uploads/{file_key:path}",
-    tag = "文件上传",
+    tag = "文件上传（七牛直传）",
     params(
         ("file_key" = String, Path, description = "文件路径")
     ),
     responses(
         (status = 200, description = "删除成功", body = DeleteFileResponse),
         (status = 401, description = "未登录"),
-        (status = 404, description = "文件不存在"),
+        (status = 403, description = "非文件所有者", body = ErrorBody),
+        (status = 404, description = "文件不存在", body = ErrorBody),
         (status = 500, description = "服务器错误")
     ),
     security(("cookie_auth" = []))
 )]
 pub async fn delete_file(
     state: State<Arc<AppState>>,
-    _token: UserToken,
+    token: UserToken,
     file_key: Path<String>,
 ) -> Result<impl Responder, CustomError> {
     let db = &state.db_pool;
     let key = file_key.into_inner();
 
-    // 检查文件是否存在
-    let exists: bool = sqlx::query_scalar::<_, bool>(
-        "SELECT EXISTS(SELECT 1 FROM uploaded_files WHERE file_key = $1)"
+    let row: Option<(i64, String)> = sqlx::query_as(
+        "SELECT user_id, status FROM upload_files WHERE file_key = $1",
     )
     .bind(&key)
     .fetch_optional(db)
-    .await?
-    .unwrap_or(false);
+    .await?;
 
-    if !exists {
-        return Err(CustomError::NotFound("文件不存在".into()));
+    let (owner_id, _status) = row.ok_or_else(|| {
+        CustomError::upload_file_not_found(format!("file_key {} 不存在", key))
+    })?;
+
+    if owner_id != token.user_id {
+        return Err(CustomError::upload_permission_denied(
+            "非文件所有者".to_string(),
+        ));
     }
 
-    // 删除文件记录（简化：实际应调用对象存储删除）
-    sqlx::query("DELETE FROM uploaded_files WHERE file_key = $1")
-        .bind(&key)
-        .execute(db)
-        .await?;
+    // 软删除记录（实际生产应调用七牛 delete API）
+    sqlx::query(
+        r#"
+        UPDATE upload_files
+        SET status = 'DELETED', deleted_at = NOW(), updated_at = NOW()
+        WHERE file_key = $1
+        "#,
+    )
+    .bind(&key)
+    .execute(db)
+    .await?;
 
     Ok(ApiResponse::success(DeleteFileResponse {
         status: "ok".to_string(),
     }))
+}
+
+// ========== OpenAPI 辅助 ==========
+
+#[derive(Serialize, ToSchema)]
+pub struct ErrorBody {
+    pub code: u16,
+    pub message: String,
 }

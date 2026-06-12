@@ -117,7 +117,7 @@ pub async fn handle_order_completed(
 
             // 记录钻石流水
             sqlx::query(
-                "INSERT INTO group_diamond_flow (group_id, amount, balance, scene, relation_id) VALUES ($1, $2, $3, 'order_complete', $4)"
+                "INSERT INTO diamond_transactions (group_id, amount, balance, scene, relation_id) VALUES ($1, $2, $3, 'order_complete', $4)"
             )
             .bind(gid)
             .bind(diamond_reward)

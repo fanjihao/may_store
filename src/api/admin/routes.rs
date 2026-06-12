@@ -19,7 +19,7 @@ use crate::utils::response::ApiResponse;
 /// 配置后台管理路由
 pub fn configure(cfg: &mut ServiceConfig) {
     cfg.service(
-        web::scope("/admin")
+        web::scope("/api/admin")
             .route("/stats", web::get().to(get_stats))
             .route("/groups", web::get().to(list_groups))
             .route("/users", web::get().to(list_all_users))
@@ -52,7 +52,10 @@ pub fn configure(cfg: &mut ServiceConfig) {
             .route(
                 "/groups/{group_id}/diamonds/compensate",
                 web::post().to(compensate_diamonds),
-            ),
+            )
+            // FSD §24.7: 菜品审核
+            .route("/foods/pending", web::get().to(list_pending_food_audits))
+            .route("/foods/{food_id}/audit", web::post().to(audit_food)),
     );
 }
 
@@ -1231,4 +1234,200 @@ pub struct OrderRewardReviewInput {
     pub approve_point: bool, // 是否批准积分发放
     pub approve_exp: bool,   // 是否批准经验发放
     pub remark: Option<String>,
+}
+
+// ============================================================
+// §24.7 菜品审核（food_audit_logs）
+// ============================================================
+
+/// 待审核菜品列表查询参数
+#[derive(Debug, Deserialize, utoipa::IntoParams)]
+#[serde(rename_all = "camelCase")]
+#[into_params(parameter_in = Query)]
+pub struct PendingFoodAuditQuery {
+    pub limit: Option<i64>,
+    pub offset: Option<i64>,
+}
+
+/// 审核结果
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct FoodAuditOut {
+    pub audit_id: i64,
+    pub food_id: i64,
+    pub food_name: String,
+    pub from_status: String,
+    pub to_status: String,
+    pub acted_by: i64,
+    pub remark: Option<String>,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+}
+
+/// 菜品审核结果输出
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct PendingFoodOut {
+    pub food_id: i64,
+    pub food_name: String,
+    pub food_photo: Option<String>,
+    pub group_id: Option<i64>,
+    pub created_by: i64,
+    pub apply_status: String,
+    pub apply_remark: Option<String>,
+    pub submitted_at: chrono::DateTime<chrono::Utc>,
+}
+
+/// 审核动作输入
+#[derive(Debug, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct FoodAuditInput {
+    pub action: String,            // "APPROVE" / "REJECT"
+    pub remark: Option<String>,
+}
+
+/// 获取待审核菜品列表
+#[utoipa::path(
+    get,
+    path = "/api/admin/foods/pending",
+    tag = "菜品审核 (§24.7)",
+    params(
+        ("limit" = Option<i64>, Query, description = "默认 20"),
+        ("offset" = Option<i64>, Query)
+    ),
+    security(("cookie_auth" = []))
+)]
+pub async fn list_pending_food_audits(
+    state: State<Arc<AppState>>,
+    _token: UserToken,
+    query: Query<PendingFoodAuditQuery>,
+) -> Result<HttpResponse, CustomError> {
+    let limit = query.limit.unwrap_or(20).min(100);
+    let offset = query.offset.unwrap_or(0);
+
+    let rows = sqlx::query(
+        r#"SELECT food_id, food_name, food_photo, group_id, created_by, apply_status, apply_remark, created_at
+           FROM foods
+           WHERE apply_status = 'PENDING' AND is_del = 0
+           ORDER BY created_at ASC
+           LIMIT $1 OFFSET $2"#,
+    )
+    .bind(limit)
+    .bind(offset)
+    .fetch_all(&state.db_pool)
+    .await?;
+
+    let total: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM foods WHERE apply_status = 'PENDING' AND is_del = 0"
+    )
+    .fetch_one(&state.db_pool)
+    .await?;
+
+    let result: Vec<PendingFoodOut> = rows
+        .iter()
+        .map(|r| PendingFoodOut {
+            food_id: r.get("food_id"),
+            food_name: r.get("food_name"),
+            food_photo: r.get("food_photo"),
+            group_id: r.get("group_id"),
+            created_by: r.get("created_by"),
+            apply_status: r.get("apply_status"),
+            apply_remark: r.get("apply_remark"),
+            submitted_at: r.get("created_at"),
+        })
+        .collect();
+
+    Ok(ApiResponse::success(serde_json::json!({
+        "items": result,
+        "total": total,
+        "limit": limit,
+        "offset": offset
+    })))
+}
+
+/// 审核菜品（通过/拒绝）
+#[utoipa::path(
+    post,
+    path = "/api/admin/foods/{food_id}/audit",
+    tag = "菜品审核 (§24.7)",
+    params(("food_id" = i64, Path, description = "菜品 ID")),
+    request_body = FoodAuditInput,
+    security(("cookie_auth" = []))
+)]
+pub async fn audit_food(
+    state: State<Arc<AppState>>,
+    token: UserToken,
+    path: Path<i64>,
+    body: Json<FoodAuditInput>,
+) -> Result<HttpResponse, CustomError> {
+    let food_id = path.into_inner();
+    let input = body.into_inner();
+
+    if !["APPROVE", "REJECT"].contains(&input.action.as_str()) {
+        return Err(CustomError::invalid_parameter("action 必须是 APPROVE 或 REJECT"));
+    }
+
+    let new_status = match input.action.as_str() {
+        "APPROVE" => "NORMAL",
+        "REJECT" => "REJECTED",
+        _ => unreachable!(),
+    };
+
+    let mut tx = state.db_pool.begin().await?;
+
+    // 校验菜品存在且当前为 PENDING
+    let current_status: String = sqlx::query_scalar(
+        "SELECT apply_status FROM foods WHERE food_id = $1 AND is_del = 0 FOR UPDATE"
+    )
+    .bind(food_id)
+    .fetch_optional(&mut *tx)
+    .await?
+    .ok_or_else(|| CustomError::food_not_found("菜品不存在"))?;
+
+    if current_status != "PENDING" {
+        return Err(CustomError::wish_status_invalid("该菜品不在待审核状态"));
+    }
+
+    // 写审核日志
+    sqlx::query(
+        r#"INSERT INTO food_audit_logs (food_id, action, from_status, to_status, acted_by, remark)
+           VALUES ($1, $2, $3, $4, $5, $6)"#,
+    )
+    .bind(food_id)
+    .bind(if input.action == "APPROVE" { 2 } else { 3 })
+    .bind(&current_status)
+    .bind(new_status)
+    .bind(token.user_id)
+    .bind(&input.remark)
+    .execute(&mut *tx)
+    .await?;
+
+    // 更新菜品状态
+    sqlx::query(
+        "UPDATE foods SET apply_status = $1, approved_at = NOW(), approved_by = $2 WHERE food_id = $3"
+    )
+    .bind(new_status)
+    .bind(token.user_id)
+    .bind(food_id)
+    .execute(&mut *tx)
+    .await?;
+
+    tx.commit().await?;
+
+    // 写审计日志
+    let _ = sqlx::query(
+        r#"INSERT INTO audit_logs (operator_id, operator_type, action_type, target_type, target_id, detail)
+           VALUES ($1, 'ADMIN', 'FOOD_AUDIT', 'FOOD', $2, $3)"#,
+    )
+    .bind(token.user_id)
+    .bind(food_id)
+    .bind(serde_json::json!({ "action": input.action, "remark": input.remark }))
+    .execute(&state.db_pool)
+    .await;
+
+    Ok(ApiResponse::success(serde_json::json!({
+        "food_id": food_id,
+        "action": input.action,
+        "new_status": new_status,
+        "audited_by": token.user_id
+    })))
 }

@@ -42,7 +42,7 @@ pub struct SignInfoResponseWrapper {
 /// 每日签到响应
 #[derive(Debug, Serialize, ToSchema)]
 pub struct DailyCheckinResponse {
-    pub diamonds_earned: i32,
+    pub diamond_reward: i32,
     pub consecutive_days: i32,
     pub total_diamonds: i32,
     pub full_team_bonus: bool,
@@ -56,7 +56,7 @@ pub struct SignRecordItem {
     pub nickname: Option<String>,
     pub sign_date: String,
     pub consecutive_days: i32,
-    pub diamonds_earned: i32,
+    pub diamond_reward: i32,
 }
 
 /// 组内双方签到状态响应
@@ -103,7 +103,7 @@ pub async fn sign_in(
     let app_state = (*state).clone();
     let result = SignService::daily_checkin(token, &app_state).await?;
     Ok(ApiResponse::success(DailyCheckinResponse {
-        diamonds_earned: result.diamonds_earned,
+        diamond_reward: result.diamond_reward,
         consecutive_days: result.consecutive_days,
         total_diamonds: result.total_diamonds,
         full_team_bonus: false,
@@ -155,7 +155,7 @@ pub async fn sign_in_status(
     let members = sqlx::query(
         r#"SELECT agm.user_id, sr.sign_date, sr.consecutive_days
            FROM association_group_members agm
-           LEFT JOIN sign_records sr ON sr.user_id = agm.user_id AND sr.group_id = agm.group_id AND sr.sign_date = $2
+           LEFT JOIN sign_in_records sr ON sr.user_id = agm.user_id AND sr.group_id = agm.group_id AND sr.sign_date = $2
            WHERE agm.group_id = $1 AND agm.member_status = 'ACTIVE'"#
     )
     .bind(group_id)
@@ -234,8 +234,8 @@ pub async fn get_sign_ins(
     };
 
     let sql = format!(
-        r#"SELECT sr.sign_id, sr.user_id, sr.sign_date, sr.consecutive_days, sr.diamonds_earned, u.nick_name
-           FROM sign_records sr
+        r#"SELECT sr.id, sr.user_id, sr.sign_date, sr.consecutive_days, sr.diamond_reward, u.nick_name
+           FROM sign_in_records sr
            JOIN users u ON u.user_id = sr.user_id
            WHERE sr.group_id = $1 {}
            ORDER BY sr.sign_date DESC
@@ -249,12 +249,12 @@ pub async fn get_sign_ins(
         .iter()
         .map(|r| {
             serde_json::json!({
-                "signId": r.get::<i64, _>("sign_id"),
+                "signId": r.get::<i64, _>("id"),
                 "userId": r.get::<i64, _>("user_id"),
                 "nickname": r.get::<Option<String>, _>("nick_name"),
                 "signDate": r.get::<chrono::NaiveDate, _>("sign_date").to_string(),
                 "consecutiveDays": r.get::<i32, _>("consecutive_days"),
-                "diamondsEarned": r.get::<i32, _>("diamonds_earned")
+                "diamondsEarned": r.get::<i32, _>("diamond_reward")
             })
         })
         .collect();

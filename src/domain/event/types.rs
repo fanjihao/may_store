@@ -430,7 +430,7 @@ pub struct SignInPayload {
     pub group_id: Option<i64>,
     pub sign_date: String,
     pub consecutive_days: i32,
-    pub diamonds_earned: i32,
+    pub diamond_reward: i32,
     pub trace_id: Option<String>,
 }
 

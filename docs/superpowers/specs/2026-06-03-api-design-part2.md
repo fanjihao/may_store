@@ -659,7 +659,7 @@
 
 ## 附录：心愿状态机
 
-```
+```text
 DRAFT
   ├── quote() ──> NEGOTIATING
   ├── deadline() ──> NEGOTIATING
@@ -1264,6 +1264,8 @@ CLOSED（终态）
 
 - 仅足迹创建者可删除
 - 软删除或硬删除均可
+
+> **V2.0 暂缓**：足迹评论和点赞功能（`POST/GET/DELETE /api/footprints/{id}/comments`、`POST/DELETE /api/footprints/{id}/like`）V1.0 不实现，FSD §24.11 已标记 V2.0 暂缓。v3.sql 中 `record_comment` / `record_like` 表已移除。
 
 ---
 

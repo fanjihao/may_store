@@ -315,8 +315,8 @@ pub async fn get_group_dashboard(
             FROM association_groups g
             LEFT JOIN orders o ON o.group_id = g.group_id
             LEFT JOIN wishes w ON w.group_id = g.group_id
-            LEFT JOIN sign_records sr1 ON sr1.user_id = (SELECT buyer_user_id FROM association_groups WHERE group_id = $2) AND sr1.sign_date = CURRENT_DATE
-            LEFT JOIN sign_records sr2 ON sr2.user_id = (SELECT seller_user_id FROM association_groups WHERE group_id = $2) AND sr2.sign_date = CURRENT_DATE
+            LEFT JOIN sign_in_records sr1 ON sr1.user_id = (SELECT buyer_user_id FROM association_groups WHERE group_id = $2) AND sr1.sign_date = CURRENT_DATE
+            LEFT JOIN sign_in_records sr2 ON sr2.user_id = (SELECT seller_user_id FROM association_groups WHERE group_id = $2) AND sr2.sign_date = CURRENT_DATE
             WHERE g.group_id = $2
             "#,
         )
@@ -501,10 +501,10 @@ pub async fn get_admin_dashboard(
     let (sign_ins_today, full_team_sign): (i64, i64) = sqlx::query_as(
         r#"
         SELECT
-            COUNT(DISTINCT user_id) FROM sign_records WHERE sign_date = CURRENT_DATE,
-            COUNT(DISTINCT group_id) FROM sign_records sr1
+            COUNT(DISTINCT user_id) FROM sign_in_records WHERE sign_date = CURRENT_DATE,
+            COUNT(DISTINCT group_id) FROM sign_in_records sr1
             WHERE sign_date = CURRENT_DATE
-            AND (SELECT COUNT(*) FROM sign_records sr2 WHERE sr2.group_id = sr1.group_id AND sr2.sign_date = CURRENT_DATE) = 2
+            AND (SELECT COUNT(*) FROM sign_in_records sr2 WHERE sr2.group_id = sr1.group_id AND sr2.sign_date = CURRENT_DATE) = 2
         "#
     )
     .fetch_one(db)

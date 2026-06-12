@@ -10,7 +10,7 @@ use sqlx::{PgPool, Row};
 #[allow(dead_code)]
 pub async fn handle_sign_in(db: &PgPool, payload: &SignInPayload) -> Result<(), CustomError> {
     let user_id = payload.user_id;
-    let diamonds = payload.diamonds_earned;
+    let diamonds = payload.diamond_reward;
     let consecutive_days = payload.consecutive_days;
 
     // 1. 检查是否已经处理过（幂等检查）
@@ -52,7 +52,7 @@ pub async fn handle_sign_in(db: &PgPool, payload: &SignInPayload) -> Result<(), 
                 .get(0);
 
         sqlx::query(
-            "INSERT INTO group_diamond_flow (group_id, type, diamond_num, balance_after, scene) VALUES ($1, $2, $3, $4, 'sign')"
+            "INSERT INTO diamond_transactions (group_id, type, diamond_num, balance_after, scene) VALUES ($1, $2, $3, $4, 'sign')"
         )
         .bind(gid)
         .bind(1) // type 1 = earn for sign
@@ -73,7 +73,7 @@ pub async fn handle_sign_in(db: &PgPool, payload: &SignInPayload) -> Result<(), 
         if group_member_count == 2 {
             // 获取该组今日签到人数
             let signed_today: i32 = sqlx::query(
-                "SELECT COUNT(DISTINCT user_id) FROM sign_records WHERE sign_date = $1 AND user_id IN (SELECT user_id FROM association_group_members WHERE group_id = $2)"
+                "SELECT COUNT(DISTINCT user_id) FROM sign_in_records WHERE sign_date = $1 AND user_id IN (SELECT user_id FROM association_group_members WHERE group_id = $2)"
             )
             .bind(today)
             .bind(gid)

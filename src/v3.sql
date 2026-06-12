@@ -1,7 +1,7 @@
 -- =========================================================
 -- File: v3.sql
 -- DB: PostgreSQL 15+
--- Date: 2026-06-02
+-- Date: 2026-06-03
 -- Description: FSD.latest.md compliant unified schema
 --              Complete database design for 心愿菜单 MVP
 -- =========================================================
@@ -98,8 +98,47 @@ CREATE TYPE wish_negotiation_action_enum AS ENUM (
     'CLOSE'            -- 关闭
 );
 
--- Wish quality review status
+-- Wish quality review status (FSD §11.21)
 CREATE TYPE wish_quality_status_enum AS ENUM ('NONE', 'REVIEWED');
+
+-- Wish quality level (FSD §7.9)
+CREATE TYPE wish_quality_level_enum AS ENUM ('NONE', 'NORMAL', 'GOOD', 'EXCELLENT');
+
+-- Food status (FSD §5.2)
+CREATE TYPE food_status_v2_enum AS ENUM ('ACTIVE', 'HIDDEN', 'DELETED');
+
+-- Group invite status (FSD §11.14)
+CREATE TYPE group_invite_status_enum AS ENUM ('ACTIVE', 'EXPIRED', 'EXHAUSTED');
+
+-- Notification type (FSD §10.1)
+CREATE TYPE notification_type_enum AS ENUM ('ORDER', 'WISH', 'SIGN_IN', 'SYSTEM');
+
+-- Content moderation status (FSD §11.19)
+CREATE TYPE content_check_status_enum AS ENUM ('PENDING', 'PASS', 'REJECTED');
+
+-- Upload file business ref type (FSD §11.19)
+CREATE TYPE upload_business_ref_enum AS ENUM ('food', 'footprint', 'checkin', 'avatar');
+
+-- Audit log action type (FSD §11.20)
+CREATE TYPE audit_action_enum AS ENUM (
+    'USER_BAN', 'USER_UNBAN', 'CONFIG_UPDATE',
+    'POINT_COMPENSATE', 'DIAMOND_COMPENSATE',
+    'ORDER_REWARD_REVIEW', 'WISH_QUALITY_REWARD',
+    'WISH_CLOSE', 'ORDER_CANCEL', 'ORDER_FORCE_TIMEOUT',
+    'ROLE_SWAP_ADMIN', 'OTHER'
+);
+
+-- Achievement category (FSD §11.21)
+CREATE TYPE achievement_category_enum AS ENUM ('USER', 'GROUP');
+
+-- Admin role (FSD §11.24)
+CREATE TYPE admin_role_enum AS ENUM ('SUPER_ADMIN', 'OPS', 'RISK_REVIEWER');
+
+-- Config category (FSD §11.22)
+CREATE TYPE config_category_enum AS ENUM (
+    'REWARDS', 'SIGN_IN', 'WISH', 'ORDER',
+    'RISK', 'UPLOAD', 'GENERAL'
+);
 
 -- Love point transaction type
 CREATE TYPE love_point_tx_type_enum AS ENUM (
@@ -570,6 +609,7 @@ CREATE TABLE wishes (
     expired_at TIMESTAMPTZ,
     -- Quality review
     quality_review_status wish_quality_status_enum DEFAULT 'NONE',
+    quality_level wish_quality_level_enum DEFAULT 'NONE',
     quality_reviewer_id BIGINT REFERENCES users(user_id),
     quality_remark TEXT,
     diamond_reward INT DEFAULT 0,
@@ -644,9 +684,13 @@ CREATE TABLE wish_checkins (
     location VARCHAR(256),
     images JSONB,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    -- FSD §11.9: user_id 必须是心愿的 requester_id (打卡权仅限发起人)
+    -- 校验在应用层完成 (POST /api/wishes/{wish_id}/feedback 路由)
 );
-COMMENT ON TABLE wish_checkins IS '心愿打卡记录 - 发起人提交履约证明';
+COMMENT ON TABLE wish_checkins IS '心愿打卡记录 - FSD §11.9';
+COMMENT ON COLUMN wish_checkins.user_id IS '提交人(必须为发起人 requester_id,应用层校验)';
 CREATE INDEX idx_wc_wish ON wish_checkins(wish_id);
+CREATE INDEX idx_wc_user ON wish_checkins(user_id);
 
 -- ================= WISH FEEDBACKS =================
 CREATE TABLE wish_feedbacks (
@@ -761,7 +805,7 @@ CREATE TABLE sign_records (
     group_id BIGINT NOT NULL REFERENCES association_groups(group_id) ON DELETE CASCADE,
     sign_date DATE NOT NULL,
     consecutive_days INT NOT NULL DEFAULT 1,
-    diamonds_earned INT NOT NULL DEFAULT 0,
+    diamond_reward INT NOT NULL DEFAULT 0,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     UNIQUE(user_id, group_id, sign_date)
 );
@@ -771,7 +815,7 @@ COMMENT ON COLUMN sign_records.user_id IS '用户ID';
 COMMENT ON COLUMN sign_records.group_id IS '组ID';
 COMMENT ON COLUMN sign_records.sign_date IS '签到日期';
 COMMENT ON COLUMN sign_records.consecutive_days IS '连续签到天数';
-COMMENT ON COLUMN sign_records.diamonds_earned IS '本次签到获得钻石';
+COMMENT ON COLUMN sign_records.diamond_reward IS '本次签到获得钻石';
 COMMENT ON COLUMN sign_records.created_at IS '签到时间';
 CREATE INDEX idx_sr_user_date ON sign_records(user_id, sign_date DESC);
 CREATE INDEX idx_sr_group_date ON sign_records(group_id, sign_date DESC);
@@ -1022,26 +1066,10 @@ COMMENT ON TABLE user_record IS '用户足迹记录表';
 CREATE INDEX idx_user_record_group_id ON user_record(group_id);
 CREATE INDEX idx_user_record_rg_id ON user_record(record_group_id);
 
--- ================= COMMENTS & LIKES =================
-CREATE TABLE record_comment (
-    id BIGSERIAL PRIMARY KEY,
-    record_id BIGINT NOT NULL REFERENCES user_record(id) ON DELETE CASCADE,
-    user_id BIGINT NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
-    content VARCHAR(500) NOT NULL,
-    create_time TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-COMMENT ON TABLE record_comment IS '记录评论表';
-CREATE INDEX idx_record_comment_record ON record_comment(record_id);
-
-CREATE TABLE record_like (
-    id BIGSERIAL PRIMARY KEY,
-    record_id BIGINT NOT NULL REFERENCES user_record(id) ON DELETE CASCADE,
-    user_id BIGINT NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
-    create_time TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    UNIQUE(record_id, user_id)
-);
-COMMENT ON TABLE record_like IS '记录点赞表';
-CREATE INDEX idx_record_like_record ON record_like(record_id);
+-- ================= COMMENTS & LIKES (V2.0 暂缓) =================
+-- 足迹评论与点赞 V1.0 不实现。表结构从 v3.sql 移除。
+-- FSD §24.11 旧章节已删除，§24.12 标记 V2.0 暂缓。
+-- V2.0 重新设计时新建 record_comment / record_like 表。
 
 -- ================= ACHIEVEMENTS =================
 CREATE TABLE achievement_definitions (
@@ -1055,16 +1083,7 @@ CREATE TABLE achievement_definitions (
     is_active BOOLEAN NOT NULL DEFAULT TRUE,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
-COMMENT ON TABLE achievement_definitions IS '成就/勋章定义表';
-
-CREATE TABLE user_achievements (
-    id BIGSERIAL PRIMARY KEY,
-    user_id BIGINT NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
-    achievement_id BIGINT NOT NULL REFERENCES achievement_definitions(id) ON DELETE CASCADE,
-    unlocked_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    UNIQUE(user_id, achievement_id)
-);
-COMMENT ON TABLE user_achievements IS '用户成就解锁记录表';
+COMMENT ON TABLE achievement_definitions IS '成就/勋章定义表 (DEPRECATED - 已被 achievements 替代,FSD §11.21)';
 
 -- ================= EVENT LOG =================
 CREATE TABLE event_log (
@@ -1110,6 +1129,304 @@ CREATE TABLE memorial_day (
 );
 COMMENT ON TABLE memorial_day IS '纪念日表';
 CREATE INDEX idx_memorial_group ON memorial_day(group_id);
+
+-- ============================================
+-- ===== FSD §11 REQUIRED TABLES (v2026-06-03) =====
+-- ============================================
+
+-- ================= GROUP INVITES (§11.14) =================
+-- 替代旧的 guest_invitations；统一处理组邀请
+CREATE TABLE group_invites (
+    invite_id BIGSERIAL PRIMARY KEY,
+    group_id BIGINT NOT NULL REFERENCES association_groups(group_id) ON DELETE CASCADE,
+    invite_code VARCHAR(32) NOT NULL UNIQUE,
+    created_by BIGINT NOT NULL REFERENCES users(user_id) ON DELETE RESTRICT,
+    expire_at TIMESTAMPTZ NOT NULL,
+    max_uses INT NOT NULL DEFAULT 1,
+    used_count INT NOT NULL DEFAULT 0,
+    status group_invite_status_enum NOT NULL DEFAULT 'ACTIVE',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+COMMENT ON TABLE group_invites IS '组邀请链接/邀请码 - FSD §11.14';
+COMMENT ON COLUMN group_invites.invite_code IS '6位字母数字邀请码';
+COMMENT ON COLUMN group_invites.expire_at IS '失效时间';
+COMMENT ON COLUMN group_invites.max_uses IS '最大使用次数';
+COMMENT ON COLUMN group_invites.status IS 'ACTIVE/EXPIRED/EXHAUSTED';
+CREATE UNIQUE INDEX uniq_group_invites_code ON group_invites(invite_code);
+CREATE INDEX idx_group_invites_group_status ON group_invites(group_id, status);
+
+-- ================= SIGN IN RECORDS (§11.15) =================
+-- 替代旧的 sign_records
+CREATE TABLE sign_in_records (
+    id BIGSERIAL PRIMARY KEY,
+    group_id BIGINT NOT NULL REFERENCES association_groups(group_id) ON DELETE CASCADE,
+    user_id BIGINT NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+    sign_date DATE NOT NULL,
+    consecutive_days INT NOT NULL DEFAULT 1,
+    diamond_reward INT NOT NULL DEFAULT 0,
+    full_team_bonus BOOLEAN NOT NULL DEFAULT FALSE,
+    full_team_bonus_amt INT NOT NULL DEFAULT 0,
+    idempotency_key VARCHAR(128),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE(group_id, user_id, sign_date)
+);
+COMMENT ON TABLE sign_in_records IS '用户每日签到记录 - FSD §11.15';
+COMMENT ON COLUMN sign_in_records.sign_date IS '签到日期(按组配置时区折算)';
+COMMENT ON COLUMN sign_in_records.consecutive_days IS '连续签到天数';
+COMMENT ON COLUMN sign_in_records.diamond_reward IS '本次发放钻石数';
+COMMENT ON COLUMN sign_in_records.full_team_bonus IS '是否触发双方签到满奖励';
+CREATE UNIQUE INDEX uniq_sign_in_group_user_date ON sign_in_records(group_id, user_id, sign_date);
+CREATE INDEX idx_sign_in_group_date ON sign_in_records(group_id, sign_date);
+
+-- ================= FOOTPRINTS (§11.16) =================
+-- 替代旧的 user_record；统一为 FSD 定义的足迹结构
+CREATE TABLE footprints (
+    footprint_id BIGSERIAL PRIMARY KEY,
+    group_id BIGINT NOT NULL REFERENCES association_groups(group_id) ON DELETE CASCADE,
+    user_id BIGINT NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+    content TEXT,
+    location VARCHAR(256),
+    images JSONB,
+    related_order_id BIGINT REFERENCES orders(order_id) ON DELETE SET NULL,
+    related_wish_id BIGINT REFERENCES wishes(wish_id) ON DELETE SET NULL,
+    content_check_status content_check_status_enum NOT NULL DEFAULT 'PENDING',
+    status VARCHAR(20) NOT NULL DEFAULT 'ACTIVE',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    deleted_at TIMESTAMPTZ
+);
+COMMENT ON TABLE footprints IS '组内足迹/纪念内容 - FSD §11.16';
+COMMENT ON COLUMN footprints.related_order_id IS '关联订单ID（订单完成自动生成）';
+COMMENT ON COLUMN footprints.related_wish_id IS '关联心愿ID（心愿完成自动生成）';
+COMMENT ON COLUMN footprints.content_check_status IS 'PENDING/PASS/REJECTED';
+COMMENT ON COLUMN footprints.status IS 'ACTIVE/DELETED';
+CREATE INDEX idx_footprints_group_created ON footprints(group_id, created_at DESC);
+CREATE INDEX idx_footprints_user ON footprints(user_id);
+
+-- ================= GROUP FOOTPRINT CAPACITY (§11.17) =================
+CREATE TABLE group_footprint_capacity (
+    id BIGSERIAL PRIMARY KEY,
+    group_id BIGINT NOT NULL UNIQUE REFERENCES association_groups(group_id) ON DELETE CASCADE,
+    base_capacity INT NOT NULL DEFAULT 20,
+    expanded_capacity INT NOT NULL DEFAULT 0,
+    total_capacity INT NOT NULL DEFAULT 20,
+    diamond_spent BIGINT NOT NULL DEFAULT 0,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+COMMENT ON TABLE group_footprint_capacity IS '组足迹容量配置 - FSD §11.17';
+COMMENT ON COLUMN group_footprint_capacity.base_capacity IS '等级基础容量';
+COMMENT ON COLUMN group_footprint_capacity.expanded_capacity IS '钻石扩容累加';
+COMMENT ON COLUMN group_footprint_capacity.total_capacity IS '实际容量=基础+扩容';
+
+-- ================= NOTIFICATIONS (§11.18) =================
+-- 替代旧的 messages；统一为 FSD 定义的 4 类通知
+CREATE TABLE notifications (
+    notification_id BIGSERIAL PRIMARY KEY,
+    user_id BIGINT NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+    type notification_type_enum NOT NULL,
+    title VARCHAR(128) NOT NULL,
+    content TEXT NOT NULL,
+    data JSONB,
+    is_read BOOLEAN NOT NULL DEFAULT FALSE,
+    read_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+COMMENT ON TABLE notifications IS '系统通知 - FSD §11.18';
+COMMENT ON COLUMN notifications.type IS 'ORDER/WISH/SIGN_IN/SYSTEM (FSD §10.1)';
+COMMENT ON COLUMN notifications.data IS '关联业务数据 JSON';
+CREATE INDEX idx_notifications_user_read ON notifications(user_id, is_read);
+CREATE INDEX idx_notifications_user_created ON notifications(user_id, created_at DESC);
+
+-- ================= UPLOAD FILES (§11.19) =================
+-- 七牛云直传文件登记表
+CREATE TABLE upload_files (
+    id BIGSERIAL PRIMARY KEY,
+    user_id BIGINT NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+    file_key VARCHAR(512) NOT NULL UNIQUE,
+    original_filename VARCHAR(256),
+    content_type VARCHAR(64),
+    size BIGINT,
+    cdn_url VARCHAR(512),
+    content_check_status content_check_status_enum NOT NULL DEFAULT 'PENDING',
+    business_ref_type upload_business_ref_enum,
+    business_ref_id BIGINT,
+    status VARCHAR(20) NOT NULL DEFAULT 'PENDING',
+    upload_token_hash VARCHAR(128),
+    qiniu_hash VARCHAR(128),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    deleted_at TIMESTAMPTZ
+);
+COMMENT ON TABLE upload_files IS '七牛云上传文件登记表 - FSD §11.19';
+COMMENT ON COLUMN upload_files.file_key IS '对象存储 key (七牛唯一)';
+COMMENT ON COLUMN upload_files.cdn_url IS 'CDN 访问 URL';
+COMMENT ON COLUMN upload_files.business_ref_type IS 'food/footprint/checkin/avatar';
+COMMENT ON COLUMN upload_files.status IS 'PENDING/ACTIVE/DELETED';
+COMMENT ON COLUMN upload_files.upload_token_hash IS '颁发 token 时的 hash (防伪造)';
+COMMENT ON COLUMN upload_files.qiniu_hash IS '七牛返回的文件 etag/hash';
+CREATE UNIQUE INDEX uniq_upload_file_key ON upload_files(file_key);
+CREATE INDEX idx_upload_user_created ON upload_files(user_id, created_at DESC);
+CREATE INDEX idx_upload_business ON upload_files(business_ref_type, business_ref_id);
+
+-- ================= AUDIT LOGS (§11.20) =================
+CREATE TABLE audit_logs (
+    id BIGSERIAL PRIMARY KEY,
+    operator_id BIGINT REFERENCES users(user_id) ON DELETE SET NULL,
+    operator_type VARCHAR(20) NOT NULL DEFAULT 'ADMIN',
+    action_type VARCHAR(64) NOT NULL,
+    target_type VARCHAR(32),
+    target_id BIGINT,
+    detail JSONB,
+    ip VARCHAR(64),
+    user_agent VARCHAR(256),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+COMMENT ON TABLE audit_logs IS '审计日志 - FSD §11.20';
+COMMENT ON COLUMN audit_logs.operator_type IS 'ADMIN/SYSTEM';
+COMMENT ON COLUMN audit_logs.action_type IS 'USER_BAN/CONFIG_UPDATE/POINT_COMPENSATE 等';
+COMMENT ON COLUMN audit_logs.detail IS '操作详情 (前后值/原因)';
+CREATE INDEX idx_audit_operator_created ON audit_logs(operator_id, created_at DESC);
+CREATE INDEX idx_audit_action_created ON audit_logs(action_type, created_at DESC);
+
+-- ================= ACHIEVEMENTS (§11.21) =================
+-- 替代 achievement_definitions；增加 rule_config JSONB
+CREATE TABLE achievements (
+    achievement_id BIGSERIAL PRIMARY KEY,
+    code VARCHAR(64) NOT NULL UNIQUE,
+    name VARCHAR(128) NOT NULL,
+    description TEXT,
+    category achievement_category_enum NOT NULL,
+    rule_type VARCHAR(64) NOT NULL,
+    rule_config JSONB,
+    icon VARCHAR(256),
+    is_enabled BOOLEAN NOT NULL DEFAULT TRUE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+COMMENT ON TABLE achievements IS '成就定义 - FSD §11.21';
+COMMENT ON COLUMN achievements.code IS '业务唯一编码 (FIRST_ORDER 等)';
+COMMENT ON COLUMN achievements.category IS 'USER/GROUP';
+COMMENT ON COLUMN achievements.rule_type IS '判定类型';
+COMMENT ON COLUMN achievements.rule_config IS '判定规则配置 JSON';
+
+CREATE TABLE user_achievements (
+    id BIGSERIAL PRIMARY KEY,
+    user_id BIGINT NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+    achievement_id BIGINT NOT NULL REFERENCES achievements(achievement_id) ON DELETE CASCADE,
+    progress INT NOT NULL DEFAULT 0,
+    unlocked_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE(user_id, achievement_id)
+);
+COMMENT ON TABLE user_achievements IS '用户成就解锁记录 - FSD §11.21';
+CREATE UNIQUE INDEX uniq_user_achievement ON user_achievements(user_id, achievement_id);
+
+CREATE TABLE group_achievements (
+    id BIGSERIAL PRIMARY KEY,
+    group_id BIGINT NOT NULL REFERENCES association_groups(group_id) ON DELETE CASCADE,
+    achievement_id BIGINT NOT NULL REFERENCES achievements(achievement_id) ON DELETE CASCADE,
+    progress INT NOT NULL DEFAULT 0,
+    unlocked_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE(group_id, achievement_id)
+);
+COMMENT ON TABLE group_achievements IS '组成就解锁记录 - FSD §11.21';
+CREATE UNIQUE INDEX uniq_group_achievement ON group_achievements(group_id, achievement_id);
+
+-- ================= GLOBAL CONFIGS (§11.22) =================
+CREATE TABLE global_configs (
+    config_id BIGSERIAL PRIMARY KEY,
+    config_key VARCHAR(128) NOT NULL UNIQUE,
+    config_value JSONB,
+    category config_category_enum NOT NULL DEFAULT 'GENERAL',
+    description TEXT,
+    updated_by BIGINT REFERENCES users(user_id) ON DELETE SET NULL,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+COMMENT ON TABLE global_configs IS '全局配置 - FSD §11.22';
+COMMENT ON COLUMN global_configs.config_key IS 'sign_in_diamond_reward 等';
+COMMENT ON COLUMN global_configs.category IS 'REWARDS/SIGN_IN/WISH/ORDER/RISK/UPLOAD/GENERAL';
+CREATE UNIQUE INDEX uniq_global_config_key ON global_configs(config_key);
+CREATE INDEX idx_global_config_category ON global_configs(category);
+
+-- ================= GROUP CONFIGS (§11.23) =================
+-- 替代 group_point_configs；统一为 FSD 定义的 9 个字段
+CREATE TABLE group_configs (
+    config_id BIGSERIAL PRIMARY KEY,
+    group_id BIGINT NOT NULL UNIQUE REFERENCES association_groups(group_id) ON DELETE CASCADE,
+    normal_order_love_point INT NOT NULL DEFAULT 10,
+    guest_order_love_point INT NOT NULL DEFAULT 10,
+    normal_order_group_exp INT NOT NULL DEFAULT 5,
+    guest_order_group_exp INT NOT NULL DEFAULT 5,
+    daily_love_point_limit INT NOT NULL DEFAULT 100,
+    daily_group_exp_limit INT NOT NULL DEFAULT 200,
+    order_timeout_hours INT NOT NULL DEFAULT 24,
+    food_capacity INT NOT NULL DEFAULT 20,
+    tag_capacity INT NOT NULL DEFAULT 10,
+    footprint_capacity INT NOT NULL DEFAULT 20,
+    updated_by BIGINT REFERENCES users(user_id) ON DELETE SET NULL,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+COMMENT ON TABLE group_configs IS '组级配置覆盖 - FSD §11.23';
+COMMENT ON COLUMN group_configs.normal_order_love_point IS '本组普通订单完成默认爱心积分';
+COMMENT ON COLUMN group_configs.guest_order_love_point IS '本组做客订单完成默认爱心积分';
+COMMENT ON COLUMN group_configs.daily_love_point_limit IS '本组用户每日爱心积分上限';
+COMMENT ON COLUMN group_configs.order_timeout_hours IS '本组订单超时时间(小时)';
+CREATE UNIQUE INDEX uniq_group_config_group_id ON group_configs(group_id);
+
+-- ================= ADMIN USERS (§11.24) =================
+CREATE TABLE admin_users (
+    admin_id BIGSERIAL PRIMARY KEY,
+    user_id BIGINT NOT NULL UNIQUE REFERENCES users(user_id) ON DELETE CASCADE,
+    role admin_role_enum NOT NULL DEFAULT 'OPS',
+    permissions JSONB,
+    status VARCHAR(20) NOT NULL DEFAULT 'ACTIVE',
+    mfa_enabled BOOLEAN NOT NULL DEFAULT FALSE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    last_login_at TIMESTAMPTZ
+);
+COMMENT ON TABLE admin_users IS '管理员账号 - FSD §11.24';
+COMMENT ON COLUMN admin_users.role IS 'SUPER_ADMIN/OPS/RISK_REVIEWER';
+COMMENT ON COLUMN admin_users.mfa_enabled IS '是否启用二次验证';
+CREATE UNIQUE INDEX uniq_admin_user_id ON admin_users(user_id);
+CREATE INDEX idx_admin_role_status ON admin_users(role, status);
+
+-- ================= SUPPORT TICKETS (§15.3) =================
+-- 客服工单表（FSD §15.3）
+CREATE TABLE support_tickets (
+    ticket_id BIGSERIAL PRIMARY KEY,
+    user_id BIGINT NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+    group_id BIGINT REFERENCES association_groups(group_id) ON DELETE SET NULL,
+    order_id BIGINT REFERENCES orders(order_id) ON DELETE SET NULL,
+    wish_id BIGINT REFERENCES wishes(wish_id) ON DELETE SET NULL,
+    category VARCHAR(32) NOT NULL DEFAULT 'OTHER',
+    content TEXT NOT NULL,
+    images JSONB,
+    status VARCHAR(20) NOT NULL DEFAULT 'PENDING',
+    handler_id BIGINT REFERENCES users(user_id) ON DELETE SET NULL,
+    resolution TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    resolved_at TIMESTAMPTZ
+);
+COMMENT ON TABLE support_tickets IS '客服工单 - FSD §15.3';
+COMMENT ON COLUMN support_tickets.category IS 'BUG/COMPLAINT/SUGGESTION/OTHER';
+COMMENT ON COLUMN support_tickets.status IS 'PENDING/PROCESSING/RESOLVED/CLOSED';
+CREATE INDEX idx_support_user_status ON support_tickets(user_id, status);
+CREATE INDEX idx_support_handler_status ON support_tickets(handler_id, status);
+
+-- ============================================
+-- ================= DEPRECATED TABLES =================
+-- ============================================
+-- 以下表为旧版本遗留，FSD §11 已废弃。保留以防旧代码引用，未来版本将移除。
+-- 关键字段不与 FSD 对齐，新代码不应使用。
+
+-- 旧版做客邀请（已被 group_invites 替代，但 guest_invitations 仍有做客订单引用）
+-- 保留供历史数据
+-- 已重构为支持做客订单
+-- 旧版签到（已被 sign_in_records 替代）
+-- 旧版足迹/记录（已被 footprints 替代）
+-- 旧版消息（已被 notifications 替代）
+-- 旧版配置（已被 global_configs + group_configs 替代）
+-- 旧版成就（已被 achievements 替代）
+-- 抽奖、购物车、情话、评分、纪念日等业务模块：FSD 未要求，保留供未来扩展
 
 -- ============================================
 -- ================= TEMPLATE DATA =================

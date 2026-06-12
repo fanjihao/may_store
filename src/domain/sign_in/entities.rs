@@ -1,5 +1,6 @@
 // 领域层 - 签到实体
 // 包含签到记录和 DTO
+// FSD v2026-06-03 §9.1 compliant
 
 use chrono::{DateTime, NaiveDate, Utc};
 use serde::{Deserialize, Serialize};
@@ -12,7 +13,7 @@ pub struct SignInResponse {
     pub sign_id: i64,
     pub sign_date: NaiveDate,
     pub consecutive_days: i32,
-    pub diamonds_earned: i32,
+    pub diamond_reward: i32,
     pub total_diamonds: i32,
     pub message: String,
 }
@@ -25,7 +26,7 @@ pub struct SignRecordOut {
     pub user_id: i64,
     pub sign_date: NaiveDate,
     pub consecutive_days: i32,
-    pub diamonds_earned: i32,
+    pub diamond_reward: i32,
     pub created_at: DateTime<Utc>,
 }
 
@@ -45,7 +46,7 @@ pub struct SignInfoResponse {
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct DailyCheckinOut {
-    pub diamonds_earned: i32,
+    pub diamond_reward: i32,
     pub consecutive_days: i32,
     pub total_diamonds: i32,
 }

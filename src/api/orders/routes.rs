@@ -25,7 +25,7 @@ use crate::utils::response::ApiResponse;
 /// 配置订单路由
 pub fn configure(cfg: &mut ServiceConfig) {
     cfg.service(
-        web::scope("/orders")
+        web::scope("/api/orders")
             .route("", web::post().to(create_order))
             .route("", web::get().to(get_orders))
             .route("/{id}", web::get().to(get_order_detail))
@@ -40,7 +40,7 @@ pub fn configure(cfg: &mut ServiceConfig) {
             .route("/{id}/guest-remark", web::patch().to(update_guest_remark)),
     )
     .service(
-        web::scope("/orders-rating")
+        web::scope("/api/orders-rating")
             .route("/{id}", web::post().to(create_order_rating))
             .route("/{id}", web::get().to(get_order_rating)),
     );

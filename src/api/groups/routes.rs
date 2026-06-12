@@ -284,7 +284,7 @@ async fn swap_role(
     .await?;
 
     if pending_orders > 0 {
-        return Err(CustomError::BadRequest("存在未完结订单，禁止互换".into()));
+        return Err(CustomError::role_swap_blocked_by_order("存在未完结订单，禁止互换"));
     }
 
     // 检查操作人是否有 CLAIMED 状态的在途心愿（除非 swap_ignore_ongoing_wish=true）
@@ -300,7 +300,7 @@ async fn swap_role(
         .await?;
 
         if pending_wishes > 0 {
-            return Err(CustomError::BadRequest("存在在途心愿，禁止互换".into()));
+            return Err(CustomError::role_swap_blocked_by_wish("存在在途心愿，禁止互换"));
         }
     }
 

@@ -415,7 +415,7 @@ pub async fn delete_footprint(
 
     // 检查是否是创建者（仅创建者可删除）
     let is_owner: bool = sqlx::query_scalar::<_, bool>(
-        "SELECT EXISTS(SELECT 1 FROM user_record WHERE id=$1 AND user_id=$2)",
+        "SELECT EXISTS(SELECT 1 FROM footprints WHERE id=$1 AND user_id=$2)",
     )
     .bind(footprint_id)
     .bind(user_id)
@@ -427,7 +427,7 @@ pub async fn delete_footprint(
     }
 
     // 删除足迹
-    let result = sqlx::query("DELETE FROM user_record WHERE id = $1")
+    let result = sqlx::query("DELETE FROM footprints WHERE id = $1")
         .bind(footprint_id)
         .execute(db)
         .await?;

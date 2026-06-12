@@ -27,7 +27,7 @@ impl SignService {
 
         // 检查今日是否已签到
         let existing: Option<(i64,)> = sqlx::query_as(
-            "SELECT sign_id FROM sign_records WHERE user_id = $1 AND sign_date = $2",
+            "SELECT id FROM sign_in_records WHERE user_id = $1 AND sign_date = $2",
         )
         .bind(user_id as i64)
         .bind(today)
@@ -50,7 +50,7 @@ impl SignService {
         // 计算连续签到天数
         let yesterday = today.pred_opt().unwrap();
         let last_sign: Option<(NaiveDate, i32)> = sqlx::query_as(
-            "SELECT sign_date, consecutive_days FROM sign_records WHERE user_id = $1 AND sign_date = $2"
+            "SELECT sign_date, consecutive_days FROM sign_in_records WHERE user_id = $1 AND sign_date = $2"
         )
         .bind(user_id as i64)
         .bind(yesterday)
@@ -78,7 +78,7 @@ impl SignService {
             5 // 默认奖励
         };
 
-        let diamonds_earned = sign_reward;
+        let diamond_reward = sign_reward;
 
         // 获取用户当前钻石
         let total_diamonds: i32 = sqlx::query("SELECT diamond FROM users WHERE user_id = $1")
@@ -89,17 +89,17 @@ impl SignService {
 
         // 插入签到记录
         let sign_id: i64 = sqlx::query_scalar(
-            "INSERT INTO sign_records (user_id, sign_date, consecutive_days, diamonds_earned) VALUES ($1, $2, $3, $4) RETURNING sign_id"
+            "INSERT INTO sign_in_records (user_id, sign_date, consecutive_days, diamond_reward) VALUES ($1, $2, $3, $4) RETURNING id"
         )
         .bind(user_id as i64)
         .bind(today)
         .bind(consecutive_days)
-        .bind(diamonds_earned)
+        .bind(diamond_reward)
         .fetch_one(db)
         .await?;
 
         // 更新用户钻石
-        let new_total = total_diamonds + diamonds_earned;
+        let new_total = total_diamonds + diamond_reward;
         sqlx::query("UPDATE users SET diamond = $2 WHERE user_id = $1")
             .bind(user_id as i64)
             .bind(new_total)
@@ -108,12 +108,12 @@ impl SignService {
 
         // 记录钻石流水 (user diamond, not group diamond)
         sqlx::query(
-            "INSERT INTO diamond_flow (user_id, type, scene, diamond_num, balance_after) VALUES ($1, $2, $3, $4, $5)"
+            "INSERT INTO diamond_transactions (user_id, type, scene, diamond_num, balance_after) VALUES ($1, $2, $3, $4, $5)"
         )
         .bind(user_id as i64)
         .bind(1) // type 1 = earn
         .bind("sign")
-        .bind(diamonds_earned)
+        .bind(diamond_reward)
         .bind(new_total)
         .execute(db)
         .await?;
@@ -125,7 +125,7 @@ impl SignService {
             group_id,
             sign_date: today.to_string(),
             consecutive_days,
-            diamonds_earned,
+            diamond_reward,
             trace_id: None,
         };
         let _ = EventPublisher::publish(
@@ -151,7 +151,7 @@ impl SignService {
             sign_id,
             sign_date: today,
             consecutive_days,
-            diamonds_earned,
+            diamond_reward,
             total_diamonds: new_total,
             message,
         })
@@ -167,7 +167,7 @@ impl SignService {
 
         // 检查今日是否已签到
         let today_sign: Option<(i64, NaiveDate, i32, i32)> = sqlx::query_as(
-            "SELECT sign_id, sign_date, consecutive_days, diamonds_earned FROM sign_records WHERE user_id = $1 AND sign_date = $2"
+            "SELECT id, sign_date, consecutive_days, diamond_reward FROM sign_in_records WHERE user_id = $1 AND sign_date = $2"
         )
         .bind(user_id as i64)
         .bind(today)
@@ -182,8 +182,8 @@ impl SignService {
 
         // 获取最近签到记录
         let recent_rows = sqlx::query(
-            "SELECT sign_id, user_id, sign_date, consecutive_days, diamonds_earned, created_at \
-             FROM sign_records WHERE user_id = $1 ORDER BY sign_date DESC LIMIT 7",
+            "SELECT id, user_id, sign_date, consecutive_days, diamond_reward, created_at \
+             FROM sign_in_records WHERE user_id = $1 ORDER BY sign_date DESC LIMIT 7",
         )
         .bind(user_id as i64)
         .fetch_all(db)
@@ -192,18 +192,18 @@ impl SignService {
         let recent_records: Vec<SignRecordOut> = recent_rows
             .into_iter()
             .map(|r| SignRecordOut {
-                sign_id: r.get("sign_id"),
+                sign_id: r.get("id"),
                 user_id: r.get("user_id"),
                 sign_date: r.get("sign_date"),
                 consecutive_days: r.get("consecutive_days"),
-                diamonds_earned: r.get("diamonds_earned"),
+                diamond_reward: r.get("diamond_reward"),
                 created_at: r.get("created_at"),
             })
             .collect();
 
         // 获取连续签到天数和总签到天数
         let last_sign: Option<(NaiveDate, i32)> = sqlx::query_as(
-            "SELECT sign_date, consecutive_days FROM sign_records WHERE user_id = $1 ORDER BY sign_date DESC LIMIT 1"
+            "SELECT sign_date, consecutive_days FROM sign_in_records WHERE user_id = $1 ORDER BY sign_date DESC LIMIT 1"
         )
         .bind(user_id as i64)
         .fetch_optional(db)
@@ -213,7 +213,7 @@ impl SignService {
         let last_sign_date = last_sign.map(|(d, _)| d);
 
         let total_sign_days: i32 =
-            sqlx::query("SELECT COUNT(*) FROM sign_records WHERE user_id = $1")
+            sqlx::query("SELECT COUNT(*) FROM sign_in_records WHERE user_id = $1")
                 .bind(user_id as i64)
                 .fetch_one(db)
                 .await?
@@ -240,7 +240,7 @@ impl SignService {
 
         // 检查今日是否已签到
         let existing: Option<(i64,)> = sqlx::query_as(
-            "SELECT sign_id FROM sign_records WHERE user_id = $1 AND sign_date = $2",
+            "SELECT id FROM sign_in_records WHERE user_id = $1 AND sign_date = $2",
         )
         .bind(user_id as i64)
         .bind(today)
@@ -263,7 +263,7 @@ impl SignService {
         // 计算连续签到天数
         let yesterday = today.pred_opt().unwrap();
         let last_sign: Option<(NaiveDate, i32)> = sqlx::query_as(
-            "SELECT sign_date, consecutive_days FROM sign_records WHERE user_id = $1 AND sign_date = $2"
+            "SELECT sign_date, consecutive_days FROM sign_in_records WHERE user_id = $1 AND sign_date = $2"
         )
         .bind(user_id as i64)
         .bind(yesterday)
@@ -285,7 +285,7 @@ impl SignService {
             5
         };
 
-        let diamonds_earned = sign_reward;
+        let diamond_reward = sign_reward;
 
         // 获取用户当前钻石
         let total_diamonds: i32 = sqlx::query("SELECT diamond FROM users WHERE user_id = $1")
@@ -296,17 +296,17 @@ impl SignService {
 
         // 插入签到记录
         let sign_id: i64 = sqlx::query_scalar(
-            "INSERT INTO sign_records (user_id, sign_date, consecutive_days, diamonds_earned) VALUES ($1, $2, $3, $4) RETURNING sign_id"
+            "INSERT INTO sign_in_records (user_id, sign_date, consecutive_days, diamond_reward) VALUES ($1, $2, $3, $4) RETURNING id"
         )
         .bind(user_id as i64)
         .bind(today)
         .bind(consecutive_days)
-        .bind(diamonds_earned)
+        .bind(diamond_reward)
         .fetch_one(db)
         .await?;
 
         // 更新用户钻石
-        let new_total = total_diamonds + diamonds_earned;
+        let new_total = total_diamonds + diamond_reward;
         sqlx::query("UPDATE users SET diamond = $2 WHERE user_id = $1")
             .bind(user_id as i64)
             .bind(new_total)
@@ -315,12 +315,12 @@ impl SignService {
 
         // 记录钻石流水 (user diamond, not group diamond)
         sqlx::query(
-            "INSERT INTO diamond_flow (user_id, type, scene, diamond_num, balance_after) VALUES ($1, $2, $3, $4, $5)"
+            "INSERT INTO diamond_transactions (user_id, type, scene, diamond_num, balance_after) VALUES ($1, $2, $3, $4, $5)"
         )
         .bind(user_id as i64)
         .bind(1) // type 1 = earn
         .bind("sign")
-        .bind(diamonds_earned)
+        .bind(diamond_reward)
         .bind(new_total)
         .execute(db)
         .await?;
@@ -332,7 +332,7 @@ impl SignService {
             group_id,
             sign_date: today.to_string(),
             consecutive_days,
-            diamonds_earned,
+            diamond_reward,
             trace_id: None,
         };
         let _ = EventPublisher::publish(
@@ -347,7 +347,7 @@ impl SignService {
         .await;
 
         Ok(DailyCheckinOut {
-            diamonds_earned,
+            diamond_reward,
             consecutive_days,
             total_diamonds: new_total,
         })

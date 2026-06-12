@@ -167,11 +167,13 @@
 
 ---
 
-## 13. 模块十二：文件上传（upload）
+## 13. 模块十二：文件上传（upload - 七牛云直传）
 
-### 13.1 获取预签名上传 URL
+> **核心原则**：业务后端**不接收任何文件流**，仅颁发七牛云 upload token，前端直传七牛。详见 FSD §16.3。
 
-**接口**: `POST /api/uploads/presigned-url`
+### 13.1 申请七牛 Upload Token（单文件）
+
+**接口**: `POST /api/uploads/token`
 
 **认证**: 是
 
@@ -184,16 +186,18 @@
   "filename": "photo.jpg",
   "content_type": "image/jpeg",
   "size": 1024000,
+  "business_ref_type": "footprint",
   "idempotency_key": "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
 }
 ```
 
-| 字段              | 类型    | 必填 | 说明                                  |
-| ----------------- | ------- | ---- | ------------------------------------- |
-| `filename`        | string  | 是   | 原始文件名                            |
-| `content_type`    | string  | 是   | MIME 类型                             |
-| `size`            | integer | 是   | 文件大小（字节），最大 5242880（5MB） |
-| `idempotency_key` | string  | 是   | 幂等键                                |
+| 字段                | 类型    | 必填 | 说明                                                |
+| ------------------- | ------- | ---- | --------------------------------------------------- |
+| `filename`          | string  | 是   | 原始文件名                                          |
+| `content_type`      | string  | 是   | MIME 类型，限定 `image/jpeg`、`image/png`、`image/gif` |
+| `size`              | integer | 是   | 文件大小（字节），最大 5,242,880（5MB）             |
+| `business_ref_type` | string  | 是   | `food` / `footprint` / `checkin` / `avatar`         |
+| `idempotency_key`   | string  | 是   | 幂等键                                              |
 
 **响应体**:
 
@@ -202,75 +206,45 @@
   "code": 0,
   "message": "success",
   "data": {
-    "upload_url": "https://cdn.example.com/upload?signature=eyJ...",
-    "file_key": "uploads/2026/06/03/abc123def456.jpg",
-    "expires_at": "2026-06-03T12:00:00Z"
+    "upload_token": ":eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+    "file_key": "uploads/footprint/2026/06/03/abc123def456.jpg",
+    "upload_host": "https://upload.qiniup.com",
+    "expires_at": "2026-06-03T13:00:00Z"
   },
   "trace_id": "550e8400-e29b-41d4-a716-446655440000"
 }
 ```
 
+| 字段           | 类型    | 说明                                       |
+| -------------- | ------- | ------------------------------------------ |
+| `upload_token` | string  | 七牛 upload token（Base64）                |
+| `file_key`     | string  | 文件在七牛桶中的 key（含业务类型前缀）     |
+| `upload_host`  | string  | 七牛上传服务器 URL（客户端直传）           |
+| `expires_at`   | string  | token 过期时间（ISO 8601）                 |
+
 **业务规则**:
 
-- 图片限制：JPEG/PNG/GIF，最大 5MB
-- 预签名 URL 有效期 30 分钟
-- 直接上传到对象存储，不经过业务服务器
+- 业务后端调用七牛 SDK 生成 upload token，包含：
+  - `scope`：限定上传到 `may-store:{file_key}`
+  - `mimeLimit`：限定 MIME
+  - `fsizeLimit`：限定大小
+  - `deadline`：默认 1 小时
+  - `returnBody`：返回 key/hash
+- 前端拿到 token 后使用**七牛 JS SDK** 直传七牛，**不经过业务后端**。
+- file_key 命名：`{business_ref_type}/{yyyy}/{mm}/{dd}/{uuid}.{ext}`
+- 写入 `upload_files` 表（`status=PENDING`）。
 
 **错误码**:
 
 - `UPLOAD_SIZE_EXCEEDED`: 文件大小超出 5MB
 - `UPLOAD_TYPE_NOT_ALLOWED`: 不支持的文件类型
+- `UPLOAD_TOKEN_INVALID`: 七牛 token 颁发失败
 
 ---
 
-### 13.2 确认上传完成
+### 13.2 批量申请七牛 Upload Token
 
-**接口**: `POST /api/uploads/confirm`
-
-**认证**: 是
-
-**幂等**: 是
-
-**请求体**:
-
-```json
-{
-  "file_key": "uploads/2026/06/03/abc123def456.jpg"
-}
-```
-
-**响应体**:
-
-```json
-{
-  "code": 0,
-  "message": "success",
-  "data": {
-    "file_key": "uploads/2026/06/03/abc123def456.jpg",
-    "cdn_url": "https://cdn.example.com/uploads/2026/06/03/abc123def456.jpg",
-    "content_check_status": "PENDING"
-  },
-  "trace_id": "550e8400-e29b-41d4-a716-446655440000"
-}
-```
-
-**content_check_status 取值**:
-
-- `PASS`: 内容安全检查通过
-- `PENDING`: 检查中，稍后回调
-- `REJECTED`: 内容安全检查未通过
-
-**业务规则**:
-
-- 上传后需确认才返回可用的 CDN URL
-- 内容安全审核异步进行
-- 审核未通过时返回 `UPLOAD_CONTENT_REJECTED`
-
----
-
-### 13.3 批量获取预签名 URL
-
-**接口**: `POST /api/uploads/presigned-urls`
+**接口**: `POST /api/uploads/tokens`
 
 **认证**: 是
 
@@ -281,12 +255,31 @@
 ```json
 {
   "files": [
-    { "filename": "photo1.jpg", "content_type": "image/jpeg", "size": 1024000 },
-    { "filename": "photo2.jpg", "content_type": "image/jpeg", "size": 2048000 }
+    {
+      "filename": "photo1.jpg",
+      "content_type": "image/jpeg",
+      "size": 1024000,
+      "business_ref_type": "footprint"
+    },
+    {
+      "filename": "photo2.jpg",
+      "content_type": "image/jpeg",
+      "size": 2048000,
+      "business_ref_type": "footprint"
+    }
   ],
   "idempotency_key": "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
 }
 ```
+
+| 字段                | 类型    | 必填 | 说明                                |
+| ------------------- | ------- | ---- | ----------------------------------- |
+| `files`             | array   | 是   | 文件列表，最多 9 个                  |
+| `files[].filename`  | string  | 是   | 原始文件名                          |
+| `files[].content_type` | string | 是   | MIME                                |
+| `files[].size`      | integer | 是   | 大小（字节）                        |
+| `files[].business_ref_type` | string | 是 | `food` / `footprint` / `checkin` / `avatar` |
+| `idempotency_key`   | string  | 是   | 幂等键                              |
 
 **响应体**:
 
@@ -298,15 +291,17 @@
     "uploads": [
       {
         "filename": "photo1.jpg",
-        "upload_url": "https://cdn.example.com/upload?signature=xxx1",
-        "file_key": "uploads/2026/06/03/file1.jpg",
-        "expires_at": "2026-06-03T12:00:00Z"
+        "upload_token": "...",
+        "file_key": "uploads/footprint/2026/06/03/file1.jpg",
+        "upload_host": "https://upload.qiniup.com",
+        "expires_at": "2026-06-03T13:00:00Z"
       },
       {
         "filename": "photo2.jpg",
-        "upload_url": "https://cdn.example.com/upload?signature=xxx2",
-        "file_key": "uploads/2026/06/03/file2.jpg",
-        "expires_at": "2026-06-03T12:00:00Z"
+        "upload_token": "...",
+        "file_key": "uploads/footprint/2026/06/03/file2.jpg",
+        "upload_host": "https://upload.qiniup.com",
+        "expires_at": "2026-06-03T13:00:00Z"
       }
     ]
   },
@@ -318,6 +313,75 @@
 
 - 单次最多 9 个文件
 - 总大小不超过 20MB
+- 每个文件生成独立的 file_key 和 token
+
+**错误码**:
+
+- `UPLOAD_SIZE_EXCEEDED`: 单文件或总大小超出限制
+- `UPLOAD_TYPE_NOT_ALLOWED`: 不支持的文件类型
+
+---
+
+### 13.3 确认上传完成
+
+**接口**: `POST /api/uploads/confirm`
+
+**认证**: 是
+
+**幂等**: 是
+
+**请求体**:
+
+```json
+{
+  "file_key": "uploads/footprint/2026/06/03/abc123def456.jpg",
+  "hash": "FnDe3qExStHJn9H5b9L0YmH5b9L0",
+  "business_ref_type": "footprint",
+  "business_ref_id": 12345
+}
+```
+
+| 字段                | 类型    | 必填 | 说明                                                |
+| ------------------- | ------- | ---- | --------------------------------------------------- |
+| `file_key`          | string  | 是   | 文件 key（与申请 token 时返回的一致）                |
+| `hash`              | string  | 是   | 七牛返回的文件 hash（etag）                         |
+| `business_ref_type` | string  | 否   | 业务引用类型 `food` / `footprint` / `checkin`         |
+| `business_ref_id`   | integer | 否   | 业务引用 ID                                          |
+
+**响应体**:
+
+```json
+{
+  "code": 0,
+  "message": "success",
+  "data": {
+    "file_key": "uploads/footprint/2026/06/03/abc123def456.jpg",
+    "cdn_url": "https://cdn.example.com/uploads/footprint/2026/06/03/abc123def456.jpg",
+    "content_check_status": "PENDING"
+  },
+  "trace_id": "550e8400-e29b-41d4-a716-446655440000"
+}
+```
+
+**content_check_status 取值**:
+
+- `PASS`: 内容安全检查通过
+- `PENDING`: 检查中，稍后回调或主动查询
+- `REJECTED`: 内容安全检查未通过
+
+**业务规则**:
+
+- 校验 hash 与 token 申请时记录的一致（防伪造）。
+- 更新 `upload_files.status = ACTIVE`，写入 hash。
+- 触发异步内容安全审核（七牛内容审核 API 或第三方）。
+- 审核未通过时调用七牛 delete 释放存储，业务层返回 `UPLOAD_CONTENT_REJECTED`。
+- 关联业务资源（`business_ref_id`）时记录引用。
+
+**错误码**:
+
+- `UPLOAD_TOKEN_INVALID`: file_key 不存在或与申请记录不匹配
+- `UPLOAD_CONTENT_REJECTED`: 内容审核未通过
+- `UPLOAD_FILE_NOT_FOUND`: 七牛侧文件不存在
 
 ---
 
@@ -326,6 +390,12 @@
 **接口**: `DELETE /api/uploads/{file_key:path}`
 
 **认证**: 是
+
+**路径参数**:
+
+| 字段       | 类型   | 说明                |
+| ---------- | ------ | ------------------- |
+| `file_key` | string | 文件路径（含前缀）  |
 
 **响应体**:
 
@@ -340,12 +410,47 @@
 
 **业务规则**:
 
-- 删除后 CDN URL 立即失效
-- 已在业务中使用的图片不建议删除
+- 校验所有权（`upload_files.user_id` 与当前用户一致）。
+- 调用七牛 delete API 删除对象。
+- 软删除 `upload_files` 记录（`status=DELETED`）。
+- 关联业务资源解除引用。
+
+**错误码**:
+
+- `UPLOAD_FILE_NOT_FOUND`: 文件不存在
+- `UPLOAD_PERMISSION_DENIED`: 非文件所有者
+
+---
+
+### 13.5 七牛异步回调（可选）
+
+**接口**: `POST /api/uploads/qiniu-callback`
+
+**认证**: 否（七牛签名验证）
+
+**请求体**（七牛发送）:
+
+```json
+{
+  "file_key": "uploads/footprint/2026/06/03/abc123def456.jpg",
+  "hash": "FnDe3qExStHJn9H5b9L0YmH5b9L0",
+  "user_id": 10001
+}
+```
+
+**业务规则**:
+
+- 验证 `Authorization` 头签名（七牛 HMAC-SHA1）。
+- 更新 `upload_files.status = ACTIVE`。
+- 触发内容审核。
 
 ---
 
 ## 14. 模块十三：WebSocket 实时通知（ws）
+
+> **V1.0 范围**：本章定义的 WebSocket 协议用于**应用内实时通知**（V1.0 唯一支持的推送渠道）。
+>
+> **V2.0 暂缓**：微信小程序订阅消息（`TPL_ORDER_NEW` / `TPL_WISH_DONE` 等模板）V1.0 不实现。FSD §10.5 标记 V2.0 暂缓。v3.sql 中 `wx_subscription_templates` 表已移除。
 
 ### 14.1 连接与鉴权
 
