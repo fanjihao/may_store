@@ -13,13 +13,12 @@ use ntex::{
     http::Payload,
     web::{ErrorRenderer, FromRequest, HttpRequest},
 };
-use redis::AsyncCommands;
 
 use crate::{
     config::AppState,
     domain::user::UserPublic,
     errors::CustomError,
-    middlewares::auth::{UserTokenClaims, decode_jwt, load_user_public_for_token},
+    middlewares::{auth::load_user_public_for_token, jwt},
 };
 
 /// 管理员角色 (FSD §11.24)
@@ -60,7 +59,6 @@ impl<E: ErrorRenderer> FromRequest<E> for AdminToken {
         req: &HttpRequest,
         _payload: &mut Payload,
     ) -> impl Future<Output = Result<Self, Self::Error>> {
-        // 取出 state、auth header、redis
         let state = req.app_state::<Arc<AppState>>().cloned();
         let auth_header = req.headers().get("Authorization").cloned();
 
@@ -69,39 +67,34 @@ impl<E: ErrorRenderer> FromRequest<E> for AdminToken {
                 CustomError::internal(String::from("app state 缺失"))
             })?;
             let mut raw = auth_header
-                .ok_or_else(|| CustomError::unauthorized("No login authorization"))?
+                .ok_or_else(|| CustomError::auth_invalid_token("缺少 Authorization 头"))?
                 .to_str()
-                .map_err(|_| CustomError::unauthorized("Invalid header"))?
+                .map_err(|_| CustomError::auth_invalid_token("Authorization 头格式非法"))?
                 .to_string();
             if let Some(stripped) = raw.strip_prefix("Bearer ") {
                 raw = stripped.trim().to_string();
             }
 
-            // 1. JWT 解码
-            let claims: UserTokenClaims = decode_jwt(&raw, &state.jwt_secret)?;
+            // 1. 统一 JWT 校验:签名 / 算法 / exp / iss / typ / 黑名单 / 全撤销
+            let claims = jwt::verify(
+                &raw,
+                &state.jwt_secret,
+                jwt::TokenType::Access,
+                &state.redis_cache,
+            )
+            .await?;
+            let user_id = claims.user_id()?;
 
-            // 2. 检查 token 黑名单
-            let blacklist_key = format!("token_blacklist:{}:{}", claims.user_id, claims.exp);
-            let mut conn = state
-                .redis_cache
-                .get_conn()
-                .await
-                .map_err(|e| CustomError::internal(format!("Redis 连接失败: {e}")))?;
-            let is_revoked: Option<String> = conn.get(&blacklist_key).await.unwrap_or(None);
-            if is_revoked.is_some() {
-                return Err(CustomError::unauthorized("token 已被撤销"));
-            }
+            // 2. 加载用户公开信息(可选,失败不阻塞)
+            let user = load_user_public_for_token(&state, user_id).await;
 
-            // 3. 加载用户公开信息(可选,失败不阻塞)
-            let user = load_user_public_for_token(&state, claims.user_id).await;
-
-            // 4. 查 admin_users 表
+            // 3. 查 admin_users 表 —— UserRole::Admin 不被信任,必须以表为准
             let row: Option<(i64, String, String)> = sqlx::query_as(
                 r#"SELECT admin_id, role::text, status
                    FROM admin_users
                    WHERE user_id = $1"#,
             )
-            .bind(claims.user_id)
+            .bind(user_id)
             .fetch_optional(&state.db_pool)
             .await?;
 
@@ -118,7 +111,7 @@ impl<E: ErrorRenderer> FromRequest<E> for AdminToken {
 
             Ok(AdminToken {
                 admin_id,
-                user_id: claims.user_id,
+                user_id,
                 role,
                 user,
             })

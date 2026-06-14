@@ -4,6 +4,10 @@
 目标：10 万注册用户生产级产品
 技术栈：Rust + PostgreSQL
 
+> ⚠️ **重要**:本文档 vs 代码 vs Swagger 不一致时,以 **Swagger (utoipa 自动生成) 为权威**。
+> 已知差异请查阅 [ERRATUM.md](ERRATUM.md) —— 2026-06-13 审计后剩余 4 项文档侧待修订点。
+> 本 API doc 仅覆盖 5 大核心模块,memorial_days / tags / food_marks / footprint_groups / support_tickets 等模块请直接参考 Swagger 文档。
+
 ---
 
 ## 1. 通用约定

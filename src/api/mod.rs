@@ -7,6 +7,7 @@ pub mod auth; // 微信登录 - FSD v2
 pub mod dashboard; // 数据看板 - FSD v2
 pub mod economy; // 经济查询 - FSD v2
 pub mod footprints; // 足迹 - FSD v2
+pub mod foods; // 菜品 CRUD - FSD §5
 pub mod groups; // 双人组管理 - FSD v2
 pub mod kitchens; // 主人家厨房 - FSD v2
 pub mod memorial_days; // 纪念日 - FSD §24.9
@@ -34,6 +35,7 @@ pub fn configure(cfg: &mut ServiceConfig) {
     dashboard::configure(cfg);
     economy::configure(cfg);
     footprints::configure(cfg);
+    foods::routes::configure(cfg);
     notifications::configure(cfg);
     orders::configure(cfg);
     wishes::configure(cfg);

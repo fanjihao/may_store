@@ -177,7 +177,7 @@ async fn get_kitchen_foods(
     // 获取主人家菜品
     let foods = sqlx::query(
         r#"SELECT food_id, group_id, name, description, images, tags, ingredients, steps, status
-           FROM foods WHERE group_id=$1 AND status='ACTIVE'
+           FROM foods WHERE group_id=$1 AND food_status='NORMAL'
            ORDER BY created_at DESC"#,
     )
     .bind(group_id)
@@ -231,7 +231,7 @@ pub struct CreateGuestOrderResponse {
         (status = 401, description = "未登录"),
         (status = 404, description = "邀请码无效或已过期")
     ),
-    security(("cookie_auth" = []))
+    security(("bearer_auth" = []))
 )]
 async fn create_guest_order(
     token: UserToken,

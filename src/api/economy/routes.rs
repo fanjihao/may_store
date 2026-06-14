@@ -163,7 +163,7 @@ pub struct ExpTransactionsResponse {
         (status = 200, description = "获取成功", body = PointsBalanceResponse),
         (status = 403, description = "无权访问该组")
     ),
-    security(("cookie_auth" = []))
+    security(("bearer_auth" = []))
 )]
 async fn get_points_balance(
     token: UserToken,
@@ -240,7 +240,7 @@ async fn get_points_balance(
         (status = 200, description = "获取成功", body = PointsTransactionsResponse),
         (status = 403, description = "无权访问该组")
     ),
-    security(("cookie_auth" = []))
+    security(("bearer_auth" = []))
 )]
 async fn get_points_transactions(
     token: UserToken,
@@ -353,7 +353,7 @@ async fn get_points_transactions(
         (status = 200, description = "获取成功", body = DiamondsBalanceResponse),
         (status = 403, description = "无权访问该组")
     ),
-    security(("cookie_auth" = []))
+    security(("bearer_auth" = []))
 )]
 async fn get_diamonds_balance(
     token: UserToken,
@@ -420,7 +420,7 @@ async fn get_diamonds_balance(
         (status = 200, description = "获取成功", body = DiamondsTransactionsResponse),
         (status = 403, description = "无权访问该组")
     ),
-    security(("cookie_auth" = []))
+    security(("bearer_auth" = []))
 )]
 async fn get_diamonds_transactions(
     token: UserToken,
@@ -527,7 +527,7 @@ async fn get_diamonds_transactions(
         (status = 200, description = "获取成功", body = GroupExpResponse),
         (status = 403, description = "无权访问该组")
     ),
-    security(("cookie_auth" = []))
+    security(("bearer_auth" = []))
 )]
 async fn get_group_exp(
     token: UserToken,
@@ -605,7 +605,7 @@ async fn get_group_exp(
         (status = 200, description = "获取成功", body = ExpTransactionsResponse),
         (status = 403, description = "无权访问该组")
     ),
-    security(("cookie_auth" = []))
+    security(("bearer_auth" = []))
 )]
 async fn get_exp_transactions(
     token: UserToken,

@@ -92,7 +92,7 @@ pub struct MemberSignStatus {
         (status = 403, description = "非组成员"),
         (status = 500, description = "服务器错误")
     ),
-    security(("cookie_auth" = []))
+    security(("bearer_auth" = []))
 )]
 pub async fn sign_in(
     state: State<Arc<AppState>>,
@@ -125,7 +125,7 @@ pub async fn sign_in(
         (status = 403, description = "非组成员"),
         (status = 500, description = "服务器错误")
     ),
-    security(("cookie_auth" = []))
+    security(("bearer_auth" = []))
 )]
 pub async fn sign_in_status(
     state: State<Arc<AppState>>,
@@ -203,7 +203,7 @@ pub async fn sign_in_status(
         (status = 403, description = "非组成员"),
         (status = 500, description = "服务器错误")
     ),
-    security(("cookie_auth" = []))
+    security(("bearer_auth" = []))
 )]
 pub async fn get_sign_ins(
     state: State<Arc<AppState>>,

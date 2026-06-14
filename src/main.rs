@@ -42,10 +42,10 @@ async fn main() -> Result<(), CustomError> {
     let app_state = init_app_state().await?;
 
     // 启动 WebSocket 服务器（独立端口 9832）
-    let jwt_secret_for_ws = app_state.jwt_secret.clone();
+    let app_state_for_ws = app_state.clone();
     let ws_handle = tokio::spawn(async move {
         use api::ws;
-        if let Err(e) = ws::start_websocket_server("0.0.0.0:9832", &jwt_secret_for_ws).await {
+        if let Err(e) = ws::start_websocket_server("0.0.0.0:9832", app_state_for_ws).await {
             log::error!("WebSocket 服务器错误: {}", e);
         }
     });

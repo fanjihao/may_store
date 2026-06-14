@@ -23,8 +23,8 @@ pub fn configure(cfg: &mut ServiceConfig) {
             .route("/stats", web::get().to(get_stats))
             .route("/groups", web::get().to(list_groups))
             .route("/users", web::get().to(list_all_users))
-            .route("/config", web::get().to(get_config))
-            .route("/config", web::put().to(update_config))
+            .route("/configs", web::get().to(get_config))
+            .route("/configs/{config_key}", web::patch().to(update_config))
             // FSD v2: 心愿质量奖励审核
             .route(
                 "/wishes/{wish_id}/quality-reward",
@@ -131,14 +131,14 @@ pub struct OrderRewardReviewResponse {
 /// 管理员查看整体运营数据
 #[utoipa::path(
     get,
-    path = "/admin/stats",
+    path = "/api/admin/stats",
     tag = "后台管理",
     responses(
         (status = 200, description = "获取成功", body = StatsResponse),
         (status = 401, description = "未登录"),
         (status = 403, description = "无权限")
     ),
-    security(("cookie_auth" = []))
+    security(("bearer_auth" = []))
 )]
 pub async fn get_stats(
     state: State<Arc<AppState>>,
@@ -190,14 +190,14 @@ pub async fn get_stats(
 /// 获取所有组列表
 #[utoipa::path(
     get,
-    path = "/admin/groups",
+    path = "/api/admin/groups",
     tag = "后台管理",
     responses(
         (status = 200, description = "获取成功", body = Vec<GroupListItem>),
         (status = 401, description = "未登录"),
         (status = 403, description = "无权限")
     ),
-    security(("cookie_auth" = []))
+    security(("bearer_auth" = []))
 )]
 pub async fn list_groups(
     state: State<Arc<AppState>>,
@@ -228,14 +228,14 @@ pub async fn list_groups(
 /// 获取所有用户列表
 #[utoipa::path(
     get,
-    path = "/admin/users",
+    path = "/api/admin/users",
     tag = "后台管理",
     responses(
         (status = 200, description = "获取成功", body = Vec<UserListItem>),
         (status = 401, description = "未登录"),
         (status = 403, description = "无权限")
     ),
-    security(("cookie_auth" = []))
+    security(("bearer_auth" = []))
 )]
 pub async fn list_all_users(
     state: State<Arc<AppState>>,
@@ -265,17 +265,25 @@ pub async fn list_all_users(
     Ok(ApiResponse::success(result))
 }
 
-/// 获取系统配置
+/// 单条系统配置更新输入 (FSD §11.22 PATCH 接口)
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateConfigInput {
+    /// 新值,根据 config_key 类型自动校验
+    pub value: serde_json::Value,
+}
+
+/// 获取系统配置列表 (FSD §11.22)
 #[utoipa::path(
     get,
-    path = "/admin/config",
+    path = "/api/admin/configs",
     tag = "后台管理",
     responses(
         (status = 200, description = "获取成功", body = ConfigResponse),
         (status = 401, description = "未登录"),
         (status = 403, description = "无权限")
     ),
-    security(("cookie_auth" = []))
+    security(("bearer_auth" = []))
 )]
 pub async fn get_config(
     state: State<Arc<AppState>>,
@@ -312,28 +320,33 @@ pub async fn get_config(
     Ok(ApiResponse::success(serde_json::Value::Object(config)))
 }
 
-/// 更新系统配置
+/// 更新单条系统配置 (FSD §11.22 - PATCH /api/admin/configs/{config_key})
 #[utoipa::path(
-    put,
-    path = "/admin/config",
+    patch,
+    path = "/api/admin/configs/{config_key}",
     tag = "后台管理",
-    request_body = serde_json::Value,
+    params(("config_key" = String, Path, description = "配置键名,如 signRewardDaily")),
+    request_body = UpdateConfigInput,
     responses(
         (status = 200, description = "更新成功", body = serde_json::Value),
+        (status = 400, description = "未知配置键或取值越界"),
         (status = 401, description = "未登录"),
         (status = 403, description = "无权限")
     ),
-    security(("cookie_auth" = []))
+    security(("bearer_auth" = []))
 )]
 pub async fn update_config(
     state: State<Arc<AppState>>,
     admin: AdminToken,
-    body: web::types::Json<serde_json::Value>,
+    path: Path<String>,
+    body: Json<UpdateConfigInput>,
 ) -> Result<impl Responder, CustomError> {
     let db = &state.db_pool;
-    let config = body.into_inner();
+    let config_key = path.into_inner();
+    let new_value = body.into_inner().value;
 
-    // 校验范围 + 写入 global_configs(原 system_config 表已删除,改用 FSD §11.22 设计表)
+    // 已知配置键白名单 + 校验范围 + 所属 category
+    // 新增配置需在此登记,未登记的 key 一律拒绝(防止任意 jsonb 注入)
     let entries: &[(&str, i64, i64, &str)] = &[
         ("signRewardDaily", 1, 100, "SIGN_IN"),
         ("signRewardConsecutive", 1, 100, "SIGN_IN"),
@@ -342,29 +355,37 @@ pub async fn update_config(
         ("defaultFootprintCapacity", 10, 1000, "GENERAL"),
     ];
 
-    for (key, lo, hi, cat) in entries {
-        if let Some(v) = config.get(*key).and_then(|v| v.as_i64()) {
-            if v < *lo || v > *hi {
-                return Err(CustomError::BadRequest(
-                    format!("{} 必须在 {}-{} 之间", key, lo, hi),
-                ));
-            }
-            sqlx::query(
-                r#"INSERT INTO global_configs (config_key, config_value, category, updated_by, updated_at)
-                   VALUES ($1, $2::jsonb, $3::config_category_enum, $4, NOW())
-                   ON CONFLICT (config_key) DO UPDATE
-                   SET config_value = EXCLUDED.config_value,
-                       updated_by = EXCLUDED.updated_by,
-                       updated_at = NOW()"#,
-            )
-            .bind(*key)
-            .bind(v as i32)
-            .bind(*cat)
-            .bind(admin.user_id)
-            .execute(db)
-            .await?;
-        }
+    let (_, lo, hi, cat) = entries
+        .iter()
+        .find(|(k, _, _, _)| *k == config_key.as_str())
+        .ok_or_else(|| {
+            CustomError::BadRequest(format!("未知配置键: {}", config_key))
+        })?;
+
+    let v = new_value
+        .as_i64()
+        .ok_or_else(|| CustomError::BadRequest("value 必须是整数".into()))?;
+    if v < *lo || v > *hi {
+        return Err(CustomError::BadRequest(format!(
+            "{} 必须在 {}-{} 之间",
+            config_key, lo, hi
+        )));
     }
+
+    sqlx::query(
+        r#"INSERT INTO global_configs (config_key, config_value, category, updated_by, updated_at)
+           VALUES ($1, $2::jsonb, $3::config_category_enum, $4, NOW())
+           ON CONFLICT (config_key) DO UPDATE
+           SET config_value = EXCLUDED.config_value,
+               updated_by = EXCLUDED.updated_by,
+               updated_at = NOW()"#,
+    )
+    .bind(&config_key)
+    .bind(v as i32)
+    .bind(*cat)
+    .bind(admin.user_id)
+    .execute(db)
+    .await?;
 
     // 写审计日志
     let _ = sqlx::query(
@@ -372,11 +393,15 @@ pub async fn update_config(
            VALUES ($1, 'ADMIN', 'CONFIG_UPDATE', 'GLOBAL_CONFIG', $2)"#,
     )
     .bind(admin.user_id)
-    .bind(&config)
+    .bind(serde_json::json!({ "config_key": config_key, "value": v }))
     .execute(db)
     .await;
 
-    Ok(ApiResponse::success(serde_json::json!({"status": "ok"})))
+    Ok(ApiResponse::success(serde_json::json!({
+        "config_key": config_key,
+        "value": v,
+        "status": "ok"
+    })))
 }
 
 /// 心愿质量奖励审核
@@ -387,7 +412,7 @@ pub async fn update_config(
 /// 必须幂等，同一心愿额外钻石奖励只发放一次
 #[utoipa::path(
     post,
-    path = "/admin/wishes/{wish_id}/quality-reward",
+    path = "/api/admin/wishes/{wish_id}/quality-reward",
     tag = "后台管理",
     params(
         ("wish_id" = i64, description = "心愿ID")
@@ -400,7 +425,7 @@ pub async fn update_config(
         (status = 404, description = "心愿不存在"),
         (status = 409, description = "已发放过奖励")
     ),
-    security(("cookie_auth" = []))
+    security(("bearer_auth" = []))
 )]
 pub async fn wish_quality_reward(
     state: State<Arc<AppState>>,
@@ -515,7 +540,7 @@ pub async fn wish_quality_reward(
 /// 仅用于 point_grant_status=PENDING_REVIEW 或 exp_grant_status=PENDING_REVIEW 的订单
 #[utoipa::path(
     post,
-    path = "/admin/orders/{order_id}/reward-review",
+    path = "/api/admin/orders/{order_id}/reward-review",
     tag = "后台管理",
     params(
         ("order_id" = i64, description = "订单ID")
@@ -527,7 +552,7 @@ pub async fn wish_quality_reward(
         (status = 403, description = "无权限"),
         (status = 404, description = "订单不存在")
     ),
-    security(("cookie_auth" = []))
+    security(("bearer_auth" = []))
 )]
 pub async fn order_reward_review(
     state: State<Arc<AppState>>,
@@ -597,7 +622,7 @@ pub async fn order_reward_review(
 /// GET /api/admin/orders/pending-review
 #[utoipa::path(
     get,
-    path = "/admin/orders/pending-review",
+    path = "/api/admin/orders/pending-review",
     tag = "后台管理",
     params(
         ("cursor" = Option<String>, Query, description = "游标分页"),
@@ -609,7 +634,7 @@ pub async fn order_reward_review(
         (status = 401, description = "未登录"),
         (status = 403, description = "无权限")
     ),
-    security(("cookie_auth" = []))
+    security(("bearer_auth" = []))
 )]
 pub async fn get_pending_review_orders(
     state: State<Arc<AppState>>,
@@ -621,8 +646,8 @@ pub async fn get_pending_review_orders(
     let limit = query.limit.unwrap_or(20);
 
     let rows = sqlx::query(
-        r#"SELECT order_id, group_id, type, creator_id, status, risk_status, risk_detail,
-           love_point_reward, group_exp_reward, point_grant_status, exp_grant_status, created_at
+        r#"SELECT order_id, group_id, type, user_id, status, risk_status, risk_detail,
+           points_reward, group_exp_reward, point_grant_status, exp_grant_status, created_at
            FROM orders
            WHERE point_grant_status = 'PENDING_REVIEW' OR exp_grant_status = 'PENDING_REVIEW'
            ORDER BY created_at DESC
@@ -639,11 +664,11 @@ pub async fn get_pending_review_orders(
                 "orderId": r.get::<i64, _>("order_id"),
                 "groupId": r.get::<i64, _>("group_id"),
                 "type": r.get::<String, _>("type"),
-                "creatorId": r.get::<i64, _>("creator_id"),
+                "userId": r.get::<i64, _>("user_id"),
                 "status": r.get::<String, _>("status"),
                 "riskStatus": r.get::<String, _>("risk_status"),
                 "riskDetail": r.get::<Option<serde_json::Value>, _>("risk_detail"),
-                "lovePointReward": r.get::<i32, _>("love_point_reward"),
+                "pointsReward": r.get::<i32, _>("points_reward"),
                 "groupExpReward": r.get::<i32, _>("group_exp_reward"),
                 "pointGrantStatus": r.get::<String, _>("point_grant_status"),
                 "expGrantStatus": r.get::<String, _>("exp_grant_status"),
@@ -672,7 +697,7 @@ pub struct ReviewOrderInput {
 
 #[utoipa::path(
     post,
-    path = "/admin/orders/{order_id}/review",
+    path = "/api/admin/orders/{order_id}/review",
     tag = "后台管理",
     params(
         ("order_id" = i64, Path, description = "订单ID")
@@ -684,7 +709,7 @@ pub struct ReviewOrderInput {
         (status = 403, description = "无权限"),
         (status = 404, description = "订单不存在")
     ),
-    security(("cookie_auth" = []))
+    security(("bearer_auth" = []))
 )]
 pub async fn review_order(
     state: State<Arc<AppState>>,
@@ -764,7 +789,7 @@ pub struct AuditLogQuery {
 
 #[utoipa::path(
     get,
-    path = "/admin/audit-logs",
+    path = "/api/admin/audit-logs",
     tag = "后台管理",
     params(AuditLogQuery),
     responses(
@@ -772,7 +797,7 @@ pub struct AuditLogQuery {
         (status = 401, description = "未登录"),
         (status = 403, description = "无权限")
     ),
-    security(("cookie_auth" = []))
+    security(("bearer_auth" = []))
 )]
 pub async fn get_audit_logs(
     state: State<Arc<AppState>>,
@@ -835,7 +860,7 @@ pub struct UpdateGroupConfigsInput {
 
 #[utoipa::path(
     patch,
-    path = "/admin/groups/{group_id}/configs",
+    path = "/api/admin/groups/{group_id}/configs",
     tag = "后台管理",
     params(
         ("group_id" = i64, Path, description = "组ID")
@@ -847,7 +872,7 @@ pub struct UpdateGroupConfigsInput {
         (status = 403, description = "无权限"),
         (status = 404, description = "组不存在")
     ),
-    security(("cookie_auth" = []))
+    security(("bearer_auth" = []))
 )]
 pub async fn update_group_configs(
     state: State<Arc<AppState>>,
@@ -929,7 +954,7 @@ pub struct CompensatePointsInput {
 
 #[utoipa::path(
     post,
-    path = "/admin/groups/{group_id}/points/compensate",
+    path = "/api/admin/groups/{group_id}/points/compensate",
     tag = "后台管理",
     params(
         ("group_id" = i64, Path, description = "组ID")
@@ -941,7 +966,7 @@ pub struct CompensatePointsInput {
         (status = 403, description = "无权限"),
         (status = 404, description = "用户不在该组")
     ),
-    security(("cookie_auth" = []))
+    security(("bearer_auth" = []))
 )]
 pub async fn compensate_points(
     state: State<Arc<AppState>>,
@@ -1026,7 +1051,7 @@ pub struct CompensateDiamondsInput {
 
 #[utoipa::path(
     post,
-    path = "/admin/groups/{group_id}/diamonds/compensate",
+    path = "/api/admin/groups/{group_id}/diamonds/compensate",
     tag = "后台管理",
     params(
         ("group_id" = i64, Path, description = "组ID")
@@ -1038,7 +1063,7 @@ pub struct CompensateDiamondsInput {
         (status = 403, description = "无权限"),
         (status = 404, description = "组不存在")
     ),
-    security(("cookie_auth" = []))
+    security(("bearer_auth" = []))
 )]
 pub async fn compensate_diamonds(
     state: State<Arc<AppState>>,
@@ -1184,7 +1209,7 @@ pub struct FoodAuditInput {
         ("limit" = Option<i64>, Query, description = "默认 20"),
         ("offset" = Option<i64>, Query)
     ),
-    security(("cookie_auth" = []))
+    security(("bearer_auth" = []))
 )]
 pub async fn list_pending_food_audits(
     state: State<Arc<AppState>>,
@@ -1241,7 +1266,7 @@ pub async fn list_pending_food_audits(
     tag = "菜品审核 (§24.7)",
     params(("food_id" = i64, Path, description = "菜品 ID")),
     request_body = FoodAuditInput,
-    security(("cookie_auth" = []))
+    security(("bearer_auth" = []))
 )]
 pub async fn audit_food(
     state: State<Arc<AppState>>,
@@ -1256,9 +1281,12 @@ pub async fn audit_food(
         return Err(CustomError::invalid_parameter("action 必须是 APPROVE 或 REJECT"));
     }
 
-    let new_status = match input.action.as_str() {
-        "APPROVE" => "NORMAL",
-        "REJECT" => "REJECTED",
+    // apply_status_enum: PENDING / APPROVED / REJECTED
+    // food_status_enum:   NORMAL  / OFF      / AUDITING / REJECTED
+    // 审核通过:apply_status=APPROVED + food_status=NORMAL;审核拒绝:apply_status=REJECTED + food_status=REJECTED
+    let (new_apply_status, new_food_status) = match input.action.as_str() {
+        "APPROVE" => ("APPROVED", "NORMAL"),
+        "REJECT" => ("REJECTED", "REJECTED"),
         _ => unreachable!(),
     };
 
@@ -1285,17 +1313,18 @@ pub async fn audit_food(
     .bind(food_id)
     .bind(if input.action == "APPROVE" { 2 } else { 3 })
     .bind(&current_status)
-    .bind(new_status)
+    .bind(new_food_status)
     .bind(admin.user_id)
     .bind(&input.remark)
     .execute(&mut *tx)
     .await?;
 
-    // 更新菜品状态
+    // 更新菜品:apply_status + food_status
     sqlx::query(
-        "UPDATE foods SET apply_status = $1, approved_at = NOW(), approved_by = $2 WHERE food_id = $3"
+        "UPDATE foods SET apply_status = $1, food_status = $2, approved_at = NOW(), approved_by = $3 WHERE food_id = $4"
     )
-    .bind(new_status)
+    .bind(new_apply_status)
+    .bind(new_food_status)
     .bind(admin.user_id)
     .bind(food_id)
     .execute(&mut *tx)
@@ -1317,7 +1346,8 @@ pub async fn audit_food(
     Ok(ApiResponse::success(serde_json::json!({
         "food_id": food_id,
         "action": input.action,
-        "new_status": new_status,
+        "apply_status": new_apply_status,
+        "food_status": new_food_status,
         "audited_by": admin.user_id
     })))
 }

@@ -33,16 +33,16 @@ pub fn configure(cfg: &mut ServiceConfig) {
     .service(
         web::scope("/api/wishes")
             .route("/pending-fulfillment", web::get().to(pending_fulfillment))
-            .route("/{id}", web::get().to(get_wish))  // FSD v2 7.3 获取心愿详情
-            .route("/{id}/quote", web::post().to(wish_quote))           // FSD v2 7.4 协商报价
-            .route("/{id}/deadline", web::post().to(wish_deadline))     // FSD v2 7.5 协商履约期限
-            .route("/{id}/confirm-agreement", web::post().to(wish_confirm_agreement))  // FSD v2 7.6 双方确认
-            .route("/{id}/reject", web::post().to(wish_reject))         // FSD v2 7.7 拒绝/关闭
-            .route("/{id}/select", web::post().to(wish_select))        // FSD v2 7.8 选择心愿
-            .route("/{id}/feedback", web::post().to(submit_feedback))   // FSD v2 7.9 提交打卡反馈
-            .route("/{id}/expire", web::post().to(wish_expire))         // FSD v2 7.10 逾期处理
-            .route("/{id}/close", web::post().to(wish_close))           // FSD v2 7.11 关闭心愿
-            .route("/{id}/checkins", web::get().to(get_wish_checkins)) // FSD v2 7.12 获取打卡记录
+            .route("/{wish_id}", web::get().to(get_wish))  // FSD v2 7.3 获取心愿详情
+            .route("/{wish_id}/quote", web::post().to(wish_quote))           // FSD v2 7.4 协商报价
+            .route("/{wish_id}/deadline", web::post().to(wish_deadline))     // FSD v2 7.5 协商履约期限
+            .route("/{wish_id}/confirm-agreement", web::post().to(wish_confirm_agreement))  // FSD v2 7.6 双方确认
+            .route("/{wish_id}/reject", web::post().to(wish_reject))         // FSD v2 7.7 拒绝/关闭
+            .route("/{wish_id}/select", web::post().to(wish_select))        // FSD v2 7.8 选择心愿
+            .route("/{wish_id}/feedback", web::post().to(submit_feedback))   // FSD v2 7.9 提交打卡反馈
+            .route("/{wish_id}/expire", web::post().to(wish_expire))         // FSD v2 7.10 逾期处理
+            .route("/{wish_id}/close", web::post().to(wish_close))           // FSD v2 7.11 关闭心愿
+            .route("/{wish_id}/checkins", web::get().to(get_wish_checkins)) // FSD v2 7.12 获取打卡记录
     );
 }
 
@@ -91,7 +91,7 @@ pub struct WishCloseInput {
         (status = 403, description = "非组成员"),
         (status = 500, description = "服务器错误")
     ),
-    security(("cookie_auth" = []))
+    security(("bearer_auth" = []))
 )]
 pub async fn create_group_wish(
     user_token: UserToken,
@@ -136,7 +136,7 @@ pub async fn create_group_wish(
         (status = 403, description = "非组成员"),
         (status = 500, description = "服务器错误")
     ),
-    security(("cookie_auth" = []))
+    security(("bearer_auth" = []))
 )]
 pub async fn list_group_wishes(
     user_token: UserToken,
@@ -361,18 +361,18 @@ pub async fn list_group_wishes(
 }
 
 /// 获取心愿详情
-/// GET /api/wishes/{id}
+/// GET /api/wishes/{wish_id}
 /// FSD v2 7.3
 #[utoipa::path(
     get,
-    path = "/api/wishes/{id}",
+    path = "/api/wishes/{wish_id}",
     tag = "心愿",
-    params(("id" = i64, Path, description = "心愿ID")),
+    params(("wish_id" = i64, Path, description = "心愿ID")),
     responses(
         (status = 200, description = "获取成功", body = WishOut),
         (status = 404, description = "心愿不存在")
     ),
-    security(("cookie_auth" = []))
+    security(("bearer_auth" = []))
 )]
 pub async fn get_wish(
     _user_token: UserToken,
@@ -384,20 +384,20 @@ pub async fn get_wish(
 }
 
 /// 协商报价
-/// POST /api/wishes/{id}/quote
+/// POST /api/wishes/{wish_id}/quote
 /// FSD v2 7.4
 #[utoipa::path(
     post,
-    path = "/api/wishes/{id}/quote",
+    path = "/api/wishes/{wish_id}/quote",
     tag = "心愿",
-    params(("id" = i64, Path, description = "心愿ID")),
+    params(("wish_id" = i64, Path, description = "心愿ID")),
     request_body = WishQuoteInput,
     responses(
         (status = 200, description = "报价成功"),
         (status = 400, description = "心愿状态不允许报价"),
         (status = 404, description = "心愿不存在")
     ),
-    security(("cookie_auth" = []))
+    security(("bearer_auth" = []))
 )]
 pub async fn wish_quote(
     user_token: UserToken,
@@ -412,20 +412,20 @@ pub async fn wish_quote(
 }
 
 /// 协商履约期限
-/// POST /api/wishes/{id}/deadline
+/// POST /api/wishes/{wish_id}/deadline
 /// FSD v2 7.5
 #[utoipa::path(
     post,
-    path = "/api/wishes/{id}/deadline",
+    path = "/api/wishes/{wish_id}/deadline",
     tag = "心愿",
-    params(("id" = i64, Path, description = "心愿ID")),
+    params(("wish_id" = i64, Path, description = "心愿ID")),
     request_body = WishDeadlineInput,
     responses(
         (status = 200, description = "设置成功"),
         (status = 400, description = "心愿状态不允许设置期限"),
         (status = 404, description = "心愿不存在")
     ),
-    security(("cookie_auth" = []))
+    security(("bearer_auth" = []))
 )]
 pub async fn wish_deadline(
     user_token: UserToken,
@@ -440,19 +440,19 @@ pub async fn wish_deadline(
 }
 
 /// 双方线上确认积分和期限
-/// POST /api/wishes/{id}/confirm-agreement
+/// POST /api/wishes/{wish_id}/confirm-agreement
 /// FSD v2 7.6
 #[utoipa::path(
     post,
-    path = "/api/wishes/{id}/confirm-agreement",
+    path = "/api/wishes/{wish_id}/confirm-agreement",
     tag = "心愿",
-    params(("id" = i64, Path, description = "心愿ID")),
+    params(("wish_id" = i64, Path, description = "心愿ID")),
     responses(
         (status = 200, description = "确认成功，心愿进入心愿池"),
         (status = 400, description = "心愿状态不允许确认"),
         (status = 404, description = "心愿不存在")
     ),
-    security(("cookie_auth" = []))
+    security(("bearer_auth" = []))
 )]
 pub async fn wish_confirm_agreement(
     user_token: UserToken,
@@ -465,20 +465,20 @@ pub async fn wish_confirm_agreement(
 }
 
 /// 拒绝或关闭协商
-/// POST /api/wishes/{id}/reject
+/// POST /api/wishes/{wish_id}/reject
 /// FSD v2 7.7
 #[utoipa::path(
     post,
-    path = "/api/wishes/{id}/reject",
+    path = "/api/wishes/{wish_id}/reject",
     tag = "心愿",
-    params(("id" = i64, Path, description = "心愿ID")),
+    params(("wish_id" = i64, Path, description = "心愿ID")),
     request_body = WishRejectInput,
     responses(
         (status = 200, description = "操作成功"),
         (status = 400, description = "心愿状态不允许此操作"),
         (status = 404, description = "心愿不存在")
     ),
-    security(("cookie_auth" = []))
+    security(("bearer_auth" = []))
 )]
 pub async fn wish_reject(
     user_token: UserToken,
@@ -493,19 +493,19 @@ pub async fn wish_reject(
 }
 
 /// 选择心愿并冻结积分
-/// POST /api/wishes/{id}/select
+/// POST /api/wishes/{wish_id}/select
 /// FSD v2 7.8
 #[utoipa::path(
     post,
-    path = "/api/wishes/{id}/select",
+    path = "/api/wishes/{wish_id}/select",
     tag = "心愿",
-    params(("id" = i64, Path, description = "心愿ID")),
+    params(("wish_id" = i64, Path, description = "心愿ID")),
     responses(
         (status = 200, description = "选择成功，积分已冻结"),
         (status = 400, description = "积分不足或心愿状态不允许"),
         (status = 404, description = "心愿不存在")
     ),
-    security(("cookie_auth" = []))
+    security(("bearer_auth" = []))
 )]
 pub async fn wish_select(
     user_token: UserToken,
@@ -518,20 +518,20 @@ pub async fn wish_select(
 }
 
 /// 提交打卡反馈
-/// POST /api/wishes/{id}/feedback
+/// POST /api/wishes/{wish_id}/feedback
 /// FSD v2 7.9
 #[utoipa::path(
     put,
-    path = "/api/wishes/{id}/feedback",
+    path = "/api/wishes/{wish_id}/feedback",
     tag = "心愿",
-    params(("id" = i64, Path, description = "心愿ID")),
+    params(("wish_id" = i64, Path, description = "心愿ID")),
     request_body = WishFeedbackInput,
     responses(
         (status = 200, description = "提交成功", body = WishOut),
         (status = 400, description = "心愿状态不允许"),
         (status = 404, description = "心愿不存在")
     ),
-    security(("cookie_auth" = []))
+    security(("bearer_auth" = []))
 )]
 pub async fn submit_feedback(
     user_token: UserToken,
@@ -546,20 +546,20 @@ pub async fn submit_feedback(
 }
 
 /// 关闭心愿（双方协商一致）
-/// POST /api/wishes/{id}/close
+/// POST /api/wishes/{wish_id}/close
 /// FSD v2 7.11
 #[utoipa::path(
     post,
-    path = "/api/wishes/{id}/close",
+    path = "/api/wishes/{wish_id}/close",
     tag = "心愿",
-    params(("id" = i64, Path, description = "心愿ID")),
+    params(("wish_id" = i64, Path, description = "心愿ID")),
     request_body = WishCloseInput,
     responses(
         (status = 200, description = "关闭成功"),
         (status = 400, description = "心愿状态不允许关闭"),
         (status = 404, description = "心愿不存在")
     ),
-    security(("cookie_auth" = []))
+    security(("bearer_auth" = []))
 )]
 pub async fn wish_close(
     user_token: UserToken,
@@ -580,19 +580,19 @@ pub async fn wish_close(
 }
 
 /// 心愿履约逾期处理
-/// POST /api/wishes/{id}/expire
+/// POST /api/wishes/{wish_id}/expire
 /// FSD v2 7.10
 #[utoipa::path(
     post,
-    path = "/api/wishes/{id}/expire",
+    path = "/api/wishes/{wish_id}/expire",
     tag = "心愿",
-    params(("id" = i64, Path, description = "心愿ID")),
+    params(("wish_id" = i64, Path, description = "心愿ID")),
     responses(
         (status = 200, description = "处理成功"),
         (status = 400, description = "心愿状态不允许逾期处理"),
         (status = 404, description = "心愿不存在")
     ),
-    security(("cookie_auth" = []))
+    security(("bearer_auth" = []))
 )]
 pub async fn wish_expire(
     _user_token: UserToken,
@@ -670,18 +670,18 @@ pub async fn wish_expire(
 }
 
 /// 获取心愿打卡记录列表
-/// GET /api/wishes/{id}/checkins
+/// GET /api/wishes/{wish_id}/checkins
 /// FSD v2 7.12
 #[utoipa::path(
     get,
-    path = "/api/wishes/{id}/checkins",
+    path = "/api/wishes/{wish_id}/checkins",
     tag = "心愿",
-    params(("id" = i64, Path, description = "心愿ID")),
+    params(("wish_id" = i64, Path, description = "心愿ID")),
     responses(
         (status = 200, description = "获取成功"),
         (status = 404, description = "心愿不存在")
     ),
-    security(("cookie_auth" = []))
+    security(("bearer_auth" = []))
 )]
 pub async fn get_wish_checkins(
     _user_token: UserToken,
@@ -727,7 +727,7 @@ pub async fn get_wish_checkins(
         (status = 200, description = "获取成功"),
         (status = 401, description = "未登录")
     ),
-    security(("cookie_auth" = []))
+    security(("bearer_auth" = []))
 )]
 pub async fn pending_fulfillment(
     user_token: UserToken,

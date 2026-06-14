@@ -145,12 +145,20 @@ CREATE TYPE apply_status_enum AS ENUM ('PENDING', 'APPROVED', 'REJECTED');
 -- CREATED/ACCEPTED → TIMEOUT
 CREATE TYPE order_status_enum AS ENUM (
     'CREATED',                  -- 待接单
+    'PENDING_ACCEPT',          -- 等待接单(同 CREATED 语义,部分代码用)
     'ACCEPTED',                -- 已接单
+    'IN_PROGRESS',             -- 进行中(同 ACCEPTED 语义)
     'PRODUCTION_COMPLETED',    -- 生产完成
+    'BREEDER_FINISHED',        -- 接单方已完成(同 PRODUCTION_COMPLETED 语义)
     'CONFIRMED_COMPLETED',      -- 确认完成
+    'COMPLETED',               -- 订单完成(同 CONFIRMED_COMPLETED 语义,部分代码用)
     'CONFIRMED_INCOMPLETE',     -- 确认未完成
+    'CONFIRMED_UNFINISHED',     -- 确认未完成(同 CONFIRMED_INCOMPLETE 语义,部分代码用)
     'REJECTED',                -- 已拒绝
     'CANCELLED',               -- 已取消
+    'CANCELED',                -- 已取消(英式拼写,部分代码用)
+    'SYSTEM_CLOSED',           -- 系统关闭
+    'BREEDER_CLOSED',          -- 接单方关闭
     'TIMEOUT'                  -- 超时
 );
 
@@ -307,7 +315,7 @@ CREATE TYPE feedback_status_enum AS ENUM ('NEW', 'PROCESSING', 'CLOSED');
 CREATE TYPE cart_status_enum AS ENUM ('ACTIVE', 'SETTLED', 'CLEARED');
 
 -- Mark type
-CREATE TYPE mark_type_enum AS ENUM ('LIKE', 'NOT_RECOMMEND');
+CREATE TYPE mark_type_enum AS ENUM ('LIKE', 'NOT_RECOMMEND', 'DONE', 'RETRY', 'HATE');
 
 -- Gender
 CREATE TYPE gender_enum AS ENUM ('MALE', 'FEMALE', 'OTHER', 'UNKNOWN');
@@ -383,6 +391,7 @@ CREATE TABLE association_groups (
     diamond INT NOT NULL DEFAULT 0,
     footprint_capacity INT NOT NULL DEFAULT 10,
     footprint_count INT NOT NULL DEFAULT 0,
+    member_count INT NOT NULL DEFAULT 0,  -- 冗余字段,admin 列表查询用
     -- FSD v2 fields per FSD.latest.md
     buyer_user_id BIGINT REFERENCES users(user_id),
     seller_user_id BIGINT REFERENCES users(user_id),
@@ -393,6 +402,7 @@ CREATE TABLE association_groups (
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 COMMENT ON TABLE association_groups IS '双人组';
+COMMENT ON COLUMN association_groups.member_count IS '成员数量(冗余,方便 admin 列表)';
 COMMENT ON COLUMN association_groups.group_id IS '组ID主键';
 COMMENT ON COLUMN association_groups.group_name IS '组名称';
 COMMENT ON COLUMN association_groups.group_type IS '组类型：PAIR/FAMILY/TEAM';
@@ -441,6 +451,8 @@ CREATE TABLE user_group_points (
     group_id BIGINT NOT NULL REFERENCES association_groups(group_id) ON DELETE CASCADE,
     available_love_point BIGINT NOT NULL DEFAULT 0,
     frozen_love_point BIGINT NOT NULL DEFAULT 0,
+    -- 兼容老代码:旧版本用 `love_point` 单字段,新版本用 available/frozen 分账户
+    love_point BIGINT NOT NULL DEFAULT 0,
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     UNIQUE(user_id, group_id)
 );
@@ -490,8 +502,10 @@ CREATE TABLE tags (
     tag_id BIGSERIAL PRIMARY KEY,
     tag_name VARCHAR(64) NOT NULL,
     icon VARCHAR(256),
+    color VARCHAR(32),                          -- 标签颜色(旧版代码使用)
     group_id BIGINT REFERENCES association_groups(group_id) ON DELETE CASCADE,
     sort INT DEFAULT 0,
+    is_del SMALLINT NOT NULL DEFAULT 0,        -- 软删除标记
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     UNIQUE (tag_name, group_id)
 );
@@ -499,13 +513,19 @@ COMMENT ON TABLE tags IS '菜品标签';
 COMMENT ON COLUMN tags.tag_id IS '标签主键ID';
 COMMENT ON COLUMN tags.tag_name IS '标签名称唯一';
 COMMENT ON COLUMN tags.icon IS '标签图标URL';
+COMMENT ON COLUMN tags.color IS '标签颜色';
 COMMENT ON COLUMN tags.sort IS '排序值';
+COMMENT ON COLUMN tags.is_del IS '软删除标记(0=正常,1=已删除)';
 COMMENT ON COLUMN tags.created_at IS '创建时间';
 
 CREATE TABLE foods (
     food_id BIGSERIAL PRIMARY KEY,
     food_name VARCHAR(128) NOT NULL,
     food_photo VARCHAR(256),
+    price INT NOT NULL DEFAULT 0,  -- 旧版字段,新代码可忽略
+    description TEXT,
+    images JSONB NOT NULL DEFAULT '[]'::jsonb,
+    tags JSONB NOT NULL DEFAULT '[]'::jsonb,
     tag_id BIGINT REFERENCES tags(tag_id) ON DELETE SET NULL,
     ingredients TEXT,
     steps TEXT,
@@ -525,8 +545,11 @@ CREATE TABLE foods (
 COMMENT ON TABLE foods IS '菜品（含申请与审核）';
 COMMENT ON COLUMN foods.food_id IS '菜品主键ID';
 COMMENT ON COLUMN foods.food_name IS '菜品名称';
-COMMENT ON COLUMN foods.food_photo IS '菜品图片URL';
-COMMENT ON COLUMN foods.tag_id IS '标签ID';
+COMMENT ON COLUMN foods.food_photo IS '菜品图片URL (兼容旧版,新代码使用 images 数组)';
+COMMENT ON COLUMN foods.description IS '菜品描述 (FSD §5)';
+COMMENT ON COLUMN foods.images IS '图片数组,每项 {url,width,height} (FSD §5)';
+COMMENT ON COLUMN foods.tags IS '标签名数组 (denormalized,正式标签关系仍走 tag_id FK)';
+COMMENT ON COLUMN foods.tag_id IS '标签ID (单选 FK,与 tags 数组共存)';
 COMMENT ON COLUMN foods.ingredients IS '配料/食材';
 COMMENT ON COLUMN foods.steps IS '制作步骤';
 COMMENT ON COLUMN foods.food_status IS '状态：NORMAL/OFF/AUDITING/REJECTED';
@@ -1085,10 +1108,17 @@ CREATE TABLE group_point_configs (
     unlock_card_diamond_cost INT NOT NULL DEFAULT 100,
     default_footprint_capacity INT NOT NULL DEFAULT 10,
     daily_checkin_rewards INT[] NOT NULL DEFAULT '{5,6,7,8,9,10,20}',
+    -- 兼容代码引用:签到奖励百分比、订单积分百分比
+    sign_reward_daily INT NOT NULL DEFAULT 5,
+    sign_reward_consecutive INT NOT NULL DEFAULT 10,
+    order_point_percent INT NOT NULL DEFAULT 100,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 COMMENT ON TABLE group_point_configs IS '组积分奖惩配置';
+COMMENT ON COLUMN group_point_configs.sign_reward_daily IS '每日签到奖励积分(兼容旧版 user_service 引用)';
+COMMENT ON COLUMN group_point_configs.sign_reward_consecutive IS '连续签到奖励积分';
+COMMENT ON COLUMN group_point_configs.order_point_percent IS '订单积分百分比';
 
 -- ================= USER DIAMOND (legacy) =================
 CREATE TABLE user_diamond (
@@ -1290,14 +1320,25 @@ CREATE TABLE footprints (
     footprint_id BIGSERIAL PRIMARY KEY,
     group_id BIGINT NOT NULL REFERENCES association_groups(group_id) ON DELETE CASCADE,
     user_id BIGINT NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+    -- 兼容旧版 application/footprint_service.rs 引用的字段
+    title VARCHAR(256),                        -- 旧版字段
     content TEXT,
+    address VARCHAR(256),                     -- 旧版字段(新代码用 location)
     location VARCHAR(256),
+    record_time TIMESTAMPTZ,                  -- 旧版字段(等同 created_at 语义)
+    record_group_id BIGINT REFERENCES record_group(id) ON DELETE SET NULL,  -- 旧版字段
     images JSONB,
+    like_count INT NOT NULL DEFAULT 0,        -- 旧版字段
+    comment_count INT NOT NULL DEFAULT 0,     -- 旧版字段
+    is_draft SMALLINT NOT NULL DEFAULT 0,     -- 旧版字段
+    create_time TIMESTAMPTZ,                  -- 旧版字段(等同 created_at)
+    update_time TIMESTAMPTZ,                  -- 旧版字段(等同 updated_at)
     related_order_id BIGINT REFERENCES orders(order_id) ON DELETE SET NULL,
     related_wish_id BIGINT REFERENCES wishes(wish_id) ON DELETE SET NULL,
     content_check_status content_check_status_enum NOT NULL DEFAULT 'PENDING',
     status VARCHAR(20) NOT NULL DEFAULT 'ACTIVE',
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     deleted_at TIMESTAMPTZ
 );
 COMMENT ON TABLE footprints IS '组内足迹/纪念内容 - FSD §11.16';
@@ -1305,8 +1346,14 @@ COMMENT ON COLUMN footprints.related_order_id IS '关联订单ID（订单完成�
 COMMENT ON COLUMN footprints.related_wish_id IS '关联心愿ID（心愿完成自动生成）';
 COMMENT ON COLUMN footprints.content_check_status IS 'PENDING/PASS/REJECTED';
 COMMENT ON COLUMN footprints.status IS 'ACTIVE/DELETED';
+COMMENT ON COLUMN footprints.title IS '旧版字段(可选标题)';
+COMMENT ON COLUMN footprints.address IS '旧版字段(等同 location)';
+COMMENT ON COLUMN footprints.record_time IS '旧版字段(等同 created_at)';
+COMMENT ON COLUMN footprints.create_time IS '旧版字段(等同 created_at)';
+COMMENT ON COLUMN footprints.update_time IS '旧版字段(等同 updated_at)';
 CREATE INDEX idx_footprints_group_created ON footprints(group_id, created_at DESC);
 CREATE INDEX idx_footprints_user ON footprints(user_id);
+CREATE INDEX idx_footprints_record_group ON footprints(record_group_id) WHERE record_group_id IS NOT NULL;
 
 -- ================= GROUP FOOTPRINT CAPACITY (§11.17) =================
 CREATE TABLE group_footprint_capacity (
@@ -1558,3 +1605,38 @@ VALUES (
     NOW(),
     NOW()
 );
+-- ================= LEGACY POINT FLOW (dashboard_service 引用) =================
+-- 旧版代码用 point_flow 表存积分流水,新版本拆为 love_point_transactions。
+-- 此处保留以兼容 application/dashboard_service.rs 的 point_journey 查询。
+CREATE TABLE IF NOT EXISTS point_flow (
+    id BIGSERIAL PRIMARY KEY,
+    user_id BIGINT NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+    group_id BIGINT REFERENCES association_groups(group_id) ON DELETE CASCADE,
+    amount BIGINT NOT NULL,
+    biz_type VARCHAR(32) NOT NULL,           -- ORDER / WISH / SIGN_IN / REFUND
+    biz_id BIGINT,                           -- 关联业务 ID
+    ref_type VARCHAR(32),                    -- 旧代码引用的字段名
+    balance_after BIGINT,                    -- 旧代码引用的字段名
+    remark VARCHAR(256),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+COMMENT ON TABLE point_flow IS '积分流水(legacy) - dashboard_service point_journey 引用';
+CREATE INDEX idx_pf_user ON point_flow(user_id, created_at DESC);
+
+-- ================= LEGACY GROUP INVITATIONS (kitchens 路由引用) =================
+-- 旧版 application 用 group_invitations 表存做客邀请;v3 用 guest_invitations。
+-- 此处保留以兼容 api/kitchens/routes.rs 的查询。
+CREATE TABLE IF NOT EXISTS group_invitations (
+    id BIGSERIAL PRIMARY KEY,
+    group_id BIGINT NOT NULL REFERENCES association_groups(group_id) ON DELETE CASCADE,
+    invite_code VARCHAR(32) NOT NULL UNIQUE,
+    created_by BIGINT NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+    max_uses INT NOT NULL DEFAULT 1,
+    used_count INT NOT NULL DEFAULT 0,
+    expires_at TIMESTAMPTZ,
+    revoked BOOLEAN NOT NULL DEFAULT FALSE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+COMMENT ON TABLE group_invitations IS '组做客邀请(legacy 名称) - 实际功能同 guest_invitations';
+CREATE INDEX idx_group_invitations_code ON group_invitations(invite_code);
+CREATE INDEX idx_group_invitations_group ON group_invitations(group_id);

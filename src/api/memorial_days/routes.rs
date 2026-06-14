@@ -143,7 +143,7 @@ fn next_solar_occurrence(memorial_date: NaiveDate, today: NaiveDate) -> NaiveDat
         (status = 200, description = "成功"),
         (status = 401, description = "未登录")
     ),
-    security(("cookie_auth" = []))
+    security(("bearer_auth" = []))
 )]
 pub async fn list_memorial_days(
     state: State<Arc<AppState>>,
@@ -227,7 +227,7 @@ pub async fn list_memorial_days(
         (status = 400, description = "参数错误"),
         (status = 401, description = "未登录")
     ),
-    security(("cookie_auth" = []))
+    security(("bearer_auth" = []))
 )]
 pub async fn create_memorial_day(
     state: State<Arc<AppState>>,
@@ -288,7 +288,7 @@ pub async fn create_memorial_day(
         (status = 200, description = "成功"),
         (status = 404, description = "纪念日不存在")
     ),
-    security(("cookie_auth" = []))
+    security(("bearer_auth" = []))
 )]
 pub async fn get_memorial_day(
     state: State<Arc<AppState>>,
@@ -327,7 +327,7 @@ pub async fn get_memorial_day(
         (status = 200, description = "更新成功"),
         (status = 404, description = "纪念日不存在")
     ),
-    security(("cookie_auth" = []))
+    security(("bearer_auth" = []))
 )]
 pub async fn update_memorial_day(
     state: State<Arc<AppState>>,
@@ -388,7 +388,7 @@ pub async fn update_memorial_day(
         (status = 200, description = "删除成功"),
         (status = 404, description = "纪念日不存在")
     ),
-    security(("cookie_auth" = []))
+    security(("bearer_auth" = []))
 )]
 pub async fn delete_memorial_day(
     state: State<Arc<AppState>>,
@@ -421,7 +421,7 @@ pub async fn delete_memorial_day(
         ("days" = Option<i64>, Query, description = "未来 N 天内，默认 30")
     ),
     responses((status = 200, description = "成功")),
-    security(("cookie_auth" = []))
+    security(("bearer_auth" = []))
 )]
 pub async fn upcoming_memorial_days(
     state: State<Arc<AppState>>,

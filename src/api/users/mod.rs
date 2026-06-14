@@ -53,7 +53,7 @@ use crate::{
         (status = 200, description = "获取成功", body = UserPublic),
         (status = 401, body = CustomError)
     ),
-    security(("cookie_auth" = []))
+    security(("bearer_auth" = []))
 )]
 pub async fn get_current_info(
     token: UserToken,
@@ -85,7 +85,7 @@ pub struct UpdateInfoInput {
         (status = 400, body = CustomError),
         (status = 401, body = CustomError)
     ),
-    security(("cookie_auth" = []))
+    security(("bearer_auth" = []))
 )]
 pub async fn update_info(
     token: UserToken,
@@ -137,7 +137,7 @@ pub struct UserGroupsResponse {
         (status = 200, description = "获取成功", body = UserGroupsResponse),
         (status = 401, body = CustomError)
     ),
-    security(("cookie_auth" = []))
+    security(("bearer_auth" = []))
 )]
 pub async fn get_user_groups(
     token: UserToken,
@@ -202,7 +202,7 @@ pub struct DeleteAccountResponse {
         (status = 400, body = CustomError),
         (status = 401, body = CustomError)
     ),
-    security(("cookie_auth" = []))
+    security(("bearer_auth" = []))
 )]
 pub async fn delete_account(
     token: UserToken,
@@ -233,75 +233,11 @@ pub async fn delete_account(
     }))
 }
 
-// ========== 遗留接口（保持兼容性）==========
-
-#[utoipa::path(
-    post,
-    path = "/register",
-    request_body = RegisterInput,
-    tag = "用户",
-    responses(
-        (status = 201, description = "注册成功，无响应体"),
-        (status = 400, body = CustomError)
-    )
-)]
-pub async fn register(
-    data: Json<RegisterInput>,
-    state: State<Arc<AppState>>,
-) -> Result<impl Responder, CustomError> {
-    UserService::register(data.into_inner(), &state).await?;
-    Ok(ApiResponse::created())
-}
-
-#[utoipa::path(
-    post,
-    path = "/login",
-    tag = "用户",
-    summary = "账号密码登录，返回 Token 与用户信息",
-    request_body = LoginInput,
-    responses(
-        (status = 200, body = LoginResponse),
-        (status = 400, body = CustomError)
-    )
-)]
-pub async fn login(
-    user: Json<LoginInput>,
-    state: State<Arc<AppState>>,
-) -> Result<impl Responder, CustomError> {
-    let res = UserService::login(user.into_inner(), &state).await?;
-    Ok(ApiResponse::success(res))
-}
-
-#[utoipa::path(
-    get,
-    path = "/getInfoByUsername",
-    operation_id = "get_user_info",
-    tag = "用户",
-    summary = "根据用户名获取用户信息",
-    params(IsRegisterQuery),
-    responses((status = 200, body = UserInfoResponse), (status = 401, body = CustomError))
-)]
-pub async fn get_user_info(
-    q: Query<IsRegisterQuery>,
-    state: State<Arc<AppState>>,
-) -> Result<impl Responder, CustomError> {
-    let res = UserService::get_user_info(&q.username, &state).await?;
-    Ok(ApiResponse::success(res))
-}
-
-#[utoipa::path(
-    get,
-    path = "/users/is-register",
-    operation_id = "is_register",
-    tag = "用户",
-    summary = "判断用户名是否已注册",
-    params(IsRegisterQuery),
-    responses((status = 200, body = IsRegisterResponse), (status = 400, body = CustomError))
-)]
-pub async fn is_register(
-    q: Query<IsRegisterQuery>,
-    state: State<Arc<AppState>>,
-) -> Result<impl Responder, CustomError> {
-    let res = UserService::is_register(&q.username, &state).await?;
-    Ok(ApiResponse::success(res))
-}
+// ========== 遗留接口已移除 ==========
+//
+// `register` / `login` / `get_user_info` / `is_register` 这 4 个 handler
+// 在 `configure()` 中从未注册,#[utoipa::path] 也未挂到 openapi.rs,
+// 是 v3 重构后遗留的死代码。所有账号入口统一走 /api/auth/wechat-login
+// (业务方决定不再支持密码登录)。
+//
+// 如需恢复:重新挂载到 `cfg.service(scope("/api/auth")...)` 并补 utoipa 路径。

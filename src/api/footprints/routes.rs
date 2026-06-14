@@ -145,7 +145,7 @@ pub struct FootprintsQuery {
         (status = 403, description = "非组成员"),
         (status = 500, description = "服务器错误")
     ),
-    security(("cookie_auth" = []))
+    security(("bearer_auth" = []))
 )]
 pub async fn create_footprint(
     state: State<Arc<AppState>>,
@@ -263,7 +263,7 @@ pub async fn create_footprint(
         (status = 403, description = "非组成员"),
         (status = 500, description = "服务器错误")
     ),
-    security(("cookie_auth" = []))
+    security(("bearer_auth" = []))
 )]
 pub async fn list_footprints(
     state: State<Arc<AppState>>,
@@ -436,7 +436,7 @@ pub async fn list_footprints(
         (status = 404, description = "足迹不存在"),
         (status = 500, description = "服务器错误")
     ),
-    security(("cookie_auth" = []))
+    security(("bearer_auth" = []))
 )]
 pub async fn delete_footprint(
     state: State<Arc<AppState>>,
@@ -510,7 +510,7 @@ pub async fn delete_footprint(
         (status = 403, description = "非组成员或钻石不足"),
         (status = 500, description = "服务器错误")
     ),
-    security(("cookie_auth" = []))
+    security(("bearer_auth" = []))
 )]
 pub async fn expand_capacity(
     state: State<Arc<AppState>>,

@@ -67,7 +67,7 @@ pub struct FoodMarkOut {
         ("food_id" = i64, Path, description = "菜品 ID")
     ),
     request_body = MarkFoodInput,
-    security(("cookie_auth" = []))
+    security(("bearer_auth" = []))
 )]
 pub async fn mark_food(
     state: State<Arc<AppState>>,
@@ -140,7 +140,7 @@ pub async fn mark_food(
         ("group_id" = i64, Path, description = "组 ID"),
         ("food_id" = i64, Path, description = "菜品 ID")
     ),
-    security(("cookie_auth" = []))
+    security(("bearer_auth" = []))
 )]
 pub async fn unmark_food(
     state: State<Arc<AppState>>,
@@ -168,7 +168,7 @@ pub async fn unmark_food(
         ("group_id" = i64, Path, description = "组 ID"),
         ("food_id" = i64, Path, description = "菜品 ID")
     ),
-    security(("cookie_auth" = []))
+    security(("bearer_auth" = []))
 )]
 pub async fn get_food_mark(
     state: State<Arc<AppState>>,

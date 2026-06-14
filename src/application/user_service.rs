@@ -11,9 +11,9 @@ use crate::domain::user::{
     UserInfoResponse, UserPublic, UserRole,
 };
 use crate::errors::CustomError;
+use crate::middlewares::jwt;
 use argon2::{Argon2, PasswordHash, PasswordHasher, PasswordVerifier};
 use chrono::Utc;
-use jsonwebtoken::{encode, EncodingKey, Header};
 use password_hash::SaltString;
 use rand::thread_rng;
 use sqlx::Row;
@@ -117,29 +117,16 @@ impl UserService {
             .await?;
 
         let public: UserPublic = UserPublic::from(record.clone());
-        let exp = chrono::Local::now().timestamp() + 3600 * 24 * 7;
 
-        #[derive(serde::Serialize)]
-        struct UserTokenClaims {
-            exp: i64,
-            user_id: i64,
-        }
-
-        let claims = UserTokenClaims {
-            user_id: record.user_id,
-            exp,
-        };
-        let token = encode(
-            &Header::default(),
-            &claims,
-            &EncodingKey::from_secret(state.jwt_secret.as_bytes()),
-        )
-        .map_err(|e| CustomError::internal(e.to_string()))?;
+        // 签发 access + refresh token —— 统一走 jwt 模块,与 wechat_login 形状一致
+        let (access_token, _) = jwt::issue_access(record.user_id, &state.jwt_secret)?;
+        let (refresh_token, _) = jwt::issue_refresh(record.user_id, &state.jwt_secret)?;
 
         let _ = state.redis_cache.set_user_public(&public, 3600).await;
 
         Ok(LoginResponse {
-            token,
+            access_token,
+            refresh_token,
             user: public,
         })
     }
@@ -318,7 +305,7 @@ impl UserService {
         // 检查用户是否有正在进行的订单
         let active_orders: i64 = sqlx::query(
             r#"SELECT COUNT(*) FROM orders WHERE user_id = $1
-               AND status IN ('CREATED', 'ACCEPTED', 'PRODUCTION_COMPLETE')"#,
+               AND status IN ('CREATED', 'ACCEPTED', 'PRODUCTION_COMPLETED')"#,
         )
         .bind(user_id)
         .fetch_one(db)

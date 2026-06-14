@@ -269,7 +269,7 @@ async fn insert_upload_record(
         (status = 422, description = "七牛 token 颁发失败", body = ErrorBody),
         (status = 500, description = "服务器错误")
     ),
-    security(("cookie_auth" = []))
+    security(("bearer_auth" = []))
 )]
 pub async fn get_upload_token(
     state: State<Arc<AppState>>,
@@ -332,7 +332,7 @@ pub async fn get_upload_token(
         (status = 415, description = "不支持的文件类型", body = ErrorBody),
         (status = 500, description = "服务器错误")
     ),
-    security(("cookie_auth" = []))
+    security(("bearer_auth" = []))
 )]
 pub async fn get_upload_tokens(
     state: State<Arc<AppState>>,
@@ -411,7 +411,7 @@ pub async fn get_upload_tokens(
         (status = 422, description = "token 无效或内容审核拒绝", body = ErrorBody),
         (status = 500, description = "服务器错误")
     ),
-    security(("cookie_auth" = []))
+    security(("bearer_auth" = []))
 )]
 pub async fn confirm_upload(
     state: State<Arc<AppState>>,
@@ -503,7 +503,7 @@ pub async fn qiniu_callback(
         (status = 404, description = "文件不存在", body = ErrorBody),
         (status = 500, description = "服务器错误")
     ),
-    security(("cookie_auth" = []))
+    security(("bearer_auth" = []))
 )]
 pub async fn delete_file(
     state: State<Arc<AppState>>,

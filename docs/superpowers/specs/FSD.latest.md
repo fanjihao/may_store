@@ -4,6 +4,10 @@
 目标：10 万注册用户生产级产品  
 技术栈：Rust + PostgreSQL，按需引入 Redis、对象存储、消息队列
 
+> ⚠️ **重要**：本文档 vs 代码 vs Swagger 不一致时,以 **Swagger (utoipa 自动生成) 为权威**。
+> 已知差异请查阅 [ERRATUM.md](ERRATUM.md) —— 2026-06-13 审计后剩余 5 项文档侧待修订点。
+> 后续文档更新须基于 ERRATUM 同步修正。
+
 ---
 
 ## 0. PRD 概述

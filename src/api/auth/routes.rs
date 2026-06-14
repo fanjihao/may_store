@@ -13,6 +13,7 @@ use utoipa::ToSchema;
 use crate::config::AppState;
 use crate::errors::CustomError;
 use crate::middlewares::auth::UserToken;
+use crate::middlewares::jwt;
 use crate::utils::response::ApiResponse;
 
 /// 配置认证路由
@@ -53,24 +54,34 @@ pub struct RefreshTokenResponse {
         (status = 200, description = "刷新成功", body = RefreshTokenResponse),
         (status = 401, description = "refresh_token 无效或已过期"),
         (status = 403, description = "令牌已被撤销")
-    )
+    ),
+    security(())
 )]
 pub async fn refresh_token(
     state: State<Arc<AppState>>,
     input: Json<RefreshTokenInput>,
 ) -> Result<impl Responder, CustomError> {
-    // 验证 refresh_token
-    let claims = verify_token(&input.refresh_token, "refresh", &state.jwt_secret).await?;
-    let user_id = claims.get("sub").and_then(|v| v.as_i64()).unwrap_or(0);
+    // 1. 校验 refresh token(签名 + 类型 + 黑名单 + 全设备撤销)
+    let old = jwt::verify(
+        &input.refresh_token,
+        &state.jwt_secret,
+        jwt::TokenType::Refresh,
+        &state.redis_cache,
+    )
+    .await?;
+    let user_id = old.user_id()?;
 
-    // 生成新的 token
-    let access_token = generate_token(user_id, "access", &state.jwt_secret)?;
-    let new_refresh_token = generate_token(user_id, "refresh", &state.jwt_secret)?;
+    // 2. 签发新对
+    let (access_token, _) = jwt::issue_access(user_id, &state.jwt_secret)?;
+    let (refresh_token, _) = jwt::issue_refresh(user_id, &state.jwt_secret)?;
+
+    // 3. 旋转策略:旧 refresh 立即拉黑,防止重复使用(RFC 8725 §2.1)
+    jwt::blacklist_jti(&old.jti, old.exp, &state.redis_cache).await?;
 
     Ok(ApiResponse::success(RefreshTokenResponse {
         access_token,
-        refresh_token: new_refresh_token,
-        expires_in: 7200,
+        refresh_token,
+        expires_in: jwt::ACCESS_TTL_SECS,
     }))
 }
 
@@ -96,46 +107,37 @@ pub struct LogoutInput {
         (status = 200, description = "注销成功"),
         (status = 401, description = "未登录")
     ),
-    security(("cookie_auth" = []))
+    security(("bearer_auth" = []))
 )]
 pub async fn logout(
     token: UserToken,
     state: State<Arc<AppState>>,
-    _input: Json<LogoutInput>,
+    input: Json<LogoutInput>,
 ) -> Result<impl Responder, CustomError> {
     let redis = &state.redis_cache;
-    let now = chrono::Utc::now().timestamp();
-    let ttl = (token.exp - now).max(0) as usize;
 
-    if ttl == 0 {
-        // token 已自然过期,无需加入黑名单
-        return Ok(ApiResponse::success(serde_json::json!({
-            "code": 0,
-            "message": "success",
-            "data": null
-        })));
+    // 1. 单 token 撤销:把当前 jti 加入黑名单
+    jwt::blacklist_jti(&token.jti, token.exp, redis).await?;
+
+    // 2. 可选:全设备撤销
+    //    写入 user_revoked_at:{user_id} = now;此后所有 iat < now 的 token 都会被 jwt::verify 拒绝
+    let logout_all = input.logout_all.unwrap_or(false);
+    if logout_all {
+        jwt::set_user_revoked_at(token.user_id, redis).await?;
     }
 
-    // 写入黑名单:key=token_blacklist:<user_id>:<token_sub>  value="1"  TTL=token 剩余秒数
-    let blacklist_key = format!("token_blacklist:{}:{}", token.user_id, token.exp);
-    use redis::AsyncCommands;
-    let mut conn = match redis.get_conn().await {
-        Ok(c) => c,
-        Err(e) => {
-            log::error!("Redis 连接失败: {}", e);
-            return Err(CustomError::internal(String::from("Redis 不可用")));
-        }
-    };
-    let _: Result<(), _> = conn.set_ex(&blacklist_key, "1", ttl).await;
-
-    // 同时清除该用户的 user_public 缓存(强制下次重新加载,可选)
+    // 3. 清除该用户的 user_public 缓存,强制下次重新加载
     let user_cache_key = format!("user:{}", token.user_id);
-    let _: Result<(), _> = conn.del::<_, ()>(&user_cache_key).await;
+    if let Ok(mut conn) = redis.get_conn().await {
+        use redis::AsyncCommands;
+        let _: Result<(), _> = conn.del::<_, ()>(&user_cache_key).await;
+    }
 
     log::info!(
-        "user {} 已注销,token 剩余有效期 {}s 已加入黑名单",
+        "user {} 已注销 (logout_all={}),jti={} 已加入黑名单",
         token.user_id,
-        ttl
+        logout_all,
+        token.jti
     );
 
     Ok(ApiResponse::success(serde_json::json!({
@@ -145,33 +147,7 @@ pub async fn logout(
     })))
 }
 
-/// 验证 JWT Token
-async fn verify_token(token: &str, token_type: &str, secret: &str) -> Result<serde_json::Value, CustomError> {
-    use jsonwebtoken::{decode, Algorithm, DecodingKey, Validation};
-
-    let validation = Validation::new(Algorithm::HS256);
-    let token_data = decode::<serde_json::Value>(
-        token,
-        &DecodingKey::from_secret(secret.as_bytes()),
-        &validation,
-    )
-    .map_err(|e| {
-        if e.to_string().contains("exp") {
-            CustomError::Unauthorized("Token 已过期".into())
-        } else {
-            CustomError::Unauthorized("Token 无效".into())
-        }
-    })?;
-
-    // 验证 token 类型
-    if let Some(t) = token_data.claims.get("type").and_then(|v| v.as_str()) {
-        if t != token_type && t != "both" {
-            return Err(CustomError::Unauthorized("Token 类型不匹配".into()));
-        }
-    }
-
-    Ok(token_data.claims)
-}
+// `verify_token` 已删除;统一走 `crate::middlewares::jwt::verify`
 
 /// 微信登录请求
 #[derive(Debug, Deserialize, Serialize, ToSchema)]
@@ -213,7 +189,8 @@ pub struct WechatLoginResponse {
         (status = 400, description = "参数错误"),
         (status = 401, description = "微信认证失败"),
         (status = 500, description = "服务器错误")
-    )
+    ),
+    security(())
 )]
 pub async fn wechat_login(
     state: State<Arc<AppState>>,
@@ -242,9 +219,9 @@ pub async fn wechat_login(
         (user_id, None, None)
     };
 
-    // 生成 JWT token
-    let access_token = generate_token(user_id, "access", &state.jwt_secret)?;
-    let refresh_token = generate_token(user_id, "refresh", &state.jwt_secret)?;
+    // 生成 JWT token —— 统一走 jwt 模块
+    let (access_token, _) = jwt::issue_access(user_id, &state.jwt_secret)?;
+    let (refresh_token, _) = jwt::issue_refresh(user_id, &state.jwt_secret)?;
 
     // 更新最后登录时间
     sqlx::query("UPDATE users SET last_login_at = NOW() WHERE user_id = $1")
@@ -322,27 +299,4 @@ async fn create_wechat_user(db: &sqlx::PgPool, openid: &str) -> Result<i64, Cust
     Ok(user_id)
 }
 
-/// 生成JWT token
-fn generate_token(user_id: i64, token_type: &str, secret: &str) -> Result<String, CustomError> {
-    use chrono::{Duration, Utc};
-    use jsonwebtoken::{encode, EncodingKey, Header};
-
-    let expiration = if token_type == "access" {
-        Utc::now() + Duration::hours(2)
-    } else {
-        Utc::now() + Duration::days(30)
-    };
-
-    let claims = serde_json::json!({
-        "sub": user_id,
-        "type": token_type,
-        "exp": expiration.timestamp(),
-        "iat": Utc::now().timestamp()
-    });
-
-    let header = Header::default();
-    let key = EncodingKey::from_secret(secret.as_bytes());
-
-    encode(&header, &claims, &key)
-        .map_err(|e| CustomError::InternalServerError(format!("Token生成失败: {}", e)))
-}
+// `generate_token` 与 `verify_token` 已删除;统一走 `crate::middlewares::jwt`

@@ -9,6 +9,7 @@ use utoipa::ToSchema;
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct IngredientRecord {
+    #[sqlx(rename = "ingredient_id")]
     pub id: i64,
     pub group_id: i64,
     pub name: String,

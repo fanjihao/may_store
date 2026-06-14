@@ -101,7 +101,7 @@ pub struct NotificationQuery {
         (status = 401, description = "未登录"),
         (status = 500, description = "服务器错误")
     ),
-    security(("cookie_auth" = []))
+    security(("bearer_auth" = []))
 )]
 pub async fn get_notifications(
     state: State<Arc<AppState>>,
@@ -191,7 +191,7 @@ pub async fn get_notifications(
         (status = 401, description = "未登录"),
         (status = 500, description = "服务器错误")
     ),
-    security(("cookie_auth" = []))
+    security(("bearer_auth" = []))
 )]
 pub async fn get_unread_count(
     state: State<Arc<AppState>>,
@@ -249,7 +249,7 @@ pub async fn get_unread_count(
         (status = 404, description = "通知不存在"),
         (status = 500, description = "服务器错误")
     ),
-    security(("cookie_auth" = []))
+    security(("bearer_auth" = []))
 )]
 pub async fn mark_single_as_read(
     state: State<Arc<AppState>>,
@@ -290,7 +290,7 @@ pub async fn mark_single_as_read(
         (status = 401, description = "未登录"),
         (status = 500, description = "服务器错误")
     ),
-    security(("cookie_auth" = []))
+    security(("bearer_auth" = []))
 )]
 pub async fn mark_all_as_read(
     state: State<Arc<AppState>>,
@@ -362,7 +362,7 @@ pub struct BatchMarkReadRequest {
         (status = 404, description = "通知不存在"),
         (status = 500, description = "服务器错误")
     ),
-    security(("cookie_auth" = []))
+    security(("bearer_auth" = []))
 )]
 pub async fn delete_notification(
     state: State<Arc<AppState>>,

@@ -43,7 +43,6 @@ pub fn configure(cfg: &mut ServiceConfig) {
             )
             // FSD v2: 额外端点
             .route("/{group_id}/invite", web::post().to(create_invite))
-            .route("/{group_id}/foods", web::get().to(list_foods))
             .route("/{group_id}/orders", web::post().to(create_group_order))
             .route("/{group_id}/wishes", web::post().to(create_group_wish)),
     );
@@ -69,7 +68,7 @@ pub struct CreateGroupResponse {
         (status = 400, description = "已在组中或其他错误"),
         (status = 401, description = "未登录")
     ),
-    security(("cookie_auth" = []))
+    security(("bearer_auth" = []))
 )]
 async fn create_group(
     token: UserToken,
@@ -95,7 +94,7 @@ async fn create_group(
     let invite_code = format!("{:08x}", rand::random::<u32>());
     let group: GroupRecord = sqlx::query_as::<_, GroupRecord>(
         r#"INSERT INTO association_groups (group_name, group_type, status, invite_code, diamond, footprint_capacity, footprint_count, buyer_user_id, seller_user_id, level, exp, created_at, updated_at)
-           VALUES ($1, 'PAIR', 1, $2, 0, 50, 0, $3, $4, 1, 0, $5, $5)
+           VALUES ($1, 'PAIR', 'ACTIVE', $2, 0, 50, 0, $3, $4, 1, 0, $5, $5)
            RETURNING group_id, group_name, group_type, status, invite_code, diamond, footprint_capacity, footprint_count, created_at, updated_at,
                      buyer_user_id, seller_user_id, level, exp, settings"#
     )
@@ -110,7 +109,7 @@ async fn create_group(
     // 将创建者加为组成员
     sqlx::query(
         r#"INSERT INTO association_group_members (user_id, group_id, role_in_group, is_primary, created_at)
-           VALUES ($1, $2, 'BUYER', true, $3)"#
+           VALUES ($1, $2, 'ORDERING', true, $3)"#
     )
     .bind(token.user_id)
     .bind(group.group_id)
@@ -141,7 +140,7 @@ async fn create_group(
         (status = 403, description = "无权访问该组"),
         (status = 404, description = "组不存在")
     ),
-    security(("cookie_auth" = []))
+    security(("bearer_auth" = []))
 )]
 async fn get_group(
     token: UserToken,
@@ -235,7 +234,7 @@ pub struct SwapRoleResponse {
         (status = 400, description = "存在未完结订单或心愿"),
         (status = 403, description = "无权访问该组")
     ),
-    security(("cookie_auth" = []))
+    security(("bearer_auth" = []))
 )]
 async fn swap_role(
     token: UserToken,
@@ -368,7 +367,7 @@ async fn swap_role(
         (status = 200, description = "获取成功", body = SettlementCheckResult),
         (status = 403, description = "无权访问该组")
     ),
-    security(("cookie_auth" = []))
+    security(("bearer_auth" = []))
 )]
 async fn settlement_check(
     token: UserToken,
@@ -473,7 +472,7 @@ async fn settlement_check(
         (status = 200, description = "获取成功"),
         (status = 403, description = "无权访问该组")
     ),
-    security(("cookie_auth" = []))
+    security(("bearer_auth" = []))
 )]
 async fn fulfillment_stats(
     token: UserToken,
@@ -600,7 +599,7 @@ pub struct CreateInviteResponse {
         (status = 400, description = "组已满2人"),
         (status = 403, description = "无权访问该组")
     ),
-    security(("cookie_auth" = []))
+    security(("bearer_auth" = []))
 )]
 async fn create_invite(
     token: UserToken,
@@ -657,89 +656,6 @@ async fn create_invite(
     })))
 }
 
-/// 组内菜品项
-#[derive(Debug, Serialize, ToSchema)]
-#[serde(rename_all = "camelCase")]
-pub struct FoodItem {
-    pub food_id: i64,
-    pub group_id: i64,
-    pub name: String,
-    pub description: Option<String>,
-    pub images: Option<serde_json::Value>,
-    pub tags: Option<serde_json::Value>,
-    pub ingredients: Option<serde_json::Value>,
-    pub steps: Option<serde_json::Value>,
-    pub status: String,
-    pub created_by: i64,
-}
-
-/// 获取组内菜品列表
-/// GET /api/groups/{group_id}/foods
-#[utoipa::path(
-    get,
-    path = "/api/groups/{group_id}/foods",
-    tag = "双人组",
-    params(
-        ("group_id" = i64, Path, description = "组ID")
-    ),
-    responses(
-        (status = 200, description = "获取成功", body = Vec<FoodItem>),
-        (status = 403, description = "无权访问该组")
-    ),
-    security(("cookie_auth" = []))
-)]
-async fn list_foods(
-    token: UserToken,
-    state: State<Arc<AppState>>,
-    group_id: Path<i64>,
-) -> Result<HttpResponse, CustomError> {
-    let db = &state.db_pool;
-    let gid = group_id.into_inner();
-
-    // 检查用户是否是组成员
-    let is_member: bool = sqlx::query_scalar::<_, bool>(
-        "SELECT EXISTS(SELECT 1 FROM association_group_members WHERE group_id=$1 AND user_id=$2)",
-    )
-    .bind(gid)
-    .bind(token.user_id)
-    .fetch_one(db)
-    .await?;
-
-    if !is_member {
-        return Err(CustomError::Forbidden("无权访问该组".into()));
-    }
-
-    // 获取组内菜品
-    let foods = sqlx::query(
-        r#"SELECT food_id, group_id, name, description, images, tags, ingredients, steps, status, created_by
-           FROM foods WHERE group_id=$1 AND status='ACTIVE'
-           ORDER BY created_at DESC"#
-    )
-    .bind(gid)
-    .fetch_all(db)
-    .await?;
-
-    let result: Vec<serde_json::Value> = foods
-        .into_iter()
-        .map(|r| {
-            serde_json::json!({
-                "foodId": r.get::<i64, _>("food_id"),
-                "groupId": r.get::<i64, _>("group_id"),
-                "name": r.get::<String, _>("name"),
-                "description": r.get::<Option<String>, _>("description"),
-                "images": r.get::<Option<serde_json::Value>, _>("images"),
-                "tags": r.get::<Option<serde_json::Value>, _>("tags"),
-                "ingredients": r.get::<Option<serde_json::Value>, _>("ingredients"),
-                "steps": r.get::<Option<serde_json::Value>, _>("steps"),
-                "status": r.get::<String, _>("status"),
-                "createdBy": r.get::<i64, _>("created_by")
-            })
-        })
-        .collect();
-
-    Ok(ApiResponse::success(result))
-}
-
 /// 在组内创建订单响应
 #[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
@@ -765,7 +681,7 @@ pub struct CreateGroupOrderResponse {
         (status = 403, description = "无权访问或只有Buyer可创建"),
         (status = 404, description = "组不存在")
     ),
-    security(("cookie_auth" = []))
+    security(("bearer_auth" = []))
 )]
 async fn create_group_order(
     token: UserToken,
@@ -815,7 +731,7 @@ async fn create_group_order(
 
     sqlx::query(
         r#"INSERT INTO orders (order_id, group_id, type, creator_id, assignee_id, creator_role_snapshot, status, title, content, deadline, created_at)
-           VALUES ($1, $2, 'NORMAL', $3, $4, 'BUYER', 'CREATED', $5, $6, $7, NOW())"#
+           VALUES ($1, $2, 'NORMAL', $3, $4, 'ORDERING', 'CREATED', $5, $6, $7, NOW())"#
     )
     .bind(order_id)
     .bind(gid)
@@ -857,7 +773,7 @@ pub struct CreateGroupWishResponse {
         (status = 201, description = "创建成功", body = CreateGroupWishResponse),
         (status = 403, description = "无权访问该组")
     ),
-    security(("cookie_auth" = []))
+    security(("bearer_auth" = []))
 )]
 async fn create_group_wish(
     token: UserToken,
@@ -942,7 +858,7 @@ async fn create_group_wish(
         (status = 400, description = "组已满2人"),
         (status = 403, description = "已在其他组")
     ),
-    security(("cookie_auth" = []))
+    security(("bearer_auth" = []))
 )]
 async fn join_group(
     token: UserToken,
@@ -1056,7 +972,7 @@ async fn join_group(
         (status = 400, description = "仍有未结清订单/心愿/冻结积分"),
         (status = 403, description = "无权访问该组")
     ),
-    security(("cookie_auth" = []))
+    security(("bearer_auth" = []))
 )]
 async fn exit_group(
     token: UserToken,
@@ -1140,7 +1056,7 @@ async fn exit_group(
         (status = 200, description = "获取成功"),
         (status = 403, description = "无权访问该组")
     ),
-    security(("cookie_auth" = []))
+    security(("bearer_auth" = []))
 )]
 async fn get_group_members(
     token: UserToken,

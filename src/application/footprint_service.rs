@@ -58,8 +58,8 @@ impl FootprintService {
     ) -> Result<i64, CustomError> {
         // 获取草稿
         let draft: Option<FootprintRecord> = sqlx::query_as(
-            "SELECT id, group_id, record_group_id, user_id, order_id, title, images, content, address, record_time, like_count, comment_count, is_draft, create_time, update_time \
-             FROM footprints WHERE id = $1 AND user_id = $2 AND is_draft = 1"
+            "SELECT footprint_id, group_id, record_group_id, user_id, related_order_id AS order_id, title, images, content, address, record_time, like_count, comment_count, is_draft, create_time, update_time \
+             FROM footprints WHERE footprint_id = $1 AND user_id = $2 AND is_draft = 1"
         )
         .bind(input.draft_id)
         .bind(user_id as i64)
@@ -76,7 +76,7 @@ impl FootprintService {
             .unwrap_or(draft.images);
 
         sqlx::query(
-            "UPDATE footprints SET images = $2, content = COALESCE($3, content), is_draft = 0 WHERE id = $1"
+            "UPDATE footprints SET images = $2, content = COALESCE($3, content), is_draft = 0 WHERE footprint_id = $1"
         )
         .bind(input.draft_id)
         .bind(&images_str)
@@ -177,7 +177,7 @@ impl FootprintService {
 
         // 计算在一起天数和连续天数（需要关联组创建时间）
         let (together_days, streak_days) = sqlx::query_as::<_, (Option<i32>, Option<i32>)>(
-            "SELECT CAST(EXTRACT(DAY FROM NOW() - create_time) AS INT), \
+            "SELECT CAST(EXTRACT(DAY FROM NOW() - created_at) AS INT), \
                     (SELECT COALESCE(MAX(consecutive_days), 0) FROM sign_in_records WHERE user_id = $1) \
              FROM association_groups WHERE group_id = $2"
         )
@@ -241,8 +241,8 @@ impl FootprintService {
         record_id: i64,
     ) -> Result<RecordOut, CustomError> {
         let rec = sqlx::query_as::<_, FootprintRecord>(
-            "SELECT id, group_id, record_group_id, user_id, order_id, title, images, content, address, record_time, like_count, comment_count, is_draft, create_time, update_time \
-             FROM footprints WHERE id = $1 AND group_id = $2"
+            "SELECT footprint_id, group_id, record_group_id, user_id, related_order_id AS order_id, title, images, content, address, record_time, like_count, comment_count, is_draft, create_time, update_time \
+             FROM footprints WHERE footprint_id = $1 AND group_id = $2"
         )
         .bind(record_id)
         .bind(group_id)
@@ -282,7 +282,7 @@ impl FootprintService {
         let limit = query.limit.unwrap_or(20).clamp(1, 100) as i64;
 
         let mut qb = sqlx::QueryBuilder::<sqlx::Postgres>::new(
-            "SELECT r.id, r.group_id, r.record_group_id, r.user_id, r.order_id, r.title, r.images, r.content, r.address, r.record_time, r.like_count, r.comment_count, r.is_draft, r.create_time, r.update_time \
+            "SELECT r.footprint_id, r.group_id, r.record_group_id, r.user_id, r.related_order_id AS order_id, r.title, r.images, r.content, r.address, r.record_time, r.like_count, r.comment_count, r.is_draft, r.create_time, r.update_time \
              FROM footprints r WHERE r.group_id = $1 AND r.is_draft = 0"
         );
 
@@ -294,7 +294,7 @@ impl FootprintService {
             qb.push_bind(rgid);
         }
 
-        qb.push(" ORDER BY r.record_time DESC, r.id DESC LIMIT ");
+        qb.push(" ORDER BY r.record_time DESC, r.footprint_id DESC LIMIT ");
         qb.push_bind(limit + 1);
 
         let rows = qb.build().fetch_all(db).await?;
@@ -398,7 +398,7 @@ impl FootprintService {
         input: RecordUpdateInput,
     ) -> Result<(), CustomError> {
         // 检查权限
-        let owner: Option<i64> = sqlx::query("SELECT user_id FROM footprints WHERE id = $1")
+        let owner: Option<i64> = sqlx::query("SELECT user_id FROM footprints WHERE footprint_id = $1")
             .bind(record_id)
             .fetch_optional(db)
             .await?
@@ -417,7 +417,7 @@ impl FootprintService {
              content = COALESCE($4, content), \
              address = COALESCE($5, address), \
              record_group_id = COALESCE($6, record_group_id) \
-             WHERE id = $1",
+             WHERE footprint_id = $1",
         )
         .bind(record_id)
         .bind(&input.title)
@@ -438,7 +438,7 @@ impl FootprintService {
         record_id: i64,
     ) -> Result<(), CustomError> {
         // 检查权限
-        let owner: Option<i64> = sqlx::query("SELECT user_id FROM footprints WHERE id = $1")
+        let owner: Option<i64> = sqlx::query("SELECT user_id FROM footprints WHERE footprint_id = $1")
             .bind(record_id)
             .fetch_optional(db)
             .await?
@@ -448,7 +448,7 @@ impl FootprintService {
             return Err(CustomError::Forbidden("无权删除此记录".into()));
         }
 
-        sqlx::query("DELETE FROM footprints WHERE id = $1")
+        sqlx::query("DELETE FROM footprints WHERE footprint_id = $1")
             .bind(record_id)
             .execute(db)
             .await?;

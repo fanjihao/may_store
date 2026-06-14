@@ -73,7 +73,7 @@ pub struct ListTagsQuery {
         ("keyword" = Option<String>, Query),
         ("limit" = Option<i64>, Query)
     ),
-    security(("cookie_auth" = []))
+    security(("bearer_auth" = []))
 )]
 pub async fn list_tags(
     state: State<Arc<AppState>>,
@@ -129,7 +129,7 @@ pub async fn list_tags(
     tag = "菜品标签 (§24.4)",
     params(("group_id" = i64, Path, description = "组 ID")),
     request_body = CreateTagInput,
-    security(("cookie_auth" = []))
+    security(("bearer_auth" = []))
 )]
 pub async fn create_tag(
     state: State<Arc<AppState>>,
@@ -210,7 +210,7 @@ pub async fn create_tag(
         ("tag_id" = i64, Path, description = "标签 ID")
     ),
     request_body = UpdateTagInput,
-    security(("cookie_auth" = []))
+    security(("bearer_auth" = []))
 )]
 pub async fn update_tag(
     state: State<Arc<AppState>>,
@@ -271,7 +271,7 @@ pub async fn update_tag(
         ("group_id" = i64, Path, description = "组 ID"),
         ("tag_id" = i64, Path, description = "标签 ID")
     ),
-    security(("cookie_auth" = []))
+    security(("bearer_auth" = []))
 )]
 pub async fn delete_tag(
     state: State<Arc<AppState>>,

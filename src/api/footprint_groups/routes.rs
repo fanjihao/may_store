@@ -22,8 +22,8 @@ pub fn configure(cfg: &mut ServiceConfig) {
         web::scope("/api/groups/{group_id}/footprint-groups")
             .route("", web::get().to(list_footprint_groups))
             .route("", web::post().to(create_footprint_group))
-            .route("/{group_id}", web::patch().to(update_footprint_group))
-            .route("/{group_id}", web::delete().to(delete_footprint_group)),
+            .route("/{footprint_group_id}", web::patch().to(update_footprint_group))
+            .route("/{footprint_group_id}", web::delete().to(delete_footprint_group)),
     );
 }
 
@@ -73,7 +73,7 @@ pub struct ListGroupsQuery {
         ("group_id" = i64, Path, description = "组 ID"),
         ("status" = Option<i16>, Query, description = "1=ACTIVE 0=DISABLED")
     ),
-    security(("cookie_auth" = []))
+    security(("bearer_auth" = []))
 )]
 pub async fn list_footprint_groups(
     state: State<Arc<AppState>>,
@@ -119,7 +119,7 @@ pub async fn list_footprint_groups(
     tag = "足迹分组 (§24.10)",
     params(("group_id" = i64, Path, description = "组 ID")),
     request_body = CreateFootprintGroupInput,
-    security(("cookie_auth" = []))
+    security(("bearer_auth" = []))
 )]
 pub async fn create_footprint_group(
     state: State<Arc<AppState>>,
@@ -170,14 +170,14 @@ pub async fn create_footprint_group(
 /// 更新足迹分组
 #[utoipa::path(
     patch,
-    path = "/api/groups/{group_id}/footprint-groups/{group_id}",
+    path = "/api/groups/{group_id}/footprint-groups/{footprint_group_id}",
     tag = "足迹分组 (§24.10)",
     params(
         ("group_id" = i64, Path, description = "组 ID"),
-        ("group_id" = i64, Path, description = "分组 ID")
+        ("footprint_group_id" = i64, Path, description = "分组 ID")
     ),
     request_body = UpdateFootprintGroupInput,
-    security(("cookie_auth" = []))
+    security(("bearer_auth" = []))
 )]
 pub async fn update_footprint_group(
     state: State<Arc<AppState>>,
@@ -222,13 +222,13 @@ pub async fn update_footprint_group(
 /// 删除足迹分组
 #[utoipa::path(
     delete,
-    path = "/api/groups/{group_id}/footprint-groups/{group_id}",
+    path = "/api/groups/{group_id}/footprint-groups/{footprint_group_id}",
     tag = "足迹分组 (§24.10)",
     params(
         ("group_id" = i64, Path, description = "组 ID"),
-        ("group_id" = i64, Path, description = "分组 ID")
+        ("footprint_group_id" = i64, Path, description = "分组 ID")
     ),
-    security(("cookie_auth" = []))
+    security(("bearer_auth" = []))
 )]
 pub async fn delete_footprint_group(
     state: State<Arc<AppState>>,

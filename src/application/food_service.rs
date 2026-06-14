@@ -20,16 +20,16 @@ impl FoodService {
         input: &FoodCreateInput,
     ) -> Result<FoodOut, CustomError> {
         let rec = sqlx::query_as::<_, FoodRecord>(
-            "INSERT INTO foods (group_id, name, description, images, price, status, created_by) \
+            "INSERT INTO foods (group_id, food_name, description, images, price, food_status, created_by) \
              VALUES ($1, $2, $3, $4, $5, $6, $7) \
-             RETURNING food_id, group_id, name, description, images, tags, price, status, created_by, created_at, updated_at"
+             RETURNING food_id, group_id, food_name AS name, description, images, tags, price, food_status AS status, created_by, created_at, updated_at"
         )
         .bind(input.group_id)
         .bind(&input.name)
         .bind(&input.description)
         .bind(&input.images)
         .bind(input.price)
-        .bind(FoodStatus::Active)
+        .bind("NORMAL")  // DB food_status_enum: NORMAL/OFF/AUDITING/REJECTED;API 层 Active↔NORMAL
         .bind(token.user_id as i64)
         .fetch_one(db)
         .await?;
@@ -49,7 +49,7 @@ impl FoodService {
             .or(token.user.as_ref().and_then(|u| u.group_id));
 
         let mut qb = sqlx::QueryBuilder::<sqlx::Postgres>::new(
-            "SELECT food_id, group_id, name, description, images, tags, price, status, created_by, created_at, updated_at FROM foods WHERE is_del = 0"
+            "SELECT food_id, group_id, food_name AS name, description, images, tags, price, food_status AS status, created_by, created_at, updated_at FROM foods WHERE is_del = 0"
         );
 
         if let Some(gid) = group_id {
@@ -58,7 +58,7 @@ impl FoodService {
         }
 
         if let Some(kw) = &query.keyword {
-            qb.push(" AND name ILIKE '%' || ");
+            qb.push(" AND food_name ILIKE '%' || ");
             qb.push_bind(kw);
             qb.push(" || '%'");
         }
@@ -107,7 +107,7 @@ impl FoodService {
         food_id: i64,
     ) -> Result<FoodOut, CustomError> {
         let rec = sqlx::query_as::<_, FoodRecord>(
-            "SELECT food_id, group_id, name, description, images, tags, price, status, created_by, created_at, updated_at FROM foods WHERE food_id = $1 AND is_del = 0"
+            "SELECT food_id, group_id, food_name AS name, description, images, tags, price, food_status AS status, created_by, created_at, updated_at FROM foods WHERE food_id = $1 AND is_del = 0"
         )
         .bind(food_id)
         .fetch_optional(db)
@@ -128,8 +128,8 @@ impl FoodService {
             .collect();
 
             (
-                marks.iter().any(|m| m == "Like"),
-                marks.iter().any(|m| m == "Done"),
+                marks.iter().any(|m| m == "LIKE"),
+                marks.iter().any(|m| m == "DONE"),
             )
         } else {
             (false, false)
@@ -147,7 +147,7 @@ impl FoodService {
         input: &FoodUpdateInput,
     ) -> Result<FoodOut, CustomError> {
         let rec = sqlx::query_as::<_, FoodRecord>(
-            "UPDATE foods SET name = COALESCE($2, name), description = COALESCE($3, description), images = COALESCE($4, images), price = COALESCE($5, price) WHERE food_id = $1 RETURNING food_id, group_id, name, description, images, tags, price, status, created_by, created_at, updated_at"
+            "UPDATE foods SET food_name = COALESCE($2, food_name), description = COALESCE($3, description), images = COALESCE($4, images), price = COALESCE($5, price) WHERE food_id = $1 RETURNING food_id, group_id, food_name AS name, description, images, tags, price, food_status AS status, created_by, created_at, updated_at"
         )
         .bind(food_id)
         .bind(&input.name)
@@ -168,7 +168,7 @@ impl FoodService {
         _token: &UserToken,
         food_id: i64,
     ) -> Result<(), CustomError> {
-        sqlx::query("UPDATE foods SET status = 'Deleted' WHERE food_id = $1")
+        sqlx::query("UPDATE foods SET is_del = 1 WHERE food_id = $1")  // 软删除,API 层映射 status=DELETED
             .bind(food_id)
             .execute(db)
             .await?;
@@ -183,8 +183,9 @@ impl FoodService {
         mark_type: MarkTypeEnum,
     ) -> Result<(), CustomError> {
         // 检查是否已标记
+        // 复合主键 (user_id, food_id, mark_type),无 id 列 —— SELECT 1 即可
         let existing: Option<(i64,)> = sqlx::query_as(
-            "SELECT id FROM user_food_mark WHERE user_id=$1 AND food_id=$2 AND mark_type=$3",
+            "SELECT 1 FROM user_food_mark WHERE user_id=$1 AND food_id=$2 AND mark_type=$3",
         )
         .bind(user_id as i64)
         .bind(food_id)
@@ -232,7 +233,7 @@ impl FoodService {
         let limit = query.limit.unwrap_or(50).clamp(1, 200);
 
         let rows = sqlx::query_as::<_, FoodRecord>(
-            r#"SELECT f.food_id, f.group_id, f.name, f.description, f.images, f.tags, f.price, f.status, f.created_by, f.created_at, f.updated_at
+            r#"SELECT f.food_id, f.group_id, f.food_name AS name, f.description, f.images, f.tags, f.price, f.food_status AS status, f.created_by, f.created_at, f.updated_at
                FROM foods f
                JOIN user_food_mark m ON f.food_id = m.food_id
                WHERE m.user_id = $1 AND f.is_del = 0
@@ -267,7 +268,7 @@ impl FoodService {
         input: &BlindBoxDrawInput,
     ) -> Result<BlindBoxDrawResultOut, CustomError> {
         let rec = sqlx::query_as::<_, FoodRecord>(
-            "SELECT food_id, group_id, name, description, images, tags, price, status, created_by, created_at, updated_at FROM foods WHERE is_del = 0 AND status = 'Active' AND group_id = $1 ORDER BY RANDOM() LIMIT 1"
+            "SELECT food_id, group_id, food_name AS name, description, images, tags, price, food_status AS status, created_by, created_at, updated_at FROM foods WHERE is_del = 0 AND food_status = 'NORMAL' AND group_id = $1 ORDER BY RANDOM() LIMIT 1"
         )
         .bind(input.group_id)
         .fetch_optional(db)
@@ -293,7 +294,7 @@ impl IngredientService {
         _cursor: Option<&str>,
     ) -> Result<CursorPage<IngredientOut>, CustomError> {
         let mut qb = sqlx::QueryBuilder::<sqlx::Postgres>::new(
-            "SELECT id, group_id, name, icon, sort, created_at, updated_at FROM ingredients WHERE 1=1"
+            "SELECT ingredient_id AS id, group_id, name, icon, sort, created_at, updated_at FROM ingredients WHERE 1=1"
         );
 
         if let Some(gid) = group_id {
@@ -337,7 +338,7 @@ impl IngredientService {
 
     pub async fn get_ingredient(db: &PgPool, id: i64) -> Result<IngredientOut, CustomError> {
         let rec = sqlx::query_as::<_, IngredientRecord>(
-            "SELECT id, group_id, name, icon, sort, created_at, updated_at FROM ingredients WHERE id = $1"
+            "SELECT ingredient_id AS id, group_id, name, icon, sort, created_at, updated_at FROM ingredients WHERE id = $1"
         )
         .bind(id)
         .fetch_optional(db)
@@ -361,7 +362,7 @@ impl IngredientService {
         group_id: Option<i64>,
     ) -> Result<IngredientOut, CustomError> {
         let rec = sqlx::query_as::<_, IngredientRecord>(
-            "INSERT INTO ingredients (group_id, name, icon) VALUES ($1, $2, $3) RETURNING id, group_id, name, icon, sort, created_at, updated_at"
+            "INSERT INTO ingredients (group_id, name, icon) VALUES ($1, $2, $3) RETURNING ingredient_id AS id, group_id, name, icon, sort, created_at, updated_at"
         )
         .bind(group_id)
         .bind(&input.name)
@@ -386,7 +387,7 @@ impl IngredientService {
         input: &IngredientUpdateInput,
     ) -> Result<IngredientOut, CustomError> {
         let rec = sqlx::query_as::<_, IngredientRecord>(
-            "UPDATE ingredients SET name = COALESCE($2, name), icon = COALESCE($3, icon) WHERE id = $1 RETURNING id, group_id, name, icon, sort, created_at, updated_at"
+            "UPDATE ingredients SET name = COALESCE($2, name), icon = COALESCE($3, icon) WHERE ingredient_id = $1 RETURNING ingredient_id AS id, group_id, name, icon, sort, created_at, updated_at"
         )
         .bind(id)
         .bind(&input.name)
@@ -407,7 +408,7 @@ impl IngredientService {
     }
 
     pub async fn delete_ingredient(db: &PgPool, id: i64) -> Result<(), CustomError> {
-        sqlx::query("DELETE FROM ingredients WHERE id = $1")
+        sqlx::query("DELETE FROM ingredients WHERE ingredient_id = $1")
             .bind(id)
             .execute(db)
             .await?;
@@ -421,7 +422,7 @@ impl IngredientService {
         let mut tx = db.begin().await?;
 
         for item in &input.items {
-            sqlx::query("UPDATE ingredients SET sort = $2 WHERE id = $1")
+            sqlx::query("UPDATE ingredients SET sort = $2 WHERE ingredient_id = $1")
                 .bind(item.ingredient_id)
                 .bind(item.sort)
                 .execute(&mut *tx)
@@ -445,7 +446,7 @@ impl TagService {
         group_id: Option<i64>,
     ) -> Result<FoodTagOut, CustomError> {
         let rec = sqlx::query_as::<_, TagRecord>(
-            "INSERT INTO tags (group_id, name, color) VALUES ($1, $2, $3) RETURNING id, group_id, name, color, sort, created_at, updated_at"
+            "INSERT INTO tags (group_id, tag_name, color) VALUES ($1, $2, $3) RETURNING tag_id AS id, group_id, tag_name AS name, color, sort, created_at, updated_at"
         )
         .bind(group_id)
         .bind(&input.name)
@@ -496,7 +497,7 @@ impl TagService {
         input: &TagUpdateInput,
     ) -> Result<FoodTagOut, CustomError> {
         let rec = sqlx::query_as::<_, TagRecord>(
-            "UPDATE tags SET name = COALESCE($2, name), color = COALESCE($3, color) WHERE id = $1 RETURNING id, group_id, name, color, sort, created_at, updated_at"
+            "UPDATE tags SET tag_name = COALESCE($2, tag_name), color = COALESCE($3, color) WHERE id = $1 RETURNING tag_id AS id, group_id, tag_name AS name, color, sort, created_at, updated_at"
         )
         .bind(id)
         .bind(&input.name)
@@ -517,7 +518,7 @@ impl TagService {
     }
 
     pub async fn delete_tag(db: &PgPool, id: i64) -> Result<(), CustomError> {
-        sqlx::query("UPDATE tags SET is_del = 1 WHERE id = $1")
+        sqlx::query("UPDATE tags SET is_del = 1 WHERE tag_id = $1")
             .bind(id)
             .execute(db)
             .await?;
@@ -531,7 +532,7 @@ impl TagService {
         let mut tx = db.begin().await?;
 
         for item in &input.sorts {
-            sqlx::query("UPDATE tags SET sort = $2 WHERE id = $1")
+            sqlx::query("UPDATE tags SET sort = $2 WHERE tag_id = $1")
                 .bind(item.id)
                 .bind(item.sort)
                 .execute(&mut *tx)

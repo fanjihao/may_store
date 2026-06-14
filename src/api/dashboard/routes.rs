@@ -12,6 +12,7 @@ use utoipa::ToSchema;
 
 use crate::config::AppState;
 use crate::errors::CustomError;
+use crate::middlewares::admin_auth::AdminToken;
 use crate::middlewares::auth::UserToken;
 use crate::utils::response::ApiResponse;
 
@@ -219,7 +220,7 @@ pub struct AdminDashboardQuery {
         (status = 403, description = "非组成员"),
         (status = 500, description = "服务器错误")
     ),
-    security(("cookie_auth" = []))
+    security(("bearer_auth" = []))
 )]
 pub async fn get_group_dashboard(
     state: State<Arc<AppState>>,
@@ -387,22 +388,15 @@ pub async fn get_group_dashboard(
         (status = 403, description = "需要管理员权限"),
         (status = 500, description = "服务器错误")
     ),
-    security(("cookie_auth" = []))
+    security(("bearer_auth" = []))
 )]
 pub async fn get_admin_dashboard(
     state: State<Arc<AppState>>,
-    token: UserToken,
+    _admin: AdminToken,
     _query: Query<AdminDashboardQuery>,
 ) -> Result<impl Responder, CustomError> {
-    // 检查是否为管理员角色
-    let is_admin = token
-        .user
-        .as_ref()
-        .map(|u| u.role == crate::domain::user::UserRole::Admin)
-        .unwrap_or(false);
-    if !is_admin {
-        return Err(CustomError::Forbidden("需要管理员权限".into()));
-    }
+    // AdminToken 已校验:必须是 admin_users 表中 ACTIVE 状态的记录
+    // 不再信任 UserRole::Admin(组内业务角色,非平台管理员)
 
     let db = &state.db_pool;
 
@@ -567,22 +561,14 @@ pub async fn get_admin_dashboard(
         (status = 403, description = "需要管理员权限"),
         (status = 500, description = "服务器错误")
     ),
-    security(("cookie_auth" = []))
+    security(("bearer_auth" = []))
 )]
 pub async fn get_dashboard_trends(
     _state: State<Arc<AppState>>,
-    token: UserToken,
+    _admin: AdminToken,
     query: Query<TrendsQuery>,
 ) -> Result<impl Responder, CustomError> {
-    // 检查是否为管理员角色
-    let is_admin = token
-        .user
-        .as_ref()
-        .map(|u| u.role == crate::domain::user::UserRole::Admin)
-        .unwrap_or(false);
-    if !is_admin {
-        return Err(CustomError::Forbidden("需要管理员权限".into()));
-    }
+    // AdminToken 已校验为 admin_users 表中的 ACTIVE 管理员
 
     let metric = &query.metric;
     let granularity = query.granularity.as_deref().unwrap_or("DAY");

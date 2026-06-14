@@ -70,7 +70,7 @@ pub struct ListMyTicketsQuery {
     path = "/api/support-tickets",
     tag = "客服工单 (§15.3)",
     request_body = CreateTicketInput,
-    security(("cookie_auth" = []))
+    security(("bearer_auth" = []))
 )]
 pub async fn create_ticket(
     state: State<Arc<AppState>>,
@@ -162,7 +162,7 @@ pub async fn create_ticket(
         ("status" = Option<String>, Query),
         ("limit" = Option<i64>, Query)
     ),
-    security(("cookie_auth" = []))
+    security(("bearer_auth" = []))
 )]
 pub async fn list_my_tickets(
     state: State<Arc<AppState>>,
@@ -211,7 +211,7 @@ pub async fn list_my_tickets(
     path = "/api/support-tickets/{ticket_id}",
     tag = "客服工单 (§15.3)",
     params(("ticket_id" = i64, Path, description = "工单 ID")),
-    security(("cookie_auth" = []))
+    security(("bearer_auth" = []))
 )]
 pub async fn get_ticket(
     state: State<Arc<AppState>>,

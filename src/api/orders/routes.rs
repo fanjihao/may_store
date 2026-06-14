@@ -28,30 +28,31 @@ pub fn configure(cfg: &mut ServiceConfig) {
         web::scope("/api/orders")
             .route("", web::post().to(create_order))
             .route("", web::get().to(get_orders))
-            .route("/{id}", web::get().to(get_order_detail))
+            .route("/{order_id}", web::get().to(get_order_detail))
             // FSD v2: 独立接单/完成/确认接口
-            .route("/{id}/accept", web::post().to(accept_order))
-            .route("/{id}/complete", web::post().to(complete_order))
-            .route("/{id}/confirm", web::post().to(confirm_order))
+            .route("/{order_id}/accept", web::post().to(accept_order))
+            .route("/{order_id}/complete", web::post().to(complete_order))
+            .route("/{order_id}/confirm", web::post().to(confirm_order))
             // FSD v2: 取消/拒绝/超时/备注接口
-            .route("/{id}/cancel", web::post().to(cancel_order))
-            .route("/{id}/reject", web::post().to(reject_order))
-            .route("/{id}/timeout", web::post().to(order_timeout))
-            .route("/{id}/guest-remark", web::patch().to(update_guest_remark)),
+            .route("/{order_id}/cancel", web::post().to(cancel_order))
+            .route("/{order_id}/reject", web::post().to(reject_order))
+            .route("/{order_id}/timeout", web::post().to(order_timeout))
+            .route("/{order_id}/guest-remark", web::patch().to(update_guest_remark)),
     )
     .service(
         web::scope("/api/orders-rating")
-            .route("/{id}", web::post().to(create_order_rating))
-            .route("/{id}", web::get().to(get_order_rating)),
+            .route("/{order_id}", web::post().to(create_order_rating))
+            .route("/{order_id}", web::get().to(get_order_rating)),
     );
 }
 
 #[utoipa::path(
     post,
-    path = "/orders",
+    path = "/api/orders",
     tag = "订单",
     request_body = OrderCreateInput,
-    responses((status = 201, body = OrderOutNew))
+    responses((status = 201, body = OrderOutNew)),
+    security(("bearer_auth" = []))
 )]
 pub async fn create_order(
     user_token: UserToken,
@@ -65,10 +66,11 @@ pub async fn create_order(
 
 #[utoipa::path(
     get,
-    path = "/orders",
+    path = "/api/orders",
     tag = "订单",
     params(OrderQuery),
-    responses((status = 200, body = CursorPage<OrderOutNew>))
+    responses((status = 200, body = CursorPage<OrderOutNew>)),
+    security(("bearer_auth" = []))
 )]
 pub async fn get_orders(
     token: UserToken,
@@ -81,10 +83,11 @@ pub async fn get_orders(
 
 #[utoipa::path(
     get,
-    path = "/orders/{id}",
+    path = "/api/orders/{order_id}",
     tag = "订单",
-    params(("id" = i64, Path)),
-    responses((status = 200, body = OrderOutNew))
+    params(("order_id" = i64, Path)),
+    responses((status = 200, body = OrderOutNew)),
+    security(("bearer_auth" = []))
 )]
 pub async fn get_order_detail(
     _user_token: UserToken,
@@ -97,11 +100,12 @@ pub async fn get_order_detail(
 
 #[utoipa::path(
     post,
-    path = "/orders-rating/{id}",
+    path = "/api/orders-rating/{order_id}",
     tag = "评分",
-    params(("id" = i64, Path)),
+    params(("order_id" = i64, Path)),
     request_body = OrderRatingCreateInput,
-    responses((status = 201, body = OrderRatingOut))
+    responses((status = 201, body = OrderRatingOut)),
+    security(("bearer_auth" = []))
 )]
 pub async fn create_order_rating(
     user_token: UserToken,
@@ -121,10 +125,11 @@ pub async fn create_order_rating(
 
 #[utoipa::path(
     get,
-    path = "/orders-rating/{id}",
+    path = "/api/orders-rating/{order_id}",
     tag = "评分",
-    params(("id" = i64, Path)),
-    responses((status = 200, body = OrderRatingOut))
+    params(("order_id" = i64, Path)),
+    responses((status = 200, body = OrderRatingOut)),
+    security(("bearer_auth" = []))
 )]
 pub async fn get_order_rating(
     user_token: UserToken,
@@ -139,18 +144,18 @@ pub async fn get_order_rating(
 // ============== FSD v2 独立接口: 接单/完成/确认 ==============
 
 /// 接单 - Seller 接受订单
-/// POST /api/orders/{id}/accept
+/// POST /api/orders/{order_id}/accept
 #[utoipa::path(
     post,
-    path = "/orders/{id}/accept",
+    path = "/api/orders/{order_id}/accept",
     tag = "订单",
-    params(("id" = i64, Path, description = "订单ID")),
+    params(("order_id" = i64, Path, description = "订单ID")),
     responses(
         (status = 200, description = "接单成功"),
         (status = 400, description = "订单状态不允许接单"),
         (status = 404, description = "订单不存在")
     ),
-    security(("cookie_auth" = []))
+    security(("bearer_auth" = []))
 )]
 pub async fn accept_order(
     user_token: UserToken,
@@ -170,18 +175,18 @@ pub async fn accept_order(
 }
 
 /// 完成订单 - Seller 完成任务制作/履约
-/// POST /api/orders/{id}/complete
+/// POST /api/orders/{order_id}/complete
 #[utoipa::path(
     post,
-    path = "/orders/{id}/complete",
+    path = "/api/orders/{order_id}/complete",
     tag = "订单",
-    params(("id" = i64, Path, description = "订单ID")),
+    params(("order_id" = i64, Path, description = "订单ID")),
     responses(
         (status = 200, description = "完成成功"),
         (status = 400, description = "订单状态不允许完成"),
         (status = 404, description = "订单不存在")
     ),
-    security(("cookie_auth" = []))
+    security(("bearer_auth" = []))
 )]
 pub async fn complete_order(
     user_token: UserToken,
@@ -201,19 +206,19 @@ pub async fn complete_order(
 }
 
 /// 确认订单 - Buyer 确认履约质量
-/// POST /api/orders/{id}/confirm
+/// POST /api/orders/{order_id}/confirm
 #[utoipa::path(
     post,
-    path = "/orders/{id}/confirm",
+    path = "/api/orders/{order_id}/confirm",
     tag = "订单",
-    params(("id" = i64, Path, description = "订单ID")),
+    params(("order_id" = i64, Path, description = "订单ID")),
     request_body = OrderConfirmInput,
     responses(
         (status = 200, description = "确认成功"),
         (status = 400, description = "订单状态不允许确认"),
         (status = 404, description = "订单不存在")
     ),
-    security(("cookie_auth" = []))
+    security(("bearer_auth" = []))
 )]
 pub async fn confirm_order(
     user_token: UserToken,
@@ -243,21 +248,21 @@ pub async fn confirm_order(
 }
 
 /// 取消订单
-/// POST /api/orders/{id}/cancel
+/// POST /api/orders/{order_id}/cancel
 ///
 /// 仅 CREATED 状态可取消
 #[utoipa::path(
     post,
-    path = "/orders/{id}/cancel",
+    path = "/api/orders/{order_id}/cancel",
     tag = "订单",
-    params(("id" = i64, Path, description = "订单ID")),
+    params(("order_id" = i64, Path, description = "订单ID")),
     request_body = OrderCancelInput,
     responses(
         (status = 200, description = "取消成功"),
         (status = 400, description = "订单状态不允许取消"),
         (status = 404, description = "订单不存在")
     ),
-    security(("cookie_auth" = []))
+    security(("bearer_auth" = []))
 )]
 pub async fn cancel_order(
     user_token: UserToken,
@@ -282,21 +287,21 @@ pub async fn cancel_order(
 }
 
 /// 拒绝订单
-/// POST /api/orders/{id}/reject
+/// POST /api/orders/{order_id}/reject
 ///
 /// 仅 CREATED 状态 Seller 可拒绝
 #[utoipa::path(
     post,
-    path = "/orders/{id}/reject",
+    path = "/api/orders/{order_id}/reject",
     tag = "订单",
-    params(("id" = i64, Path, description = "订单ID")),
+    params(("order_id" = i64, Path, description = "订单ID")),
     request_body = OrderRejectInput,
     responses(
         (status = 200, description = "拒绝成功"),
         (status = 400, description = "订单状态不允许拒绝"),
         (status = 404, description = "订单不存在")
     ),
-    security(("cookie_auth" = []))
+    security(("bearer_auth" = []))
 )]
 pub async fn reject_order(
     user_token: UserToken,
@@ -321,20 +326,20 @@ pub async fn reject_order(
 }
 
 /// 订单超时处理
-/// POST /api/orders/{id}/timeout
+/// POST /api/orders/{order_id}/timeout
 ///
 /// CREATED 或 ACCEPTED 状态超过超时时间可标记为超时
 #[utoipa::path(
     post,
-    path = "/orders/{id}/timeout",
+    path = "/api/orders/{order_id}/timeout",
     tag = "订单",
-    params(("id" = i64, Path, description = "订单ID")),
+    params(("order_id" = i64, Path, description = "订单ID")),
     responses(
         (status = 200, description = "处理成功"),
         (status = 400, description = "订单状态不允许超时处理"),
         (status = 404, description = "订单不存在")
     ),
-    security(("cookie_auth" = []))
+    security(("bearer_auth" = []))
 )]
 pub async fn order_timeout(
     user_token: UserToken,
@@ -357,14 +362,14 @@ pub async fn order_timeout(
 }
 
 /// 更新做客订单备注
-/// PATCH /api/orders/{id}/guest-remark
+/// PATCH /api/orders/{order_id}/guest-remark
 ///
 /// 仅做客订单创建者可更新备注
 #[utoipa::path(
     patch,
-    path = "/orders/{id}/guest-remark",
+    path = "/api/orders/{order_id}/guest-remark",
     tag = "订单",
-    params(("id" = i64, Path, description = "订单ID")),
+    params(("order_id" = i64, Path, description = "订单ID")),
     request_body = GuestRemarkInput,
     responses(
         (status = 200, description = "更新成功"),
@@ -372,7 +377,7 @@ pub async fn order_timeout(
         (status = 403, description = "无权更新"),
         (status = 404, description = "订单不存在")
     ),
-    security(("cookie_auth" = []))
+    security(("bearer_auth" = []))
 )]
 pub async fn update_guest_remark(
     user_token: UserToken,

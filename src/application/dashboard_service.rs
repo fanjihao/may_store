@@ -50,10 +50,11 @@ impl DashboardService {
         group_id: i64,
     ) -> Result<TopFoodRankingResponse, CustomError> {
         let rows = sqlx::query(
-            "SELECT f.food_id, f.name, COUNT(*) as order_count \
+            "SELECT f.food_id, f.food_name, COUNT(*) as order_count \
              FROM orders o \
-             JOIN foods f ON o.food_id = f.food_id \
-             WHERE o.group_id = $1 AND o.status = 'COMPLETED' \
+             LEFT JOIN order_items oi ON o.order_id = oi.order_id
+             JOIN foods f ON oi.food_id = f.food_id \
+             WHERE o.group_id = $1 AND o.status IN ('COMPLETED', 'CONFIRMED_COMPLETED') \
              GROUP BY f.food_id, f.name \
              ORDER BY order_count DESC \
              LIMIT 10",
@@ -83,9 +84,10 @@ impl DashboardService {
         let today = Local::now().date_naive();
 
         let rows = sqlx::query(
-            "SELECT o.order_id, o.food_id, o.status, o.created_at, f.name as food_name \
+            "SELECT o.order_id, oi.food_id, o.status, o.created_at, f.food_name as food_name \
              FROM orders o \
-             JOIN foods f ON o.food_id = f.food_id \
+             LEFT JOIN order_items oi ON o.order_id = oi.order_id
+             JOIN foods f ON oi.food_id = f.food_id \
              WHERE o.user_id = $1 AND o.group_id = $2 AND DATE(o.created_at) = $3 \
              ORDER BY o.created_at DESC",
         )
@@ -123,7 +125,7 @@ impl DashboardService {
             .get(0);
 
         let completed_orders: i32 =
-            sqlx::query("SELECT COUNT(*) FROM orders WHERE user_id = $1 AND status = 'COMPLETED'")
+            sqlx::query("SELECT COUNT(*) FROM orders WHERE user_id = $1 AND status IN ('COMPLETED', 'CONFIRMED_COMPLETED')")
                 .bind(user_id as i64)
                 .fetch_one(db)
                 .await?
@@ -158,7 +160,7 @@ impl DashboardService {
     ) -> Result<PointsJourneyOut, CustomError> {
         let rows = sqlx::query(
             "SELECT 'order' as event_type, COALESCE(amount, 0) as points, created_at \
-             FROM point_flow WHERE user_id = $1 \
+             FROM love_point_transactions WHERE user_id = $1 \
              ORDER BY created_at DESC LIMIT 50",
         )
         .bind(user_id as i64)
@@ -206,11 +208,12 @@ impl DashboardService {
         query: &DateQuery,
     ) -> Result<DateFoodsResponse, CustomError> {
         let rows = sqlx::query(
-            "SELECT o.food_id, f.name, f.images, COUNT(*) as order_count \
+            "SELECT oi.food_id, f.food_name, f.images, COUNT(*) as order_count \
              FROM orders o \
-             JOIN foods f ON o.food_id = f.food_id \
+             LEFT JOIN order_items oi ON o.order_id = oi.order_id
+             JOIN foods f ON oi.food_id = f.food_id \
              WHERE DATE(o.created_at) = $1 AND o.group_id = COALESCE($2, o.group_id) \
-             GROUP BY o.food_id, f.name, f.images \
+             GROUP BY oi.food_id, f.food_name, f.images \
              ORDER BY order_count DESC",
         )
         .bind(query.date)

@@ -80,7 +80,7 @@ pub struct NextUnlockItem {
         (status = 403, description = "非组成员"),
         (status = 500, description = "服务器错误")
     ),
-    security(("cookie_auth" = []))
+    security(("bearer_auth" = []))
 )]
 pub async fn get_achievements(
     state: State<Arc<AppState>>,
@@ -181,7 +181,7 @@ pub async fn get_achievements(
         (status = 403, description = "非组成员"),
         (status = 500, description = "服务器错误")
     ),
-    security(("cookie_auth" = []))
+    security(("bearer_auth" = []))
 )]
 pub async fn get_achievement_wall(
     state: State<Arc<AppState>>,

@@ -11,6 +11,8 @@ use tokio::net::TcpListener;
 use tokio_tungstenite::{accept_async, tungstenite::Message};
 
 use crate::api::ws::connection::ConnectionManager;
+use crate::config::AppState;
+use crate::middlewares::jwt;
 use crate::utils::response::ApiResponse;
 
 /// WebSocket 全局连接管理器
@@ -90,16 +92,22 @@ pub async fn ws_status() -> impl web::Responder {
 }
 
 /// 启动 WebSocket 服务器（在独立端口）
-pub async fn start_websocket_server(addr: &str, jwt_secret: &str) -> Result<(), Box<dyn std::error::Error>> {
+///
+/// 接收 `Arc<AppState>` 而非裸 jwt_secret —— 这样 `process_messages` 才能
+/// 调用统一的 `jwt::verify`(同时校验签名、类型、黑名单和全设备撤销)。
+pub async fn start_websocket_server(
+    addr: &str,
+    app_state: Arc<AppState>,
+) -> Result<(), Box<dyn std::error::Error>> {
     let manager = get_connection_manager();
     let listener = TcpListener::bind(addr).await?;
     log::info!("WebSocket 服务器已启动: {}", addr);
 
     while let Ok((tcp_stream, peer_addr)) = listener.accept().await {
         let manager = manager.clone();
-        let jwt_secret_owned = jwt_secret.to_string();
+        let state = app_state.clone();
         tokio::spawn(async move {
-            handle_websocket_connection(tcp_stream, manager, peer_addr, jwt_secret_owned).await;
+            handle_websocket_connection(tcp_stream, manager, peer_addr, state).await;
         });
     }
 
@@ -111,12 +119,12 @@ async fn handle_websocket_connection(
     tcp_stream: tokio::net::TcpStream,
     manager: Arc<ConnectionManager>,
     peer_addr: std::net::SocketAddr,
-    jwt_secret: String,
+    state: Arc<AppState>,
 ) {
     match accept_async(tcp_stream).await {
         Ok(ws_stream) => {
             log::info!("新的 WebSocket 连接: {}", peer_addr);
-            process_messages(ws_stream, manager, peer_addr, jwt_secret).await;
+            process_messages(ws_stream, manager, peer_addr, state).await;
         }
         Err(e) => {
             log::error!("WebSocket 握手失败 from {}: {}", peer_addr, e);
@@ -129,7 +137,7 @@ async fn process_messages(
     ws_stream: tokio_tungstenite::WebSocketStream<tokio::net::TcpStream>,
     manager: Arc<ConnectionManager>,
     peer_addr: std::net::SocketAddr,
-    jwt_secret: String,
+    state: Arc<AppState>,
 ) {
     let mut ws_stream = ws_stream;
     let mut user_id: Option<i64> = None;
@@ -157,7 +165,17 @@ async fn process_messages(
                         "auth" => {
                             if let Some(token) = envelope.data.get("token").and_then(|t| t.as_str())
                             {
-                                match verify_token(token, &jwt_secret).await {
+                                // 统一走 jwt::verify —— 包括 jti 黑名单 + 全设备撤销
+                                let result = jwt::verify(
+                                    token,
+                                    &state.jwt_secret,
+                                    jwt::TokenType::Access,
+                                    &state.redis_cache,
+                                )
+                                .await
+                                .and_then(|c| c.user_id());
+
+                                match result {
                                     Ok(uid) => {
                                         user_id = Some(uid);
                                         manager
@@ -215,23 +233,4 @@ async fn process_messages(
     }
 }
 
-/// 验证 JWT Token
-async fn verify_token(token: &str, jwt_secret: &str) -> Result<i64, String> {
-    use jsonwebtoken::{decode, Algorithm, DecodingKey, Validation};
-
-    let validation = Validation::new(Algorithm::HS256);
-    let token_data = decode::<serde_json::Value>(
-        token,
-        &DecodingKey::from_secret(jwt_secret.as_bytes()),
-        &validation,
-    )
-    .map_err(|e| format!("Token 验证失败: {}", e))?;
-
-    let user_id = token_data
-        .claims
-        .get("user_id")
-        .and_then(|v| v.as_i64())
-        .ok_or_else(|| "Token 中缺少 user_id".to_string())?;
-
-    Ok(user_id)
-}
+// 私有 `verify_token` 已删除 —— WS 与 HTTP 统一走 `crate::middlewares::jwt::verify`

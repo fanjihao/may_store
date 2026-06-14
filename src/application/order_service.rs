@@ -70,9 +70,9 @@ impl OrderService {
         let is_guest = input.is_guest.unwrap_or(input.group_id.is_none());
 
         let rec: OrderRecord = sqlx::query_as::<_, OrderRecord>(
-            "INSERT INTO orders (user_id, guest_id, group_id, goal_time, remark, points_reward, is_guest) \
+            "INSERT INTO orders (user_id, guest_user_id, group_id, goal_time, remark, points_reward, is_guest) \
              VALUES ($1,$2,$3,$4,$5,$6,$7) \
-             RETURNING order_id, user_id, guest_id, group_id, status, goal_time, remark, points_reward, cancel_reason, reject_reason, last_status_change_at, created_at, updated_at, is_guest"
+             RETURNING order_id, user_id, guest_user_id, group_id, status, goal_time, remark, points_reward, cancel_reason, reject_reason, last_status_change_at, created_at, updated_at, is_guest"
         )
         .bind(user_id)
         .bind::<Option<i64>>(None)
@@ -206,7 +206,7 @@ impl OrderService {
         let limit = query.limit.unwrap_or(50).clamp(1, 200);
 
         let mut qb = sqlx::QueryBuilder::<sqlx::Postgres>::new(
-            "SELECT o.order_id, o.user_id, o.guest_id, o.group_id, o.status, o.goal_time, o.remark, o.points_reward, o.cancel_reason, o.reject_reason, o.last_status_change_at, o.created_at, o.updated_at, \
+            "SELECT o.order_id, o.user_id, o.guest_user_id, o.group_id, o.status, o.goal_time, o.remark, o.points_reward, o.cancel_reason, o.reject_reason, o.last_status_change_at, o.created_at, o.updated_at, \
             (o.group_id IS NOT NULL AND m.user_id IS NULL) AS is_guest, \
             g.group_name, \
             ug.nick_name AS db_guest_nick_name, ug.avatar AS db_guest_avatar, \
@@ -214,7 +214,7 @@ impl OrderService {
             FROM orders o \
             LEFT JOIN association_group_members m ON o.group_id = m.group_id AND o.user_id = m.user_id \
             LEFT JOIN association_groups g ON o.group_id = g.group_id \
-            LEFT JOIN users ug ON o.guest_id = ug.user_id \
+            LEFT JOIN users ug ON o.guest_user_id = ug.user_id \
             LEFT JOIN users uc ON o.user_id = uc.user_id"
         );
         qb.push(" WHERE ");
@@ -232,14 +232,14 @@ impl OrderService {
             if !is_member {
                 qb.push(" AND (o.user_id = ");
                 qb.push_bind(user_id);
-                qb.push(" OR o.guest_id = ");
+                qb.push(" OR o.guest_user_id = ");
                 qb.push_bind(user_id);
                 qb.push(") ");
             }
         } else {
             qb.push(" (o.user_id = ");
             qb.push_bind(user_id);
-            qb.push(" OR o.guest_id = ");
+            qb.push(" OR o.guest_user_id = ");
             qb.push_bind(user_id);
             qb.push(") ");
         }
@@ -306,7 +306,6 @@ impl OrderService {
                 creator_role_snapshot: None,
                 assignee_id: None,
                 assignee_role_snapshot: None,
-                guest_user_id: None,
                 guest_invite_id: None,
                 guest_remark: None,
                 guest_mark_tags: None,
@@ -446,7 +445,7 @@ impl OrderService {
             .with_timezone(&Utc);
 
         let mut qb = sqlx::QueryBuilder::<sqlx::Postgres>::new(
-            "SELECT o.order_id, o.user_id, o.guest_id, o.group_id, o.status, o.goal_time, o.remark, o.points_reward, o.cancel_reason, o.reject_reason, o.last_status_change_at, o.created_at, o.updated_at, \
+            "SELECT o.order_id, o.user_id, o.guest_user_id, o.group_id, o.status, o.goal_time, o.remark, o.points_reward, o.cancel_reason, o.reject_reason, o.last_status_change_at, o.created_at, o.updated_at, \
             (o.group_id IS NOT NULL AND m.user_id IS NULL) AS is_guest, \
             g.group_name, \
             ug.nick_name AS db_guest_nick_name, ug.avatar AS db_guest_avatar, \
@@ -454,7 +453,7 @@ impl OrderService {
             FROM orders o \
             LEFT JOIN association_group_members m ON o.group_id = m.group_id AND o.user_id = m.user_id \
             LEFT JOIN association_groups g ON o.group_id = g.group_id \
-            LEFT JOIN users ug ON o.guest_id = ug.user_id \
+            LEFT JOIN users ug ON o.guest_user_id = ug.user_id \
             LEFT JOIN users uc ON o.user_id = uc.user_id \
             WHERE o.group_id = "
         );
@@ -491,7 +490,6 @@ impl OrderService {
                 creator_role_snapshot: None,
                 assignee_id: None,
                 assignee_role_snapshot: None,
-                guest_user_id: None,
                 guest_invite_id: None,
                 guest_remark: None,
                 guest_mark_tags: None,
@@ -589,7 +587,7 @@ impl OrderService {
         order_id: i64,
     ) -> Result<Option<OrderOutNew>, CustomError> {
         let row = sqlx::query(
-            "SELECT o.order_id, o.user_id, o.guest_id, o.group_id, o.status, o.goal_time, o.remark, o.points_reward, o.cancel_reason, o.reject_reason, o.last_status_change_at, o.created_at, o.updated_at, \
+            "SELECT o.order_id, o.user_id, o.guest_user_id, o.group_id, o.status, o.goal_time, o.remark, o.points_reward, o.cancel_reason, o.reject_reason, o.last_status_change_at, o.created_at, o.updated_at, \
             (o.group_id IS NOT NULL AND m.user_id IS NULL) AS is_guest, \
             g.group_name, \
             ur.nick_name AS db_receiver_nick_name, ur.avatar AS db_receiver_avatar, \
@@ -597,7 +595,7 @@ impl OrderService {
             FROM orders o \
             LEFT JOIN association_group_members m ON o.group_id = m.group_id AND o.user_id = m.user_id \
             LEFT JOIN association_groups g ON o.group_id = g.group_id \
-            LEFT JOIN users ur ON o.guest_id = ur.user_id \
+            LEFT JOIN users ur ON o.guest_user_id = ur.user_id \
             LEFT JOIN users uc ON o.user_id = uc.user_id \
             WHERE o.order_id=$1"
         )
@@ -634,7 +632,7 @@ impl OrderService {
                     creator_role_snapshot: r.try_get("creator_role_snapshot").ok().flatten(),
                     assignee_id: r.try_get("assignee_id").ok().flatten(),
                     assignee_role_snapshot: r.try_get("assignee_role_snapshot").ok().flatten(),
-                    guest_user_id: r.try_get("guest_user_id").ok().flatten(),
+                    // guest_id 已在 line 618 用 row.get 填充,且通过 #[sqlx(rename)] 映射到 guest_user_id 列
                     guest_invite_id: r.try_get("guest_invite_id").ok().flatten(),
                     guest_remark: r.try_get("guest_remark").ok().flatten(),
                     guest_mark_tags: r.try_get("guest_mark_tags").ok().flatten(),
