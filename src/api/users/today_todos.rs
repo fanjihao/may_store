@@ -103,6 +103,12 @@ pub async fn get_today_todos(
 ) -> Result<impl Responder, CustomError> {
     let db = &state.db_pool;
     let user_id = token.user_id;
+    // ASSUMPTION: server runs in Asia/Shanghai (UTC+8). If the deployment
+    // ever moves to UTC or another zone, the "today" day boundary shifts
+    // and the 今日待办 list may include yesterday's not-yet-cleared tasks
+    // (or miss today's). Pin the timezone in deployment config, or switch
+    // to a fixed offset (e.g. FixedOffset::east_opt(8*3600)) if you want
+    // the code itself to be timezone-explicit.
     let today = Local::now().date_naive();
     let today_str = today.to_string();
 
@@ -201,7 +207,10 @@ pub async fn get_today_todos(
 
     let summary = TodayTodosSummary {
         sign_in_signed,
-        sign_in_groups_pending: sign_in_rows.iter().filter(|r| !r.signed_today).count() as i32,
+        sign_in_groups_pending: items
+            .iter()
+            .filter(|i| matches!(i.r#type, TodoType::SignIn))
+            .count() as i32,
         orders_to_handle: order_rows.len() as i32,
         wishes_to_handle: wish_rows.len() as i32,
         unread_count: unread_count as i32,
