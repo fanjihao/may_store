@@ -15,7 +15,7 @@ use crate::utils::response::ApiResponse;
 
 // ========== 响应 DTO ==========
 
-#[derive(Debug, Clone, Copy, Serialize, ToSchema)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum TodoType {
     SignIn,
@@ -152,18 +152,13 @@ pub async fn get_today_todos(
     }
 
     for r in &order_rows {
-        let (t, title) = match r.kind.as_str() {
-            "ACCEPT" => (TodoType::OrderAccept, "1 个订单待接单".to_string()),
-            "COMPLETE" => (TodoType::OrderComplete, "1 个订单待完成".to_string()),
-            "CONFIRM" => (TodoType::OrderConfirm, "1 个订单待确认".to_string()),
-            _ => unreachable!(),
-        };
+        let (t, title) = order_kind_to_todo(&r.kind);
         items.push(TodoItem {
             r#type: t,
             priority: 2,
             group_id: Some(r.group_id),
             group_name: Some(r.group_name.clone()),
-            title,
+            title: title.to_string(),
             subtitle: Some(r.title.clone()),
             ref_id: Some(r.ref_id),
             action_url: format!("/pages/orders/detail?id={}", r.ref_id),
@@ -171,17 +166,13 @@ pub async fn get_today_todos(
     }
 
     for r in &wish_rows {
-        let (t, title) = match r.kind.as_str() {
-            "FULFILL" => (TodoType::WishFulfill, "1 个心愿待履约".to_string()),
-            "NEGOTIATE" => (TodoType::WishNegotiate, "1 个心愿待协商".to_string()),
-            _ => unreachable!(),
-        };
+        let (t, title) = wish_kind_to_todo(&r.kind);
         items.push(TodoItem {
             r#type: t,
             priority: 3,
             group_id: Some(r.group_id),
             group_name: Some(r.group_name.clone()),
-            title,
+            title: title.to_string(),
             subtitle: Some(r.title.clone()),
             ref_id: Some(r.ref_id),
             action_url: format!("/pages/wishes/detail?id={}", r.ref_id),
@@ -321,4 +312,87 @@ async fn fetch_wishes(db: &sqlx::PgPool, user_id: i64) -> Result<Vec<WishRow>, s
             title: r.get("title"),
         })
         .collect())
+}
+
+// ========== 纯函数辅助 (unit-testable) ==========
+
+/// Map a kind discriminator from the SQL UNION query into a (TodoType, display title).
+/// Pure function — easy to unit test.
+fn order_kind_to_todo(kind: &str) -> (TodoType, &'static str) {
+    match kind {
+        "ACCEPT" => (TodoType::OrderAccept, "1 个订单待接单"),
+        "COMPLETE" => (TodoType::OrderComplete, "1 个订单待完成"),
+        "CONFIRM" => (TodoType::OrderConfirm, "1 个订单待确认"),
+        _ => unreachable!("OrderRow.kind must be one of ACCEPT/COMPLETE/CONFIRM"),
+    }
+}
+
+fn wish_kind_to_todo(kind: &str) -> (TodoType, &'static str) {
+    match kind {
+        "FULFILL" => (TodoType::WishFulfill, "1 个心愿待履约"),
+        "NEGOTIATE" => (TodoType::WishNegotiate, "1 个心愿待协商"),
+        _ => unreachable!("WishRow.kind must be one of FULFILL/NEGOTIATE"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn order_kind_mapping_covers_all_variants() {
+        assert_eq!(order_kind_to_todo("ACCEPT").0, TodoType::OrderAccept);
+        assert_eq!(order_kind_to_todo("COMPLETE").0, TodoType::OrderComplete);
+        assert_eq!(order_kind_to_todo("CONFIRM").0, TodoType::OrderConfirm);
+    }
+
+    #[test]
+    fn order_kind_titles_are_non_empty() {
+        for kind in &["ACCEPT", "COMPLETE", "CONFIRM"] {
+            let (_, title) = order_kind_to_todo(kind);
+            assert!(!title.is_empty(), "title for {} must not be empty", kind);
+        }
+    }
+
+    #[test]
+    fn wish_kind_mapping_covers_all_variants() {
+        assert_eq!(wish_kind_to_todo("FULFILL").0, TodoType::WishFulfill);
+        assert_eq!(wish_kind_to_todo("NEGOTIATE").0, TodoType::WishNegotiate);
+    }
+
+    #[test]
+    fn wish_kind_titles_are_non_empty() {
+        for kind in &["FULFILL", "NEGOTIATE"] {
+            let (_, title) = wish_kind_to_todo(kind);
+            assert!(!title.is_empty(), "title for {} must not be empty", kind);
+        }
+    }
+
+    #[test]
+    fn todo_type_serializes_as_snake_case() {
+        assert_eq!(
+            serde_json::to_string(&TodoType::OrderAccept).unwrap(),
+            "\"order_accept\""
+        );
+        assert_eq!(
+            serde_json::to_string(&TodoType::WishFulfill).unwrap(),
+            "\"wish_fulfill\""
+        );
+        assert_eq!(
+            serde_json::to_string(&TodoType::UnreadNotifications).unwrap(),
+            "\"unread_notifications\""
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "must be one of")]
+    fn order_kind_rejects_unknown_value() {
+        order_kind_to_todo("UNKNOWN");
+    }
+
+    #[test]
+    #[should_panic(expected = "must be one of")]
+    fn wish_kind_rejects_unknown_value() {
+        wish_kind_to_todo("UNKNOWN");
+    }
 }
