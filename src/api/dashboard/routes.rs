@@ -58,6 +58,7 @@ pub struct GroupInfo {
     pub diamond_balance: i32,
     pub daily_love_point_limit: i32,
     pub daily_group_exp_limit: i32,
+    pub created_at: String, // RFC3339
 }
 
 /// 今日统计
@@ -79,6 +80,7 @@ pub struct MonthStats {
     pub wishes_finished: i32,
     pub love_points_spent: i32,
     pub love_points_earned: i32,
+    pub feeds_completed: i32,
 }
 
 /// 快速统计
@@ -91,6 +93,11 @@ pub struct QuickStats {
     pub fulfillment_rate: f64,
     pub continuous_sign_in_days_user1: i32,
     pub continuous_sign_in_days_user2: i32,
+    pub total_feeds: i32,                // 累计已完成订单数
+    pub days_together: i32,              // 相遇天数
+    pub total_diamonds_earned: i64,
+    pub total_diamonds_spent: i64,
+    pub total_love_points_balance: i64,  // 当前用户积分
 }
 
 /// 管理员运营看板响应 (FSD v2 16.2)
@@ -245,18 +252,20 @@ pub async fn get_group_dashboard(
     }
 
     // 获取组信息
-    let group_info: Option<(String, i32, i64, i32, i32, i32)> = sqlx::query_as(
+    let group_info: Option<(String, i32, i64, i32, i32, i32, chrono::DateTime<chrono::Utc>)> = sqlx::query_as(
         r#"SELECT name, level, exp, diamond_balance,
                   COALESCE(daily_love_point_limit, 100) as daily_limit,
-                  COALESCE(daily_group_exp_limit, 200) as exp_limit
+                  COALESCE(daily_group_exp_limit, 200) as exp_limit,
+                  created_at
            FROM association_groups WHERE group_id = $1"#
     )
     .bind(gid)
     .fetch_optional(db)
     .await?;
 
-    let (name, level, exp, diamond, daily_limit, exp_limit) = group_info.unwrap_or((
-        "未命名组".to_string(), 1, 0, 0, 100, 200
+    let (name, level, exp, diamond, daily_limit, exp_limit, created_at) = group_info.unwrap_or((
+        "未命名组".to_string(), 1, 0, 0, 100, 200,
+        chrono::Utc::now(),
     ));
 
     let next_level_exp = (level as i64 + 1) * 100;
@@ -339,6 +348,56 @@ pub async fn get_group_dashboard(
         "user2_consecutive_days": user2_sign
     });
 
+    // 并行 4 个新查询
+    let (total_feeds, month_feeds, (diamonds_earned, diamonds_spent), lp_balance): (
+        i64, i64, (i64, i64), i64,
+    ) = tokio::try_join!(
+        sqlx::query_scalar::<_, i64>(
+            r#"SELECT COUNT(*) FROM orders
+               WHERE group_id = $1
+                 AND status IN ('CONFIRMED_COMPLETED','COMPLETED')"#,
+        )
+        .bind(gid)
+        .fetch_one(db),
+        sqlx::query_scalar::<_, i64>(
+            r#"SELECT COUNT(*) FROM orders
+               WHERE group_id = $1
+                 AND status IN ('CONFIRMED_COMPLETED','COMPLETED')
+                 AND updated_at >= DATE_TRUNC('month', CURRENT_DATE)"#,
+        )
+        .bind(gid)
+        .fetch_one(db),
+        async {
+            let row: (i64, i64) = sqlx::query_as(
+                r#"SELECT
+                     COALESCE(SUM(CASE WHEN type = 'EARN' THEN amount ELSE 0 END), 0),
+                     COALESCE(SUM(CASE WHEN type = 'CONSUME' THEN amount ELSE 0 END), 0)
+                   FROM diamond_transactions
+                   WHERE group_id = $1"#,
+            )
+            .bind(gid)
+            .fetch_one(db)
+            .await?;
+            Ok::<(i64, i64), sqlx::Error>(row)
+        },
+        async {
+            let row: Option<(i64, i64)> = sqlx::query_as(
+                r#"SELECT COALESCE(available_love_point, 0), COALESCE(frozen_love_point, 0)
+                   FROM user_group_points
+                   WHERE user_id = $1 AND group_id = $2"#,
+            )
+            .bind(user_id)
+            .bind(gid)
+            .fetch_optional(db)
+            .await?;
+            let (a, f) = row.unwrap_or((0, 0));
+            Ok::<i64, sqlx::Error>(a + f)
+        },
+    )?;
+
+    let today_date = chrono::Utc::now().date_naive();
+    let days_together = (today_date - created_at.date_naive()).num_days().max(0) as i32;
+
     Ok(ApiResponse::success(GroupDashboardResponse {
         group: GroupInfo {
             group_id: gid,
@@ -349,6 +408,7 @@ pub async fn get_group_dashboard(
             diamond_balance: diamond,
             daily_love_point_limit: daily_limit,
             daily_group_exp_limit: exp_limit,
+            created_at: created_at.to_rfc3339(),
         },
         today: TodayStats {
             date: today,
@@ -362,6 +422,7 @@ pub async fn get_group_dashboard(
             wishes_finished,
             love_points_spent: points_spent,
             love_points_earned: points_earned,
+            feeds_completed: month_feeds as i32,
         },
         quick_stats: QuickStats {
             total_orders,
@@ -370,6 +431,11 @@ pub async fn get_group_dashboard(
             fulfillment_rate,
             continuous_sign_in_days_user1: user1_sign,
             continuous_sign_in_days_user2: user2_sign,
+            total_feeds: total_feeds as i32,
+            days_together,
+            total_diamonds_earned: diamonds_earned,
+            total_diamonds_spent: diamonds_spent,
+            total_love_points_balance: lp_balance,
         },
     }))
 }
