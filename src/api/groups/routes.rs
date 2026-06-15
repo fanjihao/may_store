@@ -1285,13 +1285,25 @@ async fn swap_role_check(
         }
     };
 
+    let buyer_user_id: i64 = row.get("buyer_user_id");
+    let seller_user_id: i64 = row.get("seller_user_id");
+
+    // 仅 buyer_user_id / seller_user_id 两位成员能互换角色。
+    // group_member_role_enum 还含 ADMIN,但 ADMIN 不可触发 swap,POST 端会 403。
+    // 这里短路掉,避免给出 can_swap=true 但实际 POST 失败的误导。
+    if user_id != buyer_user_id && user_id != seller_user_id {
+        return Err(CustomError::Forbidden("仅 buyer/seller 可互换角色".into()));
+    }
+
     let ignore_ongoing_wish: bool = row.get("ignore_ongoing_wish");
     // Translate DB enum (ORDERING / RECEIVING) into the business-friendly
     // BUYER / SELLER names that the frontend expects. Anything else
-    // (including ADMIN) falls through as SELLER to be safe.
+    // (e.g. ADMIN) should not reach this point because the 403 above
+    // already filtered out non-buyer/seller members.
     let current_role = match row.get::<String, _>("current_role").as_str() {
-        "ORDERING" | "ordering" => "BUYER".to_string(),
-        _ => "SELLER".to_string(),
+        "ORDERING" => "BUYER".to_string(),
+        "RECEIVING" => "SELLER".to_string(),
+        _ => "SELLER".to_string(),  // unreachable in practice
     };
     let would_be_role = if current_role == "BUYER" {
         "SELLER".to_string()
@@ -1318,7 +1330,7 @@ async fn swap_role_check(
             let n: i64 = sqlx::query_scalar(
                 r#"SELECT COUNT(*) FROM wishes
                    WHERE group_id = $1 AND status = 'CLAIMED'
-                     AND (requester_id = $2 OR fulfiller_id = $2)"#,
+                     AND (selected_by = $2 OR fulfiller_id = $2)"#,
             )
             .bind(gid)
             .bind(user_id)
