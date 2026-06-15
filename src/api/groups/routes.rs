@@ -1286,8 +1286,13 @@ async fn swap_role_check(
     };
 
     let ignore_ongoing_wish: bool = row.get("ignore_ongoing_wish");
-    let current_role_raw: String = row.get("current_role");
-    let current_role = current_role_raw.to_uppercase();
+    // Translate DB enum (ORDERING / RECEIVING) into the business-friendly
+    // BUYER / SELLER names that the frontend expects. Anything else
+    // (including ADMIN) falls through as SELLER to be safe.
+    let current_role = match row.get::<String, _>("current_role").as_str() {
+        "ORDERING" | "ordering" => "BUYER".to_string(),
+        _ => "SELLER".to_string(),
+    };
     let would_be_role = if current_role == "BUYER" {
         "SELLER".to_string()
     } else {
