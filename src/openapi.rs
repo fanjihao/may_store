@@ -54,6 +54,7 @@ impl Modify for SecurityAddon {
         crate::api::groups::routes::create_group,
         crate::api::groups::routes::get_group,
         crate::api::groups::routes::swap_role,
+        crate::api::groups::routes::swap_role_check,
         crate::api::groups::routes::settlement_check,
         crate::api::groups::routes::fulfillment_stats,
         crate::api::groups::routes::create_invite,
@@ -198,6 +199,7 @@ impl Modify for SecurityAddon {
             crate::api::users::today_todos::TodayTodosResponse,
             // -- Groups --
             crate::api::groups::routes::CreateGroupResponse,
+            crate::api::groups::routes::SwapRoleCheckResponse,
             // -- Foods --
             crate::api::foods::routes::FoodImage,
             crate::api::foods::routes::FoodIngredient,

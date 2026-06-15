@@ -28,6 +28,10 @@ pub fn configure(cfg: &mut ServiceConfig) {
             .route("/join", web::post().to(join_group))
             .route("/{group_id}", web::get().to(get_group))
             .route("/{group_id}/swap-role", web::post().to(swap_role))
+            .route(
+                "/{group_id}/swap-role/check",
+                web::get().to(swap_role_check),
+            )
             .route("/{group_id}/exit", web::post().to(exit_group))
             .route(
                 "/{group_id}/settlement-check",
@@ -1201,4 +1205,155 @@ pub struct GroupWishInput {
 #[serde(rename_all = "camelCase")]
 pub struct JoinGroupInput {
     pub invite_code: String,
+}
+
+// ============== Swap Role Check (FSD 2026-06-15 设计稿 §4) ==============
+
+/// 角色互换前置检查响应
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct SwapRoleCheckResponse {
+    pub can_swap: bool,
+    pub reasons: Vec<String>,
+    pub active_orders_count: i32,
+    pub pending_wishes_count: i32,
+    pub frozen_love_points: i64,
+    pub pending_compensation: i32,
+    pub pending_diamond_reward: i32,
+    pub current_role: String,
+    pub would_be_role: String,
+    pub ignore_ongoing_wish_enabled: bool,
+}
+
+/// 角色互换前置检查
+/// GET /api/groups/{group_id}/swap-role/check
+#[utoipa::path(
+    get,
+    path = "/api/groups/{group_id}/swap-role/check",
+    tag = "双人组",
+    params(
+        ("group_id" = i64, Path, description = "组ID")
+    ),
+    responses(
+        (status = 200, description = "检查成功", body = SwapRoleCheckResponse),
+        (status = 401, description = "未登录"),
+        (status = 403, description = "非组成员"),
+        (status = 404, description = "组不存在"),
+        (status = 500, description = "服务器错误")
+    ),
+    security(("bearer_auth" = []))
+)]
+async fn swap_role_check(
+    token: UserToken,
+    state: State<Arc<AppState>>,
+    group_id: Path<i64>,
+) -> Result<HttpResponse, CustomError> {
+    let db = &state.db_pool;
+    let gid = group_id.into_inner();
+    let user_id = token.user_id;
+
+    // Q1：取组信息 + 用户角色 + ignore 配置
+    let row = sqlx::query(
+        r#"SELECT
+             g.buyer_user_id, g.seller_user_id,
+             gm.role_in_group AS current_role,
+             COALESCE((g.settings->>'swap_ignore_ongoing_wish')::bool, false) AS ignore_ongoing_wish
+           FROM association_groups g
+           JOIN association_group_members gm
+             ON gm.group_id = g.group_id AND gm.user_id = $2
+           WHERE g.group_id = $1 AND gm.member_status = 'ACTIVE'"#,
+    )
+    .bind(gid)
+    .bind(user_id)
+    .fetch_optional(db)
+    .await?;
+
+    let row = match row {
+        Some(r) => r,
+        None => {
+            let group_exists: bool = sqlx::query_scalar(
+                "SELECT EXISTS(SELECT 1 FROM association_groups WHERE group_id = $1)",
+            )
+            .bind(gid)
+            .fetch_one(db)
+            .await?;
+
+            if !group_exists {
+                return Err(CustomError::NotFound("组不存在".into()));
+            }
+            return Err(CustomError::Forbidden("非组成员".into()));
+        }
+    };
+
+    let ignore_ongoing_wish: bool = row.get("ignore_ongoing_wish");
+    let current_role_raw: String = row.get("current_role");
+    let current_role = current_role_raw.to_uppercase();
+    let would_be_role = if current_role == "BUYER" {
+        "SELLER".to_string()
+    } else {
+        "BUYER".to_string()
+    };
+
+    // Q2-Q4 并行
+    let (active_orders, pending_wishes, frozen_points): (i64, i64, i64) = tokio::try_join!(
+        sqlx::query_scalar::<_, i64>(
+            r#"SELECT COUNT(*) FROM orders
+               WHERE group_id = $1
+                 AND status NOT IN ('CONFIRMED_COMPLETED','COMPLETED',
+                                    'CONFIRMED_INCOMPLETE','CONFIRMED_UNFINISHED',
+                                    'REJECTED','CANCELLED','CANCELED',
+                                    'TIMEOUT','SYSTEM_CLOSED','BREEDER_CLOSED')"#,
+        )
+        .bind(gid)
+        .fetch_one(db),
+        async {
+            if ignore_ongoing_wish {
+                return Ok::<i64, sqlx::Error>(0);
+            }
+            let n: i64 = sqlx::query_scalar(
+                r#"SELECT COUNT(*) FROM wishes
+                   WHERE group_id = $1 AND status = 'CLAIMED'
+                     AND (requester_id = $2 OR fulfiller_id = $2)"#,
+            )
+            .bind(gid)
+            .bind(user_id)
+            .fetch_one(db)
+            .await?;
+            Ok(n)
+        },
+        sqlx::query_scalar::<_, i64>(
+            r#"SELECT COALESCE(SUM(amount), 0) FROM love_point_transactions
+               WHERE user_id = $1 AND group_id = $2 AND type = 'FREEZE'"#,
+        )
+        .bind(user_id)
+        .bind(gid)
+        .fetch_one(db),
+    )?;
+
+    // 拼装 reasons
+    let mut reasons: Vec<String> = Vec::new();
+    if active_orders > 0 {
+        reasons.push(format!("存在 {} 个未完结订单", active_orders));
+    }
+    if pending_wishes > 0 && !ignore_ongoing_wish {
+        reasons.push(format!("存在 {} 个在途心愿", pending_wishes));
+    }
+    if frozen_points > 0 {
+        reasons.push(format!("有 {} 冻结积分未处理", frozen_points));
+    }
+
+    let can_swap = reasons.is_empty();
+
+    Ok(ApiResponse::success(SwapRoleCheckResponse {
+        can_swap,
+        reasons,
+        active_orders_count: active_orders as i32,
+        pending_wishes_count: pending_wishes as i32,
+        frozen_love_points: frozen_points,
+        pending_compensation: 0,
+        pending_diamond_reward: 0,
+        current_role,
+        would_be_role,
+        ignore_ongoing_wish_enabled: ignore_ongoing_wish,
+    }))
 }
