@@ -49,6 +49,7 @@ impl Modify for SecurityAddon {
         crate::api::users::update_info,
         crate::api::users::get_user_groups,
         crate::api::users::delete_account,
+        crate::api::users::today_todos::get_today_todos,
         // ==================== Groups (双人组) ====================
         crate::api::groups::routes::create_group,
         crate::api::groups::routes::get_group,
@@ -192,6 +193,9 @@ impl Modify for SecurityAddon {
             crate::api::users::UserGroupsResponse,
             crate::api::users::DeleteAccountInput,
             crate::api::users::DeleteAccountResponse,
+            crate::api::users::today_todos::TodoItem,
+            crate::api::users::today_todos::TodayTodosSummary,
+            crate::api::users::today_todos::TodayTodosResponse,
             // -- Groups --
             crate::api::groups::routes::CreateGroupResponse,
             // -- Foods --

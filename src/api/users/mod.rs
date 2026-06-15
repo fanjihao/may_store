@@ -7,6 +7,8 @@ use sqlx::Row;
 
 use crate::config::AppState;
 
+pub mod today_todos;
+
 /// 配置用户相关路由
 pub fn configure(cfg: &mut ServiceConfig) {
     cfg.service(
@@ -14,7 +16,8 @@ pub fn configure(cfg: &mut ServiceConfig) {
             .route("", web::get().to(get_current_info))
             .route("", web::patch().to(update_info))
             .route("/groups", web::get().to(get_user_groups))
-            .route("/delete", web::post().to(delete_account)),
+            .route("/delete", web::post().to(delete_account))
+            .route("/today-todos", web::get().to(today_todos::get_today_todos)),
     );
 }
 
