@@ -158,7 +158,12 @@ SELECT COUNT(*) FROM notifications WHERE user_id = $1 AND is_read = false
 4. Q3 每一行按 `kind` 映射（priority=3，CLAIMED 排在 NEGOTIATING 前）
 5. Q4 > 0 时生成 1 条 UnreadNotifications TodoItem（priority=4）
 6. **合并并按 `(priority asc, group_id asc, ref_id asc)` 排序**
-7. 计算 `summary` 各 count
+7. 计算 `summary`：
+   - `sign_in_signed = Q1 任一组 signed_today=true`（任一组签了即 true）
+   - `sign_in_groups_pending = Q1 过滤 signed_today=false 后的行数`
+   - `orders_to_handle = Q2 返回行数`
+   - `wishes_to_handle = Q3 返回行数`
+   - `unread_count = Q4 直接使用`
 8. 序列化
 
 ### 2.5 错误
