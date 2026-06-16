@@ -105,18 +105,18 @@ impl FootprintService {
         .unwrap_or((10, 100));
 
         // 获取用户钻石
-        let diamond_balance: i32 = sqlx::query("SELECT diamond FROM users WHERE user_id = $1")
+        let diamond: i32 = sqlx::query("SELECT diamond FROM users WHERE user_id = $1")
             .bind(user_id as i64)
             .fetch_one(db)
             .await?
             .get(0);
 
-        if diamond_balance < diamond_cost {
+        if diamond < diamond_cost {
             return Err(CustomError::BadRequest("钻石不足".into()));
         }
 
         // 扣除钻石
-        let new_balance = diamond_balance - diamond_cost;
+        let new_balance = diamond - diamond_cost;
         sqlx::query("UPDATE users SET diamond = $2 WHERE user_id = $1")
             .bind(user_id as i64)
             .bind(new_balance)
@@ -169,7 +169,7 @@ impl FootprintService {
                 .unwrap_or(0);
 
         // 获取用户钻石
-        let diamond_balance: i32 = sqlx::query("SELECT diamond FROM users WHERE user_id = $1")
+        let diamond: i32 = sqlx::query("SELECT diamond FROM users WHERE user_id = $1")
             .bind(user_id as i64)
             .fetch_one(db)
             .await?
@@ -210,7 +210,7 @@ impl FootprintService {
             total_records,
             streak_progress,
             feeding_text,
-            diamond_balance,
+            diamond,
             footprint_capacity,
             footprint_count,
         })

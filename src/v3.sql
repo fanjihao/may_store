@@ -239,7 +239,7 @@ CREATE TYPE audit_action_enum AS ENUM (
     'POINT_COMPENSATE', 'DIAMOND_COMPENSATE',
     'ORDER_REWARD_REVIEW', 'WISH_QUALITY_REWARD',
     'WISH_CLOSE', 'ORDER_CANCEL', 'ORDER_FORCE_TIMEOUT',
-    'ROLE_SWAP_ADMIN', 'OTHER'
+    'ROLE_SWAP_ADMIN', 'FOOD_AUDIT', 'OTHER'
 );
 
 -- Achievement category (FSD §11.21)
@@ -525,8 +525,7 @@ CREATE TABLE foods (
     price INT NOT NULL DEFAULT 0,  -- 旧版字段,新代码可忽略
     description TEXT,
     images JSONB NOT NULL DEFAULT '[]'::jsonb,
-    tags JSONB NOT NULL DEFAULT '[]'::jsonb,
-    tag_id BIGINT REFERENCES tags(tag_id) ON DELETE SET NULL,
+    tag_id BIGINT NOT NULL REFERENCES tags(tag_id) ON DELETE RESTRICT,
     ingredients TEXT,
     steps TEXT,
     food_status food_status_enum NOT NULL DEFAULT 'NORMAL',
@@ -548,8 +547,7 @@ COMMENT ON COLUMN foods.food_name IS '菜品名称';
 COMMENT ON COLUMN foods.food_photo IS '菜品图片URL (兼容旧版,新代码使用 images 数组)';
 COMMENT ON COLUMN foods.description IS '菜品描述 (FSD §5)';
 COMMENT ON COLUMN foods.images IS '图片数组,每项 {url,width,height} (FSD §5)';
-COMMENT ON COLUMN foods.tags IS '标签名数组 (denormalized,正式标签关系仍走 tag_id FK)';
-COMMENT ON COLUMN foods.tag_id IS '标签ID (单选 FK,与 tags 数组共存)';
+COMMENT ON COLUMN foods.tag_id IS '标签ID (单选 FK,必填)';
 COMMENT ON COLUMN foods.ingredients IS '配料/食材';
 COMMENT ON COLUMN foods.steps IS '制作步骤';
 COMMENT ON COLUMN foods.food_status IS '状态：NORMAL/OFF/AUDITING/REJECTED';
@@ -848,6 +846,8 @@ CREATE TABLE love_point_transactions (
     frozen_after BIGINT NOT NULL,
     biz_type VARCHAR(50) NOT NULL,
     biz_id BIGINT,
+    ref_type VARCHAR(50),
+    ref_id BIGINT,
     idempotency_key VARCHAR(128),
     trace_id VARCHAR(64),
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
@@ -879,18 +879,22 @@ CREATE INDEX idx_get_group_created ON group_exp_transactions(group_id, created_a
 -- ================= DIAMOND TRANSACTIONS =================
 CREATE TABLE diamond_transactions (
     id BIGSERIAL PRIMARY KEY,
-    group_id BIGINT NOT NULL REFERENCES association_groups(group_id) ON DELETE CASCADE,
+    group_id BIGINT REFERENCES association_groups(group_id) ON DELETE CASCADE,
+    user_id BIGINT REFERENCES users(user_id) ON DELETE CASCADE,
     type diamond_tx_type_enum NOT NULL,
     amount BIGINT NOT NULL,
     balance_before BIGINT NOT NULL,
     balance_after BIGINT NOT NULL,
     biz_type VARCHAR(50) NOT NULL,
     biz_id BIGINT,
+    scene VARCHAR(64),
     idempotency_key VARCHAR(128),
     trace_id VARCHAR(64),
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    -- 二选一不能同时为空:组级流水(group_id IS NOT NULL)或个人级流水(user_id IS NOT NULL)
+    CONSTRAINT chk_dt_subject CHECK (group_id IS NOT NULL OR user_id IS NOT NULL)
 );
-COMMENT ON TABLE diamond_transactions IS '组钻石流水';
+COMMENT ON TABLE diamond_transactions IS '钻石流水(组级 + 个人级)';
 CREATE UNIQUE INDEX idx_dt_idempotency ON diamond_transactions(idempotency_key) WHERE idempotency_key IS NOT NULL;
 CREATE INDEX idx_dt_group_created ON diamond_transactions(group_id, created_at);
 
@@ -1339,8 +1343,10 @@ CREATE TABLE footprints (
     status VARCHAR(20) NOT NULL DEFAULT 'ACTIVE',
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    deleted_at TIMESTAMPTZ
+    deleted_at TIMESTAMPTZ,
+    idempotency_key VARCHAR(128)
 );
+CREATE UNIQUE INDEX idx_footprints_idempotency ON footprints(idempotency_key) WHERE idempotency_key IS NOT NULL;
 COMMENT ON TABLE footprints IS '组内足迹/纪念内容 - FSD §11.16';
 COMMENT ON COLUMN footprints.related_order_id IS '关联订单ID（订单完成自动生成）';
 COMMENT ON COLUMN footprints.related_wish_id IS '关联心愿ID（心愿完成自动生成）';
@@ -1617,6 +1623,7 @@ CREATE TABLE IF NOT EXISTS point_flow (
     biz_id BIGINT,                           -- 关联业务 ID
     ref_type VARCHAR(32),                    -- 旧代码引用的字段名
     balance_after BIGINT,                    -- 旧代码引用的字段名
+    scene VARCHAR(32),                       -- 业务场景:wish / order_complete
     remark VARCHAR(256),
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );

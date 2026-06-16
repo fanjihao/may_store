@@ -52,7 +52,7 @@ pub struct FootprintOverview {
     pub total_records: i32,
     pub streak_progress: f32,
     pub feeding_text: String,
-    pub diamond_balance: i32,
+    pub diamond: i32,
     pub footprint_capacity: i32,
     pub footprint_count: i32,
 }

@@ -56,7 +56,7 @@ pub struct GroupInfo {
     pub level: i32,
     pub exp: i64,
     pub next_level_exp: i64,
-    pub diamond_balance: i32,
+    pub diamond: i32,
     pub daily_love_point_limit: i32,
     pub daily_group_exp_limit: i32,
     pub created_at: String, // RFC3339
@@ -255,7 +255,7 @@ pub async fn get_group_dashboard(
 
     // 获取组信息
     let group_info: Option<(String, i32, i64, i32, i32, i32, chrono::DateTime<chrono::Utc>)> = sqlx::query_as(
-        r#"SELECT name, level, exp, diamond_balance,
+        r#"SELECT name, level, exp, diamond,
                   COALESCE(daily_love_point_limit, 100) as daily_limit,
                   COALESCE(daily_group_exp_limit, 200) as exp_limit,
                   created_at
@@ -407,7 +407,7 @@ pub async fn get_group_dashboard(
             level,
             exp,
             next_level_exp,
-            diamond_balance: diamond,
+            diamond: diamond,
             daily_love_point_limit: daily_limit,
             daily_group_exp_limit: exp_limit,
             created_at: created_at.to_rfc3339(),

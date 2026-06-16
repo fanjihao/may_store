@@ -229,7 +229,7 @@ impl WishService {
 
         // 记录积分流水
         sqlx::query(
-            "INSERT INTO point_flow (user_id, group_id, amount, balance, scene, relation_id) VALUES ($1, $2, $3, $4, 'wish', $5)"
+            "INSERT INTO point_flow (user_id, group_id, amount, balance_after, scene, biz_id) VALUES ($1, $2, $3, $4, 'wish', $5)"
         )
         .bind(user_id as i64)
         .bind(existing.group_id)

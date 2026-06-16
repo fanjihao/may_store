@@ -119,7 +119,7 @@ pub struct UserGroupItem {
     pub group_name: String,
     pub my_role: String,
     pub member_count: i32,
-    pub diamond_balance: i64,
+    pub diamond: i64,
     pub level: i32,
     pub joined_at: String,
 }
@@ -169,7 +169,7 @@ pub async fn get_user_groups(
             group_name: r.get::<String, _>("group_name"),
             my_role: r.get::<String, _>("my_role"),
             member_count: r.get::<i64, _>("member_count") as i32,
-            diamond_balance: r.get::<i32, _>("diamond") as i64,
+            diamond: r.get::<i32, _>("diamond") as i64,
             level: r.get::<i32, _>("level"),
             joined_at: r.get::<chrono::DateTime<chrono::Utc>, _>("created_at").to_rfc3339(),
         })

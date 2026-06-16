@@ -74,6 +74,10 @@ pub struct ListTagsQuery {
         ("keyword" = Option<String>, Query),
         ("limit" = Option<i64>, Query)
     ),
+    responses(
+        (status = 200, description = "获取成功", body = Vec<TagOut>),
+        (status = 403, description = "无权访问该组")
+    ),
     security(("bearer_auth" = []))
 )]
 pub async fn list_tags(
@@ -131,6 +135,11 @@ pub async fn list_tags(
     tag = "菜品标签 (§24.4)",
     params(("group_id" = i64, Path, description = "组 ID")),
     request_body = CreateTagInput,
+    responses(
+        (status = 201, description = "创建成功", body = TagOut),
+        (status = 400, description = "参数非法 / 标签数量已达上限"),
+        (status = 403, description = "无权访问该组")
+    ),
     security(("bearer_auth" = []))
 )]
 pub async fn create_tag(

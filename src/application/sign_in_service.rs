@@ -108,7 +108,7 @@ impl SignService {
 
         // 记录钻石流水 (user diamond, not group diamond)
         sqlx::query(
-            "INSERT INTO diamond_transactions (user_id, type, scene, diamond_num, balance_after) VALUES ($1, $2, $3, $4, $5)"
+            "INSERT INTO diamond_transactions (user_id, type, scene, amount, balance_after) VALUES ($1, $2, $3, $4, $5)"
         )
         .bind(user_id as i64)
         .bind(1) // type 1 = earn
@@ -315,7 +315,7 @@ impl SignService {
 
         // 记录钻石流水 (user diamond, not group diamond)
         sqlx::query(
-            "INSERT INTO diamond_transactions (user_id, type, scene, diamond_num, balance_after) VALUES ($1, $2, $3, $4, $5)"
+            "INSERT INTO diamond_transactions (user_id, type, scene, amount, balance_after) VALUES ($1, $2, $3, $4, $5)"
         )
         .bind(user_id as i64)
         .bind(1) // type 1 = earn

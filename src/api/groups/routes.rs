@@ -113,7 +113,7 @@ async fn create_group(
 
     // 将创建者加为组成员
     sqlx::query(
-        r#"INSERT INTO association_group_members (user_id, group_id, role_in_group, is_primary, created_at)
+        r#"INSERT INTO association_group_members (user_id, group_id, role_in_group, is_primary, joined_at)
            VALUES ($1, $2, 'ORDERING', true, $3)"#
     )
     .bind(token.user_id)
@@ -477,7 +477,7 @@ async fn settlement_check(
         ("group_id" = i64, Path, description = "组ID")
     ),
     responses(
-        (status = 200, description = "获取成功"),
+        (status = 200, description = "获取成功", body = FulfillmentStatsListResponse),
         (status = 403, description = "无权访问该组")
     ),
     security(("bearer_auth" = []))
@@ -578,7 +578,15 @@ async fn fulfillment_stats(
         );
     }
 
-    Ok(ApiResponse::success(stats_map))
+    Ok(ApiResponse::success(FulfillmentStatsListResponse { stats: stats_map }))
+}
+
+/// 履约统计列表响应
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct FulfillmentStatsListResponse {
+    /// key: user_id; value: 该成员的履约统计
+    pub stats: std::collections::HashMap<i64, FulfillmentStats>,
 }
 
 // ============== FSD v2 额外端点 ==============
@@ -741,7 +749,7 @@ async fn create_group_order(
     let order_id = idgenerator::IdInstance::next_id();
 
     sqlx::query(
-        r#"INSERT INTO orders (order_id, group_id, type, creator_id, assignee_id, creator_role_snapshot, status, title, content, deadline, created_at)
+        r#"INSERT INTO orders (order_id, group_id, type, user_id, assignee_id, creator_role_snapshot, status, title, content, deadline, created_at)
            VALUES ($1, $2, 'NORMAL', $3, $4, 'ORDERING', 'CREATED', $5, $6, $7, NOW())"#
     )
     .bind(order_id)
@@ -1066,7 +1074,7 @@ async fn exit_group(
         ("group_id" = i64, Path, description = "组ID")
     ),
     responses(
-        (status = 200, description = "获取成功"),
+        (status = 200, description = "获取成功", body = Vec<GroupMemberOut>),
         (status = 403, description = "无权访问该组")
     ),
     security(("bearer_auth" = []))
@@ -1108,18 +1116,16 @@ async fn get_group_members(
     .fetch_all(db)
     .await?;
 
-    let result: Vec<serde_json::Value> = members
+    let result: Vec<GroupMemberOut> = members
         .iter()
-        .map(|r| {
-            serde_json::json!({
-                "userId": r.get::<i64, _>("user_id"),
-                "nickname": r.get::<Option<String>, _>("nick_name"),
-                "avatar": r.get::<Option<String>, _>("avatar"),
-                "role": r.get::<String, _>("role_in_group"),
-                "lovePointAvailable": r.get::<i64, _>("available_love_point"),
-                "lovePointFrozen": r.get::<i64, _>("frozen_love_point"),
-                "joinedAt": r.get::<chrono::DateTime<chrono::Utc>, _>("joined_at")
-            })
+        .map(|r| GroupMemberOut {
+            user_id: r.get("user_id"),
+            nickname: r.get("nick_name"),
+            avatar: r.get("avatar"),
+            role: r.get("role_in_group"),
+            love_point_available: r.get("available_love_point"),
+            love_point_frozen: r.get("frozen_love_point"),
+            joined_at: r.get("joined_at"),
         })
         .collect();
 
@@ -1218,6 +1224,19 @@ pub struct JoinGroupInput {
 }
 
 // ============== Swap Role Check (FSD 2026-06-15 设计稿 §4) ==============
+
+/// 组成员信息
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct GroupMemberOut {
+    pub user_id: i64,
+    pub nickname: Option<String>,
+    pub avatar: Option<String>,
+    pub role: String,
+    pub love_point_available: i64,
+    pub love_point_frozen: i64,
+    pub joined_at: chrono::DateTime<chrono::Utc>,
+}
 
 /// 角色互换前置检查响应
 #[derive(Debug, Serialize, ToSchema)]

@@ -543,7 +543,7 @@ pub async fn expand_capacity(
 
     // 获取组当前钻石和容量
     let (current_diamond, current_capacity): (i32, i32) = sqlx::query_as(
-        "SELECT diamond_balance, COALESCE(footprint_capacity, 50) FROM association_groups WHERE group_id = $1"
+        "SELECT diamond, COALESCE(footprint_capacity, 50) FROM association_groups WHERE group_id = $1"
     )
     .bind(gid)
     .fetch_optional(db)
@@ -561,7 +561,7 @@ pub async fn expand_capacity(
     // 扣除钻石并更新容量
     sqlx::query(
         r#"UPDATE association_groups
-           SET diamond_balance = diamond_balance - $1,
+           SET diamond = diamond - $1,
                footprint_capacity = $2,
                updated_at = NOW()
            WHERE group_id = $3"#,

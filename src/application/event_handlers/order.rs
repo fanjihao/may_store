@@ -86,7 +86,7 @@ pub async fn handle_order_completed(
 
     // 4. 记录积分流水
     sqlx::query(
-        "INSERT INTO point_flow (user_id, group_id, amount, balance, scene, relation_id) VALUES ($1, $2, $3, $4, 'order_complete', $5)"
+        "INSERT INTO point_flow (user_id, group_id, amount, balance_after, scene, biz_id) VALUES ($1, $2, $3, $4, 'order_complete', $5)"
     )
     .bind(assignee_id as i64)
     .bind(group_id.unwrap_or(0))
@@ -117,7 +117,7 @@ pub async fn handle_order_completed(
 
             // 记录钻石流水
             sqlx::query(
-                "INSERT INTO diamond_transactions (group_id, amount, balance, scene, relation_id) VALUES ($1, $2, $3, 'order_complete', $4)"
+                "INSERT INTO diamond_transactions (group_id, amount, balance_after, scene, biz_id) VALUES ($1, $2, $3, 'order_complete', $4)"
             )
             .bind(gid)
             .bind(diamond_reward)

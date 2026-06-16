@@ -883,7 +883,7 @@ impl OrderService {
                 {
                     let current_lp: i32 = user_row.get("love_point");
                     let balance_after = current_lp + delta;
-                    sqlx::query("INSERT INTO love_point_transactions (user_id, amount, type, ref_type, ref_id, balance_after) VALUES ($1,$2,'FINISH_REWARD',1,$3,$4)")
+                    sqlx::query("INSERT INTO love_point_transactions (user_id, amount, type, biz_type, biz_id, available_after) VALUES ($1,$2,'FINISH_REWARD','ORDER',$3,$4)")
                         .bind(receiver_user_id)
                         .bind(delta)
                         .bind(order.order_id)
@@ -1078,7 +1078,7 @@ impl OrderService {
             .execute(&mut *tx)
             .await?;
         sqlx::query(
-            "INSERT INTO love_point_transactions (user_id, amount, type, ref_type, ref_id, balance_after) VALUES ($1,$2,'ORDER_RATING',1,$3,$4)"
+            "INSERT INTO love_point_transactions (user_id, amount, type, biz_type, biz_id, available_after) VALUES ($1,$2,'ORDER_RATING','ORDER',$3,$4)"
         )
         .bind(receiver_id)
         .bind(body.delta)

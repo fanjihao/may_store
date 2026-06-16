@@ -1192,6 +1192,27 @@ pub struct PendingFoodOut {
     pub submitted_at: chrono::DateTime<chrono::Utc>,
 }
 
+/// 待审核菜品列表响应
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct PendingFoodAuditListResponse {
+    pub items: Vec<PendingFoodOut>,
+    pub total: i64,
+    pub limit: i64,
+    pub offset: i64,
+}
+
+/// 菜品审核结果响应
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct FoodAuditResult {
+    pub food_id: i64,
+    pub action: String,            // "APPROVE" / "REJECT"
+    pub apply_status: String,      // "APPROVED" / "REJECTED"
+    pub food_status: String,       // "NORMAL" / "REJECTED"
+    pub audited_by: i64,
+}
+
 /// 审核动作输入
 #[derive(Debug, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
@@ -1208,6 +1229,9 @@ pub struct FoodAuditInput {
     params(
         ("limit" = Option<i64>, Query, description = "默认 20"),
         ("offset" = Option<i64>, Query)
+    ),
+    responses(
+        (status = 200, description = "获取成功", body = PendingFoodAuditListResponse)
     ),
     security(("bearer_auth" = []))
 )]
@@ -1237,7 +1261,7 @@ pub async fn list_pending_food_audits(
     .fetch_one(&state.db_pool)
     .await?;
 
-    let result: Vec<PendingFoodOut> = rows
+    let items: Vec<PendingFoodOut> = rows
         .iter()
         .map(|r| PendingFoodOut {
             food_id: r.get("food_id"),
@@ -1251,12 +1275,12 @@ pub async fn list_pending_food_audits(
         })
         .collect();
 
-    Ok(ApiResponse::success(serde_json::json!({
-        "items": result,
-        "total": total,
-        "limit": limit,
-        "offset": offset
-    })))
+    Ok(ApiResponse::success(PendingFoodAuditListResponse {
+        items,
+        total,
+        limit,
+        offset,
+    }))
 }
 
 /// 审核菜品（通过/拒绝）
@@ -1266,6 +1290,11 @@ pub async fn list_pending_food_audits(
     tag = "菜品审核 (§24.7)",
     params(("food_id" = i64, Path, description = "菜品 ID")),
     request_body = FoodAuditInput,
+    responses(
+        (status = 200, description = "审核成功", body = FoodAuditResult),
+        (status = 400, description = "菜品不在待审核状态"),
+        (status = 404, description = "菜品不存在")
+    ),
     security(("bearer_auth" = []))
 )]
 pub async fn audit_food(
@@ -1343,11 +1372,11 @@ pub async fn audit_food(
     .execute(&state.db_pool)
     .await;
 
-    Ok(ApiResponse::success(serde_json::json!({
-        "food_id": food_id,
-        "action": input.action,
-        "apply_status": new_apply_status,
-        "food_status": new_food_status,
-        "audited_by": admin.user_id
-    })))
+    Ok(ApiResponse::success(FoodAuditResult {
+        food_id,
+        action: input.action,
+        apply_status: new_apply_status.to_string(),
+        food_status: new_food_status.to_string(),
+        audited_by: admin.user_id,
+    }))
 }

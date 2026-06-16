@@ -63,7 +63,8 @@ pub struct FoodCreateInput {
     pub name: String,
     pub description: Option<String>,
     pub images: Option<Vec<FoodImage>>,
-    pub tags: Option<Vec<String>>,
+    /// 单选标签,必填
+    pub tag_id: i64,
     pub ingredients: Option<Vec<FoodIngredient>>,
     pub steps: Option<Vec<FoodStep>>,
     pub idempotency_key: Option<String>,
@@ -76,7 +77,8 @@ pub struct FoodUpdateInput {
     pub name: Option<String>,
     pub description: Option<String>,
     pub images: Option<Vec<FoodImage>>,
-    pub tags: Option<Vec<String>>,
+    /// 修改单选标签
+    pub tag_id: Option<i64>,
     pub ingredients: Option<Vec<FoodIngredient>>,
     pub steps: Option<Vec<FoodStep>>,
 }
@@ -96,7 +98,19 @@ pub struct FoodListQuery {
     pub cursor: Option<String>,
     pub limit: Option<i64>,
     pub status: Option<String>, // ACTIVE / HIDDEN / DELETED
-    pub tag: Option<String>,    // 按单个标签筛选
+    /// 按单个 tag_id 筛选
+    pub tag_id: Option<i64>,
+    /// 按菜品名/描述模糊搜索
+    pub keyword: Option<String>,
+}
+
+/// 标签引用(挂在菜品上,只带最常用的展示字段)
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct TagRef {
+    pub tag_id: i64,
+    pub name: String,
+    pub icon: Option<String>,
 }
 
 /// 菜品详情响应 (FSD §5.1 / §5.3)
@@ -108,13 +122,20 @@ pub struct FoodDetail {
     pub name: String,
     pub description: Option<String>,
     pub images: Vec<FoodImage>,
-    pub tags: Vec<String>,
+    /// 单选标签(必填,但保留 Option 以防历史脏数据导致 NULL)
+    pub tag: Option<TagRef>,
     pub ingredients: Vec<FoodIngredient>,
     pub steps: Vec<FoodStep>,
     pub status: String, // ACTIVE / HIDDEN / DELETED / AUDITING / REJECTED
     pub created_by: i64,
     pub created_at: chrono::DateTime<chrono::Utc>,
     pub updated_at: chrono::DateTime<chrono::Utc>,
+    /// 最近一次被下单时间（可能为 NULL，表示从未被下单）
+    pub last_order_at: Option<chrono::DateTime<chrono::Utc>>,
+    /// 最近一次被确认完成时间（可能为 NULL）
+    pub last_completed_at: Option<chrono::DateTime<chrono::Utc>>,
+    /// 当前查看者是否给这个菜点过 LIKE
+    pub is_favorited: bool,
 }
 
 /// 列表响应
@@ -134,9 +155,15 @@ pub struct FoodSummary {
     pub name: String,
     pub description: Option<String>,
     pub images: Vec<FoodImage>,
-    pub tags: Vec<String>,
+    pub tag: Option<TagRef>,
     pub status: String,
     pub created_at: chrono::DateTime<chrono::Utc>,
+    /// 最近一次被下单时间（可能为 NULL，表示从未被下单）
+    pub last_order_at: Option<chrono::DateTime<chrono::Utc>>,
+    /// 最近一次被确认完成时间（可能为 NULL）
+    pub last_completed_at: Option<chrono::DateTime<chrono::Utc>>,
+    /// 当前查看者是否给这个菜点过 LIKE
+    pub is_favorited: bool,
 }
 
 // ========== 内部工具 ==========
@@ -179,11 +206,17 @@ fn map_status_to_api(food_status: &str, is_del: i16) -> String {
 /// 把 DB 行映射为 FoodDetail
 fn row_to_detail(r: &sqlx::postgres::PgRow) -> FoodDetail {
     let images_json: serde_json::Value = r.try_get("images").unwrap_or(serde_json::json!([]));
-    let tags_json: serde_json::Value = r.try_get("tags").unwrap_or(serde_json::json!([]));
     let ingredients_text: Option<String> = r.try_get("ingredients").ok();
     let steps_text: Option<String> = r.try_get("steps").ok();
     let food_status: String = r.get("food_status");
     let is_del: i16 = r.get("is_del");
+
+    // tag 由 JOIN tags 表得出(tag_id / tag_name / tag_icon)
+    let tag = r.try_get::<i64, _>("tag_id").ok().map(|tag_id| TagRef {
+        tag_id,
+        name: r.try_get("tag_name").unwrap_or_default(),
+        icon: r.try_get("tag_icon").ok().flatten(),
+    });
 
     FoodDetail {
         food_id: r.get("food_id"),
@@ -191,7 +224,7 @@ fn row_to_detail(r: &sqlx::postgres::PgRow) -> FoodDetail {
         name: r.get("food_name"),
         description: r.try_get("description").ok(),
         images: serde_json::from_value(images_json).unwrap_or_default(),
-        tags: serde_json::from_value(tags_json).unwrap_or_default(),
+        tag,
         ingredients: ingredients_text
             .as_deref()
             .and_then(|s| serde_json::from_str(s).ok())
@@ -204,6 +237,9 @@ fn row_to_detail(r: &sqlx::postgres::PgRow) -> FoodDetail {
         created_by: r.get("created_by"),
         created_at: r.get("created_at"),
         updated_at: r.get("updated_at"),
+        last_order_at: r.try_get("last_order_at").ok().flatten(),
+        last_completed_at: r.try_get("last_completed_at").ok().flatten(),
+        is_favorited: r.try_get("is_favorited").unwrap_or(false),
     }
 }
 
@@ -249,15 +285,24 @@ pub async fn create_food(
             return Err(CustomError::BadRequest("images 最多 9 张".into()));
         }
     }
-    if let Some(ref tags) = input.tags {
-        if tags.len() > 5 {
-            return Err(CustomError::BadRequest("tags 最多 5 个".into()));
-        }
+
+    // 校验 tag_id 存在并属于当前组(组内标签 + 全局标签 group_id IS NULL)
+    let tag_ok: bool = sqlx::query_scalar(
+        r#"SELECT EXISTS(
+             SELECT 1 FROM tags
+             WHERE tag_id = $1 AND (group_id = $2 OR group_id IS NULL)
+           )"#,
+    )
+    .bind(input.tag_id)
+    .bind(group_id)
+    .fetch_one(&state.db_pool)
+    .await?;
+    if !tag_ok {
+        return Err(CustomError::invalid_parameter("tag_id 不存在或不属于本组"));
     }
 
     let food_id = idgenerator::IdInstance::next_id();
     let images_json = serde_json::to_value(input.images.unwrap_or_default()).unwrap_or(serde_json::json!([]));
-    let tags_json = serde_json::to_value(input.tags.unwrap_or_default()).unwrap_or(serde_json::json!([]));
     let ingredients_text = input
         .ingredients
         .as_ref()
@@ -269,17 +314,17 @@ pub async fn create_food(
 
     // 默认状态:NORMAL + APPROVED(简化,跳过审核流程);若 FSD §24.7 要走审核,改成 AUDITING + PENDING
     sqlx::query(
-        r#"INSERT INTO foods (food_id, food_name, description, images, tags, ingredients, steps,
+        r#"INSERT INTO foods (food_id, food_name, description, images, tag_id, ingredients, steps,
                               food_status, submit_role, apply_status, created_by, group_id,
                               created_at, updated_at)
-           VALUES ($1, $2, $3, $4::jsonb, $5::jsonb, $6, $7,
+           VALUES ($1, $2, $3, $4::jsonb, $5, $6, $7,
                    'NORMAL', 'RECEIVING_CREATE', 'APPROVED', $8, $9, NOW(), NOW())"#,
     )
     .bind(food_id)
     .bind(name)
     .bind(&input.description)
     .bind(&images_json)
-    .bind(&tags_json)
+    .bind(input.tag_id)
     .bind(&ingredients_text)
     .bind(&steps_text)
     .bind(token.user_id)
@@ -289,9 +334,10 @@ pub async fn create_food(
 
     // 回查
     let row = sqlx::query(
-        r#"SELECT food_id, food_name, description, images, tags, ingredients, steps,
-                  food_status::text AS food_status, is_del, created_by, group_id, created_at, updated_at
-           FROM foods WHERE food_id = $1"#,
+        r#"SELECT f.food_id, f.food_name, f.description, f.images, f.ingredients, f.steps,
+                  f.tag_id, t.tag_name, t.icon AS tag_icon,
+                  f.food_status::text AS food_status, f.is_del, f.created_by, f.group_id, f.created_at, f.updated_at
+           FROM foods f LEFT JOIN tags t ON t.tag_id = f.tag_id WHERE f.food_id = $1"#,
     )
     .bind(food_id)
     .fetch_one(&state.db_pool)
@@ -350,25 +396,49 @@ pub async fn list_foods(
         }
     };
 
+    // keyword 用于 ILIKE 匹配(菜品名 / 描述)
+    let keyword_pattern: Option<String> = q
+        .keyword
+        .as_ref()
+        .map(|k| k.trim())
+        .filter(|k| !k.is_empty())
+        .map(|k| format!("%{}%", k));
+
     // 多取 1 行判 has_more
     let rows = sqlx::query(
-        r#"SELECT food_id, food_name, description, images, tags,
-                  food_status::text AS food_status, is_del, created_by, group_id, created_at, updated_at
-           FROM foods
-           WHERE group_id = $1
-             AND ($2::food_status_enum IS NULL OR food_status = $2::food_status_enum)
-             AND is_del = $3
-             AND ($4::bigint IS NULL OR food_id < $4)
-             AND ($5::text IS NULL OR tags @> jsonb_build_array($5::text))
-           ORDER BY food_id DESC
-           LIMIT $6"#,
+        r#"SELECT f.food_id, f.food_name, f.description, f.images, f.tag_id,
+                  t.tag_name, t.icon AS tag_icon,
+                  f.food_status::text AS food_status, f.is_del, f.created_by, f.group_id, f.created_at, f.updated_at,
+                  lo.last_order_at,
+                  lo.last_completed_at,
+                  EXISTS(SELECT 1 FROM user_food_mark ufm
+                         WHERE ufm.user_id = $8 AND ufm.food_id = f.food_id AND ufm.mark_type = 'LIKE') AS is_favorited
+           FROM foods f
+           LEFT JOIN tags t ON t.tag_id = f.tag_id
+           LEFT JOIN LATERAL (
+             SELECT MAX(o.created_at) AS last_order_at,
+                    MAX(CASE WHEN o.status = 'CONFIRMED_COMPLETED' THEN o.updated_at END) AS last_completed_at
+             FROM order_items oi
+             JOIN orders o ON o.order_id = oi.order_id
+             WHERE oi.food_id = f.food_id
+           ) lo ON true
+           WHERE f.group_id = $1
+             AND ($2::food_status_enum IS NULL OR f.food_status = $2::food_status_enum)
+             AND f.is_del = $3
+             AND ($4::bigint IS NULL OR f.food_id < $4)
+             AND ($5::bigint IS NULL OR f.tag_id = $5)
+             AND ($6::text IS NULL OR f.food_name ILIKE $6 OR f.description ILIKE $6)
+           ORDER BY f.food_id DESC
+           LIMIT $7"#,
     )
     .bind(group_id)
     .bind(food_status_filter)
     .bind(if include_deleted { 1_i16 } else { 0_i16 })
     .bind(after_food_id)
-    .bind(&q.tag)
+    .bind(q.tag_id)
+    .bind(&keyword_pattern)
     .bind(limit + 1)
+    .bind(token.user_id)
     .fetch_all(&state.db_pool)
     .await?;
 
@@ -381,18 +451,24 @@ pub async fn list_foods(
         .map(|r| {
             let images_json: serde_json::Value =
                 r.try_get("images").unwrap_or(serde_json::json!([]));
-            let tags_json: serde_json::Value =
-                r.try_get("tags").unwrap_or(serde_json::json!([]));
             let food_status: String = r.get("food_status");
             let is_del: i16 = r.get("is_del");
+            let tag = r.try_get::<i64, _>("tag_id").ok().map(|tag_id| TagRef {
+                tag_id,
+                name: r.try_get("tag_name").unwrap_or_default(),
+                icon: r.try_get("tag_icon").ok().flatten(),
+            });
             FoodSummary {
                 food_id: r.get("food_id"),
                 name: r.get("food_name"),
                 description: r.try_get("description").ok(),
                 images: serde_json::from_value(images_json).unwrap_or_default(),
-                tags: serde_json::from_value(tags_json).unwrap_or_default(),
+                tag,
                 status: map_status_to_api(&food_status, is_del),
                 created_at: r.get("created_at"),
+                last_order_at: r.try_get("last_order_at").ok().flatten(),
+                last_completed_at: r.try_get("last_completed_at").ok().flatten(),
+                is_favorited: r.try_get("is_favorited").unwrap_or(false),
             }
         })
         .collect();
@@ -451,12 +527,27 @@ pub async fn get_food(
     ensure_member(&state, token.user_id, group_id).await?;
 
     let row = sqlx::query(
-        r#"SELECT food_id, food_name, description, images, tags, ingredients, steps,
-                  food_status::text AS food_status, is_del, created_by, group_id, created_at, updated_at
-           FROM foods WHERE food_id = $1 AND group_id = $2"#,
+        r#"SELECT f.food_id, f.food_name, f.description, f.images, f.ingredients, f.steps,
+                  f.tag_id, t.tag_name, t.icon AS tag_icon,
+                  f.food_status::text AS food_status, f.is_del, f.created_by, f.group_id, f.created_at, f.updated_at,
+                  lo.last_order_at,
+                  lo.last_completed_at,
+                  EXISTS(SELECT 1 FROM user_food_mark ufm
+                         WHERE ufm.user_id = $3 AND ufm.food_id = f.food_id AND ufm.mark_type = 'LIKE') AS is_favorited
+           FROM foods f
+           LEFT JOIN tags t ON t.tag_id = f.tag_id
+           LEFT JOIN LATERAL (
+             SELECT MAX(o.created_at) AS last_order_at,
+                    MAX(CASE WHEN o.status = 'CONFIRMED_COMPLETED' THEN o.updated_at END) AS last_completed_at
+             FROM order_items oi
+             JOIN orders o ON o.order_id = oi.order_id
+             WHERE oi.food_id = f.food_id
+           ) lo ON true
+           WHERE f.food_id = $1 AND f.group_id = $2"#,
     )
     .bind(food_id)
     .bind(group_id)
+    .bind(token.user_id)
     .fetch_optional(&state.db_pool)
     .await?
     .ok_or_else(|| CustomError::food_not_found("菜品不存在"))?;
@@ -523,19 +614,27 @@ pub async fn update_food(
             return Err(CustomError::BadRequest("images 最多 9 张".into()));
         }
     }
-    if let Some(ref tags) = input.tags {
-        if tags.len() > 5 {
-            return Err(CustomError::BadRequest("tags 最多 5 个".into()));
+
+    // 若要更新 tag_id,校验目标 tag 存在并属于当前组
+    if let Some(new_tag_id) = input.tag_id {
+        let tag_ok: bool = sqlx::query_scalar(
+            r#"SELECT EXISTS(
+                 SELECT 1 FROM tags
+                 WHERE tag_id = $1 AND (group_id = $2 OR group_id IS NULL)
+               )"#,
+        )
+        .bind(new_tag_id)
+        .bind(group_id)
+        .fetch_one(&state.db_pool)
+        .await?;
+        if !tag_ok {
+            return Err(CustomError::invalid_parameter("tag_id 不存在或不属于本组"));
         }
     }
 
     // 使用 COALESCE 模式:None 则保留原值
     let images_json = input
         .images
-        .as_ref()
-        .map(|v| serde_json::to_value(v).unwrap_or(serde_json::json!([])));
-    let tags_json = input
-        .tags
         .as_ref()
         .map(|v| serde_json::to_value(v).unwrap_or(serde_json::json!([])));
     let ingredients_text = input
@@ -552,7 +651,7 @@ pub async fn update_food(
            SET food_name   = COALESCE($1, food_name),
                description = COALESCE($2, description),
                images      = COALESCE($3::jsonb, images),
-               tags        = COALESCE($4::jsonb, tags),
+               tag_id      = COALESCE($4, tag_id),
                ingredients = COALESCE($5, ingredients),
                steps       = COALESCE($6, steps),
                updated_at  = NOW()
@@ -561,7 +660,7 @@ pub async fn update_food(
     .bind(input.name.as_deref().map(|s| s.trim().to_string()))
     .bind(&input.description)
     .bind(&images_json)
-    .bind(&tags_json)
+    .bind(input.tag_id)
     .bind(&ingredients_text)
     .bind(&steps_text)
     .bind(food_id)
@@ -570,9 +669,10 @@ pub async fn update_food(
     .await?;
 
     let row = sqlx::query(
-        r#"SELECT food_id, food_name, description, images, tags, ingredients, steps,
-                  food_status::text AS food_status, is_del, created_by, group_id, created_at, updated_at
-           FROM foods WHERE food_id = $1"#,
+        r#"SELECT f.food_id, f.food_name, f.description, f.images, f.ingredients, f.steps,
+                  f.tag_id, t.tag_name, t.icon AS tag_icon,
+                  f.food_status::text AS food_status, f.is_del, f.created_by, f.group_id, f.created_at, f.updated_at
+           FROM foods f LEFT JOIN tags t ON t.tag_id = f.tag_id WHERE f.food_id = $1"#,
     )
     .bind(food_id)
     .fetch_one(&state.db_pool)

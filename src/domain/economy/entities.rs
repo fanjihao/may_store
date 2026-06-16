@@ -102,7 +102,7 @@ pub struct DailyRewardCounter {
 pub struct UserDiamond {
     pub id: i64,
     pub user_id: i64,
-    pub diamond_balance: i32,
+    pub diamond: i32,
     pub total_get: i32,
     pub total_consume: i32,
     pub create_time: DateTime<Utc>,

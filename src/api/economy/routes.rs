@@ -79,7 +79,7 @@ pub struct PointsTransactionsResponse {
 #[serde(rename_all = "camelCase")]
 pub struct DiamondsBalanceResponse {
     pub group_id: i64,
-    pub diamond_balance: i64,
+    pub diamond: i64,
     pub diamond_capacity: Option<i64>,
     pub today_diamond_earned: Option<i32>,
 }
@@ -383,13 +383,13 @@ async fn get_diamonds_balance(
 
     // 查询组钻石
     let group_info: Option<(i64, i32)> = sqlx::query_as(
-        "SELECT diamond_balance, footprint_capacity FROM association_groups WHERE group_id=$1"
+        "SELECT diamond, footprint_capacity FROM association_groups WHERE group_id=$1"
     )
     .bind(gid)
     .fetch_optional(db)
     .await?;
 
-    let (diamond_balance, footprint_capacity) = group_info.unwrap_or((0, 50));
+    let (diamond, footprint_capacity) = group_info.unwrap_or((0, 50));
 
     // 获取今日获取钻石
     let today_earned: i64 = sqlx::query_scalar(
@@ -403,7 +403,7 @@ async fn get_diamonds_balance(
 
     Ok(ApiResponse::success(DiamondsBalanceResponse {
         group_id: gid,
-        diamond_balance: diamond_balance as i64,
+        diamond: diamond as i64,
         diamond_capacity: Some(footprint_capacity as i64),
         today_diamond_earned: Some(today_earned as i32),
     }))
