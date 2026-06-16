@@ -15,6 +15,7 @@ use utoipa::ToSchema;
 use crate::config::AppState;
 use crate::errors::CustomError;
 use crate::middlewares::auth::UserToken;
+use crate::middlewares::require_group::RequireGroup;
 use crate::utils::response::ApiResponse;
 
 pub fn configure(cfg: &mut ServiceConfig) {
@@ -72,6 +73,7 @@ pub struct FoodMarkOut {
 pub async fn mark_food(
     state: State<Arc<AppState>>,
     token: UserToken,
+    _require: RequireGroup,
     path: Path<(i64, i64)>,
     body: Json<MarkFoodInput>,
 ) -> Result<impl Responder, CustomError> {
@@ -145,6 +147,7 @@ pub async fn mark_food(
 pub async fn unmark_food(
     state: State<Arc<AppState>>,
     token: UserToken,
+    _require: RequireGroup,
     path: Path<(i64, i64)>,
 ) -> Result<impl Responder, CustomError> {
     let (_group_id, food_id) = path.into_inner();
@@ -173,6 +176,7 @@ pub async fn unmark_food(
 pub async fn get_food_mark(
     state: State<Arc<AppState>>,
     token: UserToken,
+    _require: RequireGroup,
     path: Path<(i64, i64)>,
 ) -> Result<impl Responder, CustomError> {
     let (_group_id, food_id) = path.into_inner();

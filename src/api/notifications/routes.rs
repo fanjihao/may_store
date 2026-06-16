@@ -14,6 +14,7 @@ use utoipa::ToSchema;
 use crate::config::AppState;
 use crate::errors::CustomError;
 use crate::middlewares::auth::UserToken;
+use crate::middlewares::require_group::RequireGroup;
 use crate::utils::response::ApiResponse;
 
 /// 配置通知路由
@@ -106,6 +107,7 @@ pub struct NotificationQuery {
 pub async fn get_notifications(
     state: State<Arc<AppState>>,
     token: UserToken,
+    _require: RequireGroup,
     query: Query<NotificationQuery>,
 ) -> Result<impl Responder, CustomError> {
     let db = &state.db_pool;
@@ -196,6 +198,7 @@ pub async fn get_notifications(
 pub async fn get_unread_count(
     state: State<Arc<AppState>>,
     token: UserToken,
+    _require: RequireGroup,
 ) -> Result<impl Responder, CustomError> {
     let db = &state.db_pool;
     let user_id = token.user_id;
@@ -254,6 +257,7 @@ pub async fn get_unread_count(
 pub async fn mark_single_as_read(
     state: State<Arc<AppState>>,
     token: UserToken,
+    _require: RequireGroup,
     notification_id: Path<i64>,
 ) -> Result<impl Responder, CustomError> {
     let db = &state.db_pool;
@@ -295,6 +299,7 @@ pub async fn mark_single_as_read(
 pub async fn mark_all_as_read(
     state: State<Arc<AppState>>,
     token: UserToken,
+    _require: RequireGroup,
     body: Option<Json<BatchMarkReadRequest>>,
 ) -> Result<impl Responder, CustomError> {
     let db = &state.db_pool;
@@ -367,6 +372,7 @@ pub struct BatchMarkReadRequest {
 pub async fn delete_notification(
     state: State<Arc<AppState>>,
     token: UserToken,
+    _require: RequireGroup,
     notification_id: Path<i64>,
 ) -> Result<impl Responder, CustomError> {
     let db = &state.db_pool;

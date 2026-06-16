@@ -15,6 +15,7 @@ use utoipa::ToSchema;
 use crate::config::AppState;
 use crate::errors::CustomError;
 use crate::middlewares::auth::UserToken;
+use crate::middlewares::require_group::RequireGroup;
 use crate::utils::response::ApiResponse;
 
 pub fn configure(cfg: &mut ServiceConfig) {
@@ -78,6 +79,7 @@ pub struct ListGroupsQuery {
 pub async fn list_footprint_groups(
     state: State<Arc<AppState>>,
     _token: UserToken,
+    _require: RequireGroup,
     path: Path<i64>,
     query: Query<ListGroupsQuery>,
 ) -> Result<impl Responder, CustomError> {
@@ -124,6 +126,7 @@ pub async fn list_footprint_groups(
 pub async fn create_footprint_group(
     state: State<Arc<AppState>>,
     _token: UserToken,
+    _require: RequireGroup,
     path: Path<i64>,
     body: Json<CreateFootprintGroupInput>,
 ) -> Result<impl Responder, CustomError> {
@@ -182,6 +185,7 @@ pub async fn create_footprint_group(
 pub async fn update_footprint_group(
     state: State<Arc<AppState>>,
     _token: UserToken,
+    _require: RequireGroup,
     path: Path<(i64, i64)>,
     body: Json<UpdateFootprintGroupInput>,
 ) -> Result<impl Responder, CustomError> {
@@ -233,6 +237,7 @@ pub async fn update_footprint_group(
 pub async fn delete_footprint_group(
     state: State<Arc<AppState>>,
     _token: UserToken,
+    _require: RequireGroup,
     path: Path<(i64, i64)>,
 ) -> Result<impl Responder, CustomError> {
     let (group_id, id) = path.into_inner();

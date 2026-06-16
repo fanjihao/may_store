@@ -19,6 +19,7 @@ use crate::domain::order::{
 };
 use crate::errors::CustomError;
 use crate::middlewares::auth::UserToken;
+use crate::middlewares::require_group::RequireGroup;
 use crate::models::pagination::CursorPage;
 use crate::utils::response::ApiResponse;
 
@@ -56,6 +57,7 @@ pub fn configure(cfg: &mut ServiceConfig) {
 )]
 pub async fn create_order(
     user_token: UserToken,
+    _require: RequireGroup,
     state: State<Arc<AppState>>,
     data: Json<OrderCreateInput>,
 ) -> Result<impl Responder, CustomError> {
@@ -74,6 +76,7 @@ pub async fn create_order(
 )]
 pub async fn get_orders(
     token: UserToken,
+    _require: RequireGroup,
     state: State<Arc<AppState>>,
     query: Query<OrderQuery>,
 ) -> Result<impl Responder, CustomError> {
@@ -109,6 +112,7 @@ pub async fn get_order_detail(
 )]
 pub async fn create_order_rating(
     user_token: UserToken,
+    _require: RequireGroup,
     state: State<Arc<AppState>>,
     order_id: Path<i64>,
     body: Json<OrderRatingCreateInput>,
@@ -133,6 +137,7 @@ pub async fn create_order_rating(
 )]
 pub async fn get_order_rating(
     user_token: UserToken,
+    _require: RequireGroup,
     state: State<Arc<AppState>>,
     order_id: Path<i64>,
 ) -> Result<impl Responder, CustomError> {
@@ -159,6 +164,7 @@ pub async fn get_order_rating(
 )]
 pub async fn accept_order(
     user_token: UserToken,
+    _require: RequireGroup,
     state: State<Arc<AppState>>,
     order_id: Path<i64>,
 ) -> Result<impl Responder, CustomError> {
@@ -190,6 +196,7 @@ pub async fn accept_order(
 )]
 pub async fn complete_order(
     user_token: UserToken,
+    _require: RequireGroup,
     state: State<Arc<AppState>>,
     order_id: Path<i64>,
 ) -> Result<impl Responder, CustomError> {
@@ -222,6 +229,7 @@ pub async fn complete_order(
 )]
 pub async fn confirm_order(
     user_token: UserToken,
+    _require: RequireGroup,
     state: State<Arc<AppState>>,
     order_id: Path<i64>,
     body: Json<OrderConfirmInput>,
@@ -266,6 +274,7 @@ pub async fn confirm_order(
 )]
 pub async fn cancel_order(
     user_token: UserToken,
+    _require: RequireGroup,
     state: State<Arc<AppState>>,
     order_id: Path<i64>,
     body: Json<OrderCancelInput>,
@@ -305,6 +314,7 @@ pub async fn cancel_order(
 )]
 pub async fn reject_order(
     user_token: UserToken,
+    _require: RequireGroup,
     state: State<Arc<AppState>>,
     order_id: Path<i64>,
     body: Json<OrderRejectInput>,
@@ -343,6 +353,7 @@ pub async fn reject_order(
 )]
 pub async fn order_timeout(
     user_token: UserToken,
+    _require: RequireGroup,
     state: State<Arc<AppState>>,
     order_id: Path<i64>,
 ) -> Result<impl Responder, CustomError> {

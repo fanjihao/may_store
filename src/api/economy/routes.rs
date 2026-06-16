@@ -14,6 +14,7 @@ use utoipa::ToSchema;
 use crate::config::AppState;
 use crate::errors::CustomError;
 use crate::middlewares::auth::UserToken;
+use crate::middlewares::require_group::RequireGroup;
 use crate::utils::response::ApiResponse;
 
 /// 配置经济查询路由
@@ -167,6 +168,7 @@ pub struct ExpTransactionsResponse {
 )]
 async fn get_points_balance(
     token: UserToken,
+    _require: RequireGroup,
     state: State<Arc<AppState>>,
     group_id: Path<i64>,
 ) -> Result<HttpResponse, CustomError> {
@@ -244,6 +246,7 @@ async fn get_points_balance(
 )]
 async fn get_points_transactions(
     token: UserToken,
+    _require: RequireGroup,
     state: State<Arc<AppState>>,
     group_id: Path<i64>,
     query: Query<TransactionsQuery>,
@@ -357,6 +360,7 @@ async fn get_points_transactions(
 )]
 async fn get_diamonds_balance(
     token: UserToken,
+    _require: RequireGroup,
     state: State<Arc<AppState>>,
     group_id: Path<i64>,
 ) -> Result<HttpResponse, CustomError> {
@@ -424,6 +428,7 @@ async fn get_diamonds_balance(
 )]
 async fn get_diamonds_transactions(
     token: UserToken,
+    _require: RequireGroup,
     state: State<Arc<AppState>>,
     group_id: Path<i64>,
     query: Query<DiamondTransactionsQuery>,
@@ -531,6 +536,7 @@ async fn get_diamonds_transactions(
 )]
 async fn get_group_exp(
     token: UserToken,
+    _require: RequireGroup,
     state: State<Arc<AppState>>,
     group_id: Path<i64>,
 ) -> Result<HttpResponse, CustomError> {
@@ -609,6 +615,7 @@ async fn get_group_exp(
 )]
 async fn get_exp_transactions(
     token: UserToken,
+    _require: RequireGroup,
     state: State<Arc<AppState>>,
     group_id: Path<i64>,
     query: Query<ExpTransactionsQuery>,

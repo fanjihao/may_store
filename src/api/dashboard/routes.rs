@@ -14,6 +14,7 @@ use crate::config::AppState;
 use crate::errors::CustomError;
 use crate::middlewares::admin_auth::AdminToken;
 use crate::middlewares::auth::UserToken;
+use crate::middlewares::require_group::RequireGroup;
 use crate::utils::response::ApiResponse;
 
 /// 配置数据看板路由
@@ -232,6 +233,7 @@ pub struct AdminDashboardQuery {
 pub async fn get_group_dashboard(
     state: State<Arc<AppState>>,
     token: UserToken,
+    _require: RequireGroup,
     group_id: Path<i64>,
 ) -> Result<impl Responder, CustomError> {
     let gid = *group_id;

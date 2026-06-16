@@ -15,6 +15,7 @@ use utoipa::ToSchema;
 use crate::config::AppState;
 use crate::errors::CustomError;
 use crate::middlewares::auth::UserToken;
+use crate::middlewares::require_group::RequireGroup;
 use crate::utils::response::ApiResponse;
 
 /// 配置足迹路由
@@ -150,6 +151,7 @@ pub struct FootprintsQuery {
 pub async fn create_footprint(
     state: State<Arc<AppState>>,
     token: UserToken,
+    _require: RequireGroup,
     group_id: Path<i64>,
     body: Json<CreateFootprintRequest>,
 ) -> Result<impl Responder, CustomError> {
@@ -268,6 +270,7 @@ pub async fn create_footprint(
 pub async fn list_footprints(
     state: State<Arc<AppState>>,
     token: UserToken,
+    _require: RequireGroup,
     group_id: Path<i64>,
     query: Query<FootprintsQuery>,
 ) -> Result<impl Responder, CustomError> {
@@ -441,6 +444,7 @@ pub async fn list_footprints(
 pub async fn delete_footprint(
     state: State<Arc<AppState>>,
     token: UserToken,
+    _require: RequireGroup,
     path: Path<(i64, i64)>,
 ) -> Result<impl Responder, CustomError> {
     let (gid, footprint_id) = *path;
@@ -515,6 +519,7 @@ pub async fn delete_footprint(
 pub async fn expand_capacity(
     state: State<Arc<AppState>>,
     token: UserToken,
+    _require: RequireGroup,
     group_id: Path<i64>,
     body: Json<ExpandCapacityRequest>,
 ) -> Result<impl Responder, CustomError> {

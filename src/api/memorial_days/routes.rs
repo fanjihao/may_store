@@ -15,6 +15,7 @@ use utoipa::ToSchema;
 use crate::config::AppState;
 use crate::errors::CustomError;
 use crate::middlewares::auth::UserToken;
+use crate::middlewares::require_group::RequireGroup;
 use crate::utils::response::ApiResponse;
 
 pub fn configure(cfg: &mut ServiceConfig) {
@@ -148,6 +149,7 @@ fn next_solar_occurrence(memorial_date: NaiveDate, today: NaiveDate) -> NaiveDat
 pub async fn list_memorial_days(
     state: State<Arc<AppState>>,
     token: UserToken,
+    _require: RequireGroup,
     path: Path<i64>,
     query: Query<ListMemorialDaysQuery>,
 ) -> Result<impl Responder, CustomError> {
@@ -232,6 +234,7 @@ pub async fn list_memorial_days(
 pub async fn create_memorial_day(
     state: State<Arc<AppState>>,
     token: UserToken,
+    _require: RequireGroup,
     path: Path<i64>,
     body: Json<CreateMemorialDayInput>,
 ) -> Result<impl Responder, CustomError> {
@@ -293,6 +296,7 @@ pub async fn create_memorial_day(
 pub async fn get_memorial_day(
     state: State<Arc<AppState>>,
     token: UserToken,
+    _require: RequireGroup,
     path: Path<(i64, i64)>,
 ) -> Result<impl Responder, CustomError> {
     let (group_id, id) = path.into_inner();
@@ -332,6 +336,7 @@ pub async fn get_memorial_day(
 pub async fn update_memorial_day(
     state: State<Arc<AppState>>,
     token: UserToken,
+    _require: RequireGroup,
     path: Path<(i64, i64)>,
     body: Json<UpdateMemorialDayInput>,
 ) -> Result<impl Responder, CustomError> {
@@ -393,6 +398,7 @@ pub async fn update_memorial_day(
 pub async fn delete_memorial_day(
     state: State<Arc<AppState>>,
     token: UserToken,
+    _require: RequireGroup,
     path: Path<(i64, i64)>,
 ) -> Result<impl Responder, CustomError> {
     let (group_id, id) = path.into_inner();
@@ -426,6 +432,7 @@ pub async fn delete_memorial_day(
 pub async fn upcoming_memorial_days(
     state: State<Arc<AppState>>,
     token: UserToken,
+    _require: RequireGroup,
     path: Path<i64>,
     query: Query<UpcomingQuery>,
 ) -> Result<impl Responder, CustomError> {

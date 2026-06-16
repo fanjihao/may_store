@@ -4,3 +4,4 @@ pub mod idempotency;
 pub mod jwt;
 pub mod logger;
 pub mod request_meta;
+pub mod require_group;

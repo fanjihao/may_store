@@ -18,6 +18,7 @@ use crate::domain::group::entities::{
 };
 use crate::errors::CustomError;
 use crate::middlewares::auth::UserToken;
+use crate::middlewares::require_group::RequireGroup;
 use crate::utils::response::ApiResponse;
 
 /// 配置双人组路由
@@ -148,6 +149,7 @@ async fn create_group(
 )]
 async fn get_group(
     token: UserToken,
+    _require: RequireGroup,
     state: State<Arc<AppState>>,
     group_id: Path<i64>,
 ) -> Result<HttpResponse, CustomError> {
@@ -242,6 +244,7 @@ pub struct SwapRoleResponse {
 )]
 async fn swap_role(
     token: UserToken,
+    _require: RequireGroup,
     state: State<Arc<AppState>>,
     group_id: Path<i64>,
 ) -> Result<HttpResponse, CustomError> {
@@ -375,6 +378,7 @@ async fn swap_role(
 )]
 async fn settlement_check(
     token: UserToken,
+    _require: RequireGroup,
     state: State<Arc<AppState>>,
     group_id: Path<i64>,
 ) -> Result<HttpResponse, CustomError> {
@@ -480,6 +484,7 @@ async fn settlement_check(
 )]
 async fn fulfillment_stats(
     token: UserToken,
+    _require: RequireGroup,
     state: State<Arc<AppState>>,
     group_id: Path<i64>,
 ) -> Result<HttpResponse, CustomError> {
@@ -607,6 +612,7 @@ pub struct CreateInviteResponse {
 )]
 async fn create_invite(
     token: UserToken,
+    _require: RequireGroup,
     state: State<Arc<AppState>>,
     group_id: Path<i64>,
 ) -> Result<HttpResponse, CustomError> {
@@ -689,6 +695,7 @@ pub struct CreateGroupOrderResponse {
 )]
 async fn create_group_order(
     token: UserToken,
+    _require: RequireGroup,
     state: State<Arc<AppState>>,
     group_id: Path<i64>,
     body: Json<GroupOrderInput>,
@@ -781,6 +788,7 @@ pub struct CreateGroupWishResponse {
 )]
 async fn create_group_wish(
     token: UserToken,
+    _require: RequireGroup,
     state: State<Arc<AppState>>,
     group_id: Path<i64>,
     body: Json<GroupWishInput>,
@@ -980,6 +988,7 @@ async fn join_group(
 )]
 async fn exit_group(
     token: UserToken,
+    _require: RequireGroup,
     state: State<Arc<AppState>>,
     group_id: Path<i64>,
 ) -> Result<HttpResponse, CustomError> {
@@ -1064,6 +1073,7 @@ async fn exit_group(
 )]
 async fn get_group_members(
     token: UserToken,
+    _require: RequireGroup,
     state: State<Arc<AppState>>,
     group_id: Path<i64>,
 ) -> Result<HttpResponse, CustomError> {
@@ -1245,6 +1255,7 @@ pub struct SwapRoleCheckResponse {
 )]
 async fn swap_role_check(
     token: UserToken,
+    _require: RequireGroup,
     state: State<Arc<AppState>>,
     group_id: Path<i64>,
 ) -> Result<HttpResponse, CustomError> {

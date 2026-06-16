@@ -20,6 +20,7 @@ use crate::{
     config::AppState,
     errors::CustomError,
     middlewares::auth::UserToken,
+    middlewares::require_group::RequireGroup,
     utils::response::ApiResponse,
 };
 
@@ -95,6 +96,7 @@ pub struct WishCloseInput {
 )]
 pub async fn create_group_wish(
     user_token: UserToken,
+    _require: RequireGroup,
     state: State<Arc<AppState>>,
     group_id: Path<i64>,
     data: Json<WishCreateInput>,
@@ -140,6 +142,7 @@ pub async fn create_group_wish(
 )]
 pub async fn list_group_wishes(
     user_token: UserToken,
+    _require: RequireGroup,
     state: State<Arc<AppState>>,
     group_id: Path<i64>,
     query: Query<WishListQuery>,
@@ -376,6 +379,7 @@ pub async fn list_group_wishes(
 )]
 pub async fn get_wish(
     _user_token: UserToken,
+    _require: RequireGroup,
     state: State<Arc<AppState>>,
     id: Path<i64>,
 ) -> Result<impl Responder, CustomError> {
@@ -401,6 +405,7 @@ pub async fn get_wish(
 )]
 pub async fn wish_quote(
     user_token: UserToken,
+    _require: RequireGroup,
     state: State<Arc<AppState>>,
     id: Path<i64>,
     body: Json<WishQuoteInput>,
@@ -429,6 +434,7 @@ pub async fn wish_quote(
 )]
 pub async fn wish_deadline(
     user_token: UserToken,
+    _require: RequireGroup,
     state: State<Arc<AppState>>,
     id: Path<i64>,
     body: Json<WishDeadlineInput>,
@@ -456,6 +462,7 @@ pub async fn wish_deadline(
 )]
 pub async fn wish_confirm_agreement(
     user_token: UserToken,
+    _require: RequireGroup,
     state: State<Arc<AppState>>,
     id: Path<i64>,
 ) -> Result<impl Responder, CustomError> {
@@ -482,6 +489,7 @@ pub async fn wish_confirm_agreement(
 )]
 pub async fn wish_reject(
     user_token: UserToken,
+    _require: RequireGroup,
     state: State<Arc<AppState>>,
     id: Path<i64>,
     body: Json<WishRejectInput>,
@@ -509,6 +517,7 @@ pub async fn wish_reject(
 )]
 pub async fn wish_select(
     user_token: UserToken,
+    _require: RequireGroup,
     state: State<Arc<AppState>>,
     id: Path<i64>,
 ) -> Result<impl Responder, CustomError> {
@@ -535,6 +544,7 @@ pub async fn wish_select(
 )]
 pub async fn submit_feedback(
     user_token: UserToken,
+    _require: RequireGroup,
     state: State<Arc<AppState>>,
     id: Path<i64>,
     data: Json<WishFeedbackInput>,
@@ -563,6 +573,7 @@ pub async fn submit_feedback(
 )]
 pub async fn wish_close(
     user_token: UserToken,
+    _require: RequireGroup,
     state: State<Arc<AppState>>,
     id: Path<i64>,
     body: Json<WishCloseInput>,
@@ -596,6 +607,7 @@ pub async fn wish_close(
 )]
 pub async fn wish_expire(
     _user_token: UserToken,
+    _require: RequireGroup,
     state: State<Arc<AppState>>,
     id: Path<i64>,
 ) -> Result<impl Responder, CustomError> {
@@ -685,6 +697,7 @@ pub async fn wish_expire(
 )]
 pub async fn get_wish_checkins(
     _user_token: UserToken,
+    _require: RequireGroup,
     state: State<Arc<AppState>>,
     id: Path<i64>,
 ) -> Result<impl Responder, CustomError> {
@@ -731,6 +744,7 @@ pub async fn get_wish_checkins(
 )]
 pub async fn pending_fulfillment(
     user_token: UserToken,
+    _require: RequireGroup,
     state: State<Arc<AppState>>,
     query: Query<PendingFulfillmentQuery>,
 ) -> Result<impl Responder, CustomError> {

@@ -49,6 +49,8 @@ pub enum FsdErrorCode {
     UserAlreadyInGroup,
     #[serde(rename = "USER_GROUP_NOT_EMPTY")]
     UserGroupNotEmpty,
+    #[serde(rename = "USER_NOT_IN_GROUP")]
+    UserNotInGroup,
     // ===== Group (5) =====
     #[serde(rename = "GROUP_NOT_FOUND")]
     GroupNotFound,
@@ -143,6 +145,7 @@ impl FsdErrorCode {
             Self::UserNicknameInvalid => "USER_NICKNAME_INVALID",
             Self::UserAlreadyInGroup => "USER_ALREADY_IN_GROUP",
             Self::UserGroupNotEmpty => "USER_GROUP_NOT_EMPTY",
+            Self::UserNotInGroup => "USER_NOT_IN_GROUP",
             Self::GroupNotFound => "GROUP_NOT_FOUND",
             Self::GroupMemberLimitExceeded => "GROUP_MEMBER_LIMIT_EXCEEDED",
             Self::GroupExitSettlementRequired => "GROUP_EXIT_SETTLEMENT_REQUIRED",
@@ -190,7 +193,8 @@ impl FsdErrorCode {
             | Self::AuthAccountBanned => StatusCode::UNAUTHORIZED,
             Self::PermissionDenied
             | Self::RoleNotAllowed
-            | Self::UploadPermissionDenied => StatusCode::FORBIDDEN,
+            | Self::UploadPermissionDenied
+            | Self::UserNotInGroup => StatusCode::FORBIDDEN,
             Self::UserNotFound
             | Self::GroupNotFound
             | Self::FoodNotFound
@@ -277,6 +281,7 @@ pub enum CustomError {
     UserNicknameInvalid(String),
     UserAlreadyInGroup(String),
     UserGroupNotEmpty(String),
+    UserNotInGroup(String),
     // Group
     GroupNotFound(String),
     GroupMemberLimitExceeded(String),
@@ -366,6 +371,7 @@ impl CustomError {
     pub fn user_nickname_invalid<S: Into<String>>(msg: S) -> Self { Self::UserNicknameInvalid(msg.into()) }
     pub fn user_already_in_group<S: Into<String>>(msg: S) -> Self { Self::UserAlreadyInGroup(msg.into()) }
     pub fn user_group_not_empty<S: Into<String>>(msg: S) -> Self { Self::UserGroupNotEmpty(msg.into()) }
+    pub fn user_not_in_group<S: Into<String>>(msg: S) -> Self { Self::UserNotInGroup(msg.into()) }
     // Group
     pub fn group_not_found<S: Into<String>>(msg: S) -> Self { Self::GroupNotFound(msg.into()) }
     pub fn group_member_limit_exceeded<S: Into<String>>(msg: S) -> Self { Self::GroupMemberLimitExceeded(msg.into()) }
@@ -434,6 +440,7 @@ impl CustomError {
             Self::UserNicknameInvalid(_) => FsdErrorCode::UserNicknameInvalid,
             Self::UserAlreadyInGroup(_) => FsdErrorCode::UserAlreadyInGroup,
             Self::UserGroupNotEmpty(_) => FsdErrorCode::UserGroupNotEmpty,
+            Self::UserNotInGroup(_) => FsdErrorCode::UserNotInGroup,
             Self::GroupNotFound(_) => FsdErrorCode::GroupNotFound,
             Self::GroupMemberLimitExceeded(_) => FsdErrorCode::GroupMemberLimitExceeded,
             Self::GroupExitSettlementRequired(_) => FsdErrorCode::GroupExitSettlementRequired,
@@ -487,7 +494,7 @@ impl CustomError {
             | Self::AuthAccountBanned(m) | Self::AuthCodeInvalid(m)
             | Self::UserNotFound(m) | Self::UserPhoneAlreadyBound(m)
             | Self::UserNicknameInvalid(m) | Self::UserAlreadyInGroup(m)
-            | Self::UserGroupNotEmpty(m)
+            | Self::UserGroupNotEmpty(m) | Self::UserNotInGroup(m)
             | Self::GroupNotFound(m) | Self::GroupMemberLimitExceeded(m)
             | Self::GroupExitSettlementRequired(m)
             | Self::InviteCodeInvalid(m) | Self::InviteCodeUsed(m)

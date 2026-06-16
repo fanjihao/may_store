@@ -14,6 +14,7 @@ use utoipa::ToSchema;
 use crate::config::AppState;
 use crate::errors::CustomError;
 use crate::middlewares::auth::UserToken;
+use crate::middlewares::require_group::RequireGroup;
 use crate::utils::response::ApiResponse;
 
 pub fn configure(cfg: &mut ServiceConfig) {
@@ -224,6 +225,7 @@ fn row_to_detail(r: &sqlx::postgres::PgRow) -> FoodDetail {
 pub async fn create_food(
     state: State<Arc<AppState>>,
     token: UserToken,
+    _require: RequireGroup,
     path: Path<i64>,
     body: Json<FoodCreateInput>,
 ) -> Result<impl Responder, CustomError> {
@@ -317,6 +319,7 @@ pub async fn create_food(
 pub async fn list_foods(
     state: State<Arc<AppState>>,
     token: UserToken,
+    _require: RequireGroup,
     path: Path<i64>,
     query: Query<FoodListQuery>,
 ) -> Result<impl Responder, CustomError> {
@@ -441,6 +444,7 @@ fn base64_decode_cursor(s: &str) -> Option<i64> {
 pub async fn get_food(
     state: State<Arc<AppState>>,
     token: UserToken,
+    _require: RequireGroup,
     path: Path<(i64, i64)>,
 ) -> Result<impl Responder, CustomError> {
     let (group_id, food_id) = path.into_inner();
@@ -482,6 +486,7 @@ pub async fn get_food(
 pub async fn update_food(
     state: State<Arc<AppState>>,
     token: UserToken,
+    _require: RequireGroup,
     path: Path<(i64, i64)>,
     body: Json<FoodUpdateInput>,
 ) -> Result<impl Responder, CustomError> {
@@ -596,6 +601,7 @@ pub async fn update_food(
 pub async fn delete_food(
     state: State<Arc<AppState>>,
     token: UserToken,
+    _require: RequireGroup,
     path: Path<(i64, i64)>,
 ) -> Result<impl Responder, CustomError> {
     let (group_id, food_id) = path.into_inner();
@@ -663,6 +669,7 @@ pub async fn delete_food(
 pub async fn hide_food(
     state: State<Arc<AppState>>,
     token: UserToken,
+    _require: RequireGroup,
     path: Path<(i64, i64)>,
     body: Json<FoodHideInput>,
 ) -> Result<impl Responder, CustomError> {

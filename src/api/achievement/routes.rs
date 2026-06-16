@@ -10,6 +10,7 @@ use utoipa::ToSchema;
 use crate::config::AppState;
 use crate::errors::CustomError;
 use crate::middlewares::auth::UserToken;
+use crate::middlewares::require_group::RequireGroup;
 use crate::utils::response::ApiResponse;
 
 /// 配置成就路由
@@ -85,6 +86,7 @@ pub struct NextUnlockItem {
 pub async fn get_achievements(
     state: State<Arc<AppState>>,
     token: UserToken,
+    _require: RequireGroup,
     group_id: ntex::web::types::Path<i64>,
     query: ntex::web::types::Query<AchievementQuery>,
 ) -> Result<impl Responder, CustomError> {
@@ -186,6 +188,7 @@ pub async fn get_achievements(
 pub async fn get_achievement_wall(
     state: State<Arc<AppState>>,
     token: UserToken,
+    _require: RequireGroup,
     group_id: ntex::web::types::Path<i64>,
 ) -> Result<impl Responder, CustomError> {
     let gid = *group_id;

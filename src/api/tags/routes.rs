@@ -15,6 +15,7 @@ use utoipa::ToSchema;
 use crate::config::AppState;
 use crate::errors::CustomError;
 use crate::middlewares::auth::UserToken;
+use crate::middlewares::require_group::RequireGroup;
 use crate::utils::response::ApiResponse;
 
 pub fn configure(cfg: &mut ServiceConfig) {
@@ -78,6 +79,7 @@ pub struct ListTagsQuery {
 pub async fn list_tags(
     state: State<Arc<AppState>>,
     _token: UserToken,
+    _require: RequireGroup,
     path: Path<i64>,
     query: Query<ListTagsQuery>,
 ) -> Result<impl Responder, CustomError> {
@@ -134,6 +136,7 @@ pub async fn list_tags(
 pub async fn create_tag(
     state: State<Arc<AppState>>,
     _token: UserToken,
+    _require: RequireGroup,
     path: Path<i64>,
     body: Json<CreateTagInput>,
 ) -> Result<impl Responder, CustomError> {
@@ -215,6 +218,7 @@ pub async fn create_tag(
 pub async fn update_tag(
     state: State<Arc<AppState>>,
     _token: UserToken,
+    _require: RequireGroup,
     path: Path<(i64, i64)>,
     body: Json<UpdateTagInput>,
 ) -> Result<impl Responder, CustomError> {
@@ -276,6 +280,7 @@ pub async fn update_tag(
 pub async fn delete_tag(
     state: State<Arc<AppState>>,
     _token: UserToken,
+    _require: RequireGroup,
     path: Path<(i64, i64)>,
 ) -> Result<impl Responder, CustomError> {
     let (group_id, tag_id) = path.into_inner();

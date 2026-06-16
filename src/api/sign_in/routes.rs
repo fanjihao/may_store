@@ -12,6 +12,7 @@ use crate::application::sign_in_service::SignService;
 use crate::config::AppState;
 use crate::errors::CustomError;
 use crate::middlewares::auth::UserToken;
+use crate::middlewares::require_group::RequireGroup;
 use crate::utils::response::ApiResponse;
 
 /// 配置签到路由
@@ -97,6 +98,7 @@ pub struct MemberSignStatus {
 pub async fn sign_in(
     state: State<Arc<AppState>>,
     token: UserToken,
+    _require: RequireGroup,
     path: ntex::web::types::Path<i64>,
 ) -> Result<impl Responder, CustomError> {
     let _group_id = *path;
@@ -130,6 +132,7 @@ pub async fn sign_in(
 pub async fn sign_in_status(
     state: State<Arc<AppState>>,
     token: UserToken,
+    _require: RequireGroup,
     path: ntex::web::types::Path<i64>,
 ) -> Result<impl Responder, CustomError> {
     let group_id = *path;
@@ -208,6 +211,7 @@ pub async fn sign_in_status(
 pub async fn get_sign_ins(
     state: State<Arc<AppState>>,
     token: UserToken,
+    _require: RequireGroup,
     path: ntex::web::types::Path<i64>,
     query: ntex::web::types::Query<SignInsQuery>,
 ) -> Result<impl Responder, CustomError> {
