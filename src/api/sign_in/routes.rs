@@ -17,14 +17,18 @@ use crate::utils::response::ApiResponse;
 
 /// 配置签到路由
 pub fn configure(cfg: &mut ServiceConfig) {
+    // 不用 web::scope —— 避免圈住路径
     cfg.service(
-        web::scope("/api/groups/{group_id}/sign-in")
-            .route("", web::post().to(sign_in))
-            .route("/status", web::get().to(sign_in_status)),
-    )
-    .service(
-        web::scope("/api/groups/{group_id}/sign-ins")
-            .route("", web::get().to(get_sign_ins)),
+        web::resource("/api/groups/{group_id}/sign-in")
+            .route(web::post().to(sign_in)),
+    );
+    cfg.service(
+        web::resource("/api/groups/{group_id}/sign-in/status")
+            .route(web::get().to(sign_in_status)),
+    );
+    cfg.service(
+        web::resource("/api/groups/{group_id}/sign-ins")
+            .route(web::get().to(get_sign_ins)),
     );
 }
 

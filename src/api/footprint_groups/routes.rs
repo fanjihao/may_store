@@ -20,11 +20,14 @@ use crate::utils::response::ApiResponse;
 
 pub fn configure(cfg: &mut ServiceConfig) {
     cfg.service(
-        web::scope("/api/groups/{group_id}/footprint-groups")
-            .route("", web::get().to(list_footprint_groups))
-            .route("", web::post().to(create_footprint_group))
-            .route("/{footprint_group_id}", web::patch().to(update_footprint_group))
-            .route("/{footprint_group_id}", web::delete().to(delete_footprint_group)),
+        web::resource("/api/groups/{group_id}/footprint-groups")
+            .route(web::get().to(list_footprint_groups))
+            .route(web::post().to(create_footprint_group)),
+    );
+    cfg.service(
+        web::resource("/api/groups/{group_id}/footprint-groups/{footprint_group_id}")
+            .route(web::patch().to(update_footprint_group))
+            .route(web::delete().to(delete_footprint_group)),
     );
 }
 

@@ -16,9 +16,12 @@ use crate::utils::response::ApiResponse;
 /// 配置成就路由
 pub fn configure(cfg: &mut ServiceConfig) {
     cfg.service(
-        web::scope("/api/groups/{group_id}/achievements")
-            .route("", web::get().to(get_achievements))
-            .route("/wall", web::get().to(get_achievement_wall)),
+        web::resource("/api/groups/{group_id}/achievements")
+            .route(web::get().to(get_achievements)),
+    );
+    cfg.service(
+        web::resource("/api/groups/{group_id}/achievements/wall")
+            .route(web::get().to(get_achievement_wall)),
     );
 }
 
@@ -114,10 +117,11 @@ pub async fn get_achievements(
     };
 
     // 获取成就定义和用户解锁状态
+    // category 是自定义枚举,SELECT 必须 ::text 强转,否则 sqlx 解不出
     let rows = match category_filter {
         Some(c) => sqlx::query(
             r#"
-            SELECT a.code as achievement_id, a.name, a.description, a.category, a.icon,
+            SELECT a.code as achievement_id, a.name, a.description, a.category::text AS category, a.icon,
                    ua.unlocked_at,
                    CASE WHEN ua.id IS NOT NULL THEN true ELSE false END as unlocked
             FROM achievements a
@@ -132,7 +136,7 @@ pub async fn get_achievements(
         .await?,
         None => sqlx::query(
             r#"
-            SELECT a.code as achievement_id, a.name, a.description, a.category, a.icon,
+            SELECT a.code as achievement_id, a.name, a.description, a.category::text AS category, a.icon,
                    ua.unlocked_at,
                    CASE WHEN ua.id IS NOT NULL THEN true ELSE false END as unlocked
             FROM achievements a

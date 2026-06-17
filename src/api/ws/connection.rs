@@ -3,7 +3,7 @@
 
 use std::collections::HashMap;
 use std::sync::Arc;
-use tokio::sync::{broadcast, RwLock};
+use tokio::sync::{broadcast, mpsc, RwLock};
 
 /// WebSocket 连接信息
 #[allow(dead_code)]
@@ -15,14 +15,19 @@ pub struct ConnectionInfo {
     pub connected_at: chrono::DateTime<chrono::Utc>,
     /// 是否已认证
     pub authenticated: bool,
+    /// 给本连接发消息用的通道(服务端 -> 这一条 ws)
+    pub sender: mpsc::UnboundedSender<String>,
 }
 
 impl Default for ConnectionInfo {
     fn default() -> Self {
+        // 仅占位用,真实连接走 process_messages 里创建
+        let (tx, _rx) = mpsc::unbounded_channel();
         Self {
             user_id: None,
             connected_at: chrono::Utc::now(),
             authenticated: false,
+            sender: tx,
         }
     }
 }
@@ -92,6 +97,18 @@ impl ConnectionManager {
     /// 广播消息给所有已认证用户
     pub async fn broadcast(&self, message: &str) {
         let _ = self.broadcast_tx.send(message.to_string());
+    }
+
+    /// 给指定用户发一条消息
+    ///
+    /// 返回 true 表示送达(用户在线且发送成功),false 表示用户不在线或通道已关闭
+    /// 当前实现是"在线才发、离线不存",因为业务侧说暂时不管离线
+    pub async fn send_to_user(&self, user_id: i64, message: &str) -> bool {
+        let users = self.users.read().await;
+        match users.get(&user_id) {
+            Some(info) => info.sender.send(message.to_string()).is_ok(),
+            None => false,
+        }
     }
 
     /// 订阅广播消息

@@ -7,6 +7,9 @@ use sqlx::FromRow;
 use utoipa::ToSchema;
 
 /// 组记录 - FSD v2版本
+///
+/// 注意:`group_type` / `status` 在数据库里是自定义枚举类型(PG `group_type_enum`、`user_status_enum`),
+/// 不能直接 decode 成 Rust 类型。SQL 端已用 `::text` 强转,这里用 String 接收。
 #[allow(dead_code)]
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow, ToSchema)]
 #[serde(rename_all = "camelCase")]
@@ -14,7 +17,7 @@ pub struct GroupRecord {
     pub group_id: i64,
     pub group_name: Option<String>,
     pub group_type: String,
-    pub status: i16,
+    pub status: String,
     pub invite_code: Option<String>,
     pub diamond: i32,
     pub footprint_capacity: i32,

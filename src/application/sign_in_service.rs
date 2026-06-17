@@ -40,7 +40,7 @@ impl SignService {
 
         // 获取用户组信息
         let group_id: Option<i64> = sqlx::query(
-            "SELECT group_id FROM association_group_members WHERE user_id = $1 AND is_primary = true LIMIT 1"
+            "SELECT group_id FROM association_group_members WHERE user_id = $1 AND is_primary = 1 LIMIT 1"
         )
         .bind(user_id as i64)
         .fetch_optional(db)
@@ -253,7 +253,7 @@ impl SignService {
 
         // 获取用户组信息
         let group_id: Option<i64> = sqlx::query(
-            "SELECT group_id FROM association_group_members WHERE user_id = $1 AND is_primary = true LIMIT 1"
+            "SELECT group_id FROM association_group_members WHERE user_id = $1 AND is_primary = 1 LIMIT 1"
         )
         .bind(user_id as i64)
         .fetch_optional(db)

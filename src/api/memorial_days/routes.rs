@@ -20,13 +20,19 @@ use crate::utils::response::ApiResponse;
 
 pub fn configure(cfg: &mut ServiceConfig) {
     cfg.service(
-        web::scope("/api/groups/{group_id}/memorial-days")
-            .route("", web::get().to(list_memorial_days))
-            .route("", web::post().to(create_memorial_day))
-            .route("/{id}", web::get().to(get_memorial_day))
-            .route("/{id}", web::patch().to(update_memorial_day))
-            .route("/{id}", web::delete().to(delete_memorial_day))
-            .route("/upcoming", web::get().to(upcoming_memorial_days)),
+        web::resource("/api/groups/{group_id}/memorial-days")
+            .route(web::get().to(list_memorial_days))
+            .route(web::post().to(create_memorial_day)),
+    );
+    cfg.service(
+        web::resource("/api/groups/{group_id}/memorial-days/upcoming")
+            .route(web::get().to(upcoming_memorial_days)),
+    );
+    cfg.service(
+        web::resource("/api/groups/{group_id}/memorial-days/{id}")
+            .route(web::get().to(get_memorial_day))
+            .route(web::patch().to(update_memorial_day))
+            .route(web::delete().to(delete_memorial_day)),
     );
 }
 

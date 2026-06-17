@@ -155,7 +155,7 @@ pub async fn get_user_groups(
            g.diamond, g.level, g.created_at
            FROM association_groups g
            JOIN association_group_members gm ON gm.group_id = g.group_id
-           WHERE gm.user_id = $1 AND gm.is_primary = true
+           WHERE gm.user_id = $1 AND gm.is_primary = 1
            ORDER BY g.created_at DESC"#,
     )
     .bind(token.user_id)

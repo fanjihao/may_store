@@ -20,11 +20,14 @@ use crate::utils::response::ApiResponse;
 
 pub fn configure(cfg: &mut ServiceConfig) {
     cfg.service(
-        web::scope("/api/groups/{group_id}/tags")
-            .route("", web::get().to(list_tags))
-            .route("", web::post().to(create_tag))
-            .route("/{tag_id}", web::patch().to(update_tag))
-            .route("/{tag_id}", web::delete().to(delete_tag)),
+        web::resource("/api/groups/{group_id}/tags")
+            .route(web::get().to(list_tags))
+            .route(web::post().to(create_tag)),
+    );
+    cfg.service(
+        web::resource("/api/groups/{group_id}/tags/{tag_id}")
+            .route(web::patch().to(update_tag))
+            .route(web::delete().to(delete_tag)),
     );
 }
 

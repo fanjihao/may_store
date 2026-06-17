@@ -19,19 +19,20 @@ use crate::utils::response::ApiResponse;
 
 /// 配置数据看板路由
 pub fn configure(cfg: &mut ServiceConfig) {
-    // 使用更具体的 scope，避免与 /api/auth, /api/users/me 等子 scope 冲突
-    // 原实现 web::scope("/api") 会吞掉所有 /api/* 请求，导致 404
-
+    // 不用 web::scope —— 避免圈住路径
     // 用户组内看板
     cfg.service(
-        web::scope("/api/groups/{group_id}/dashboard")
-            .route("", web::get().to(get_group_dashboard)),
+        web::resource("/api/groups/{group_id}/dashboard")
+            .route(web::get().to(get_group_dashboard)),
     );
-    // 管理员看板（运营 + 趋势）
+    // 管理员看板(运营 + 趋势)
     cfg.service(
-        web::scope("/api/admin/dashboard")
-            .route("", web::get().to(get_admin_dashboard))
-            .route("/trends", web::get().to(get_dashboard_trends)),
+        web::resource("/api/admin/dashboard")
+            .route(web::get().to(get_admin_dashboard)),
+    );
+    cfg.service(
+        web::resource("/api/admin/dashboard/trends")
+            .route(web::get().to(get_dashboard_trends)),
     );
 }
 
@@ -254,8 +255,9 @@ pub async fn get_group_dashboard(
     }
 
     // 获取组信息
+    // 注:DB 列名是 group_name 不是 name;level/diamond/exp 分别是 INT/BIGINT
     let group_info: Option<(String, i32, i64, i32, i32, i32, chrono::DateTime<chrono::Utc>)> = sqlx::query_as(
-        r#"SELECT name, level, exp, diamond,
+        r#"SELECT group_name, level::BIGINT, exp, diamond::BIGINT,
                   COALESCE(daily_love_point_limit, 100) as daily_limit,
                   COALESCE(daily_group_exp_limit, 200) as exp_limit,
                   created_at

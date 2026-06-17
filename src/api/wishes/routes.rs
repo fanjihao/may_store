@@ -26,24 +26,57 @@ use crate::{
 
 /// 配置心愿路由
 pub fn configure(cfg: &mut ServiceConfig) {
+    // 不用 web::scope —— 避免圈住路径
+    // 组内心愿
     cfg.service(
-        web::scope("/api/groups/{group_id}/wishes")
-            .route("", web::post().to(create_group_wish))  // FSD v2 7.1 创建心愿
-            .route("", web::get().to(list_group_wishes))   // FSD v2 7.2 获取心愿列表
-    )
-    .service(
-        web::scope("/api/wishes")
-            .route("/pending-fulfillment", web::get().to(pending_fulfillment))
-            .route("/{wish_id}", web::get().to(get_wish))  // FSD v2 7.3 获取心愿详情
-            .route("/{wish_id}/quote", web::post().to(wish_quote))           // FSD v2 7.4 协商报价
-            .route("/{wish_id}/deadline", web::post().to(wish_deadline))     // FSD v2 7.5 协商履约期限
-            .route("/{wish_id}/confirm-agreement", web::post().to(wish_confirm_agreement))  // FSD v2 7.6 双方确认
-            .route("/{wish_id}/reject", web::post().to(wish_reject))         // FSD v2 7.7 拒绝/关闭
-            .route("/{wish_id}/select", web::post().to(wish_select))        // FSD v2 7.8 选择心愿
-            .route("/{wish_id}/feedback", web::post().to(submit_feedback))   // FSD v2 7.9 提交打卡反馈
-            .route("/{wish_id}/expire", web::post().to(wish_expire))         // FSD v2 7.10 逾期处理
-            .route("/{wish_id}/close", web::post().to(wish_close))           // FSD v2 7.11 关闭心愿
-            .route("/{wish_id}/checkins", web::get().to(get_wish_checkins)) // FSD v2 7.12 获取打卡记录
+        web::resource("/api/groups/{group_id}/wishes")
+            .route(web::post().to(create_group_wish))  // FSD v2 7.1 创建心愿
+            .route(web::get().to(list_group_wishes)),  // FSD v2 7.2 获取心愿列表
+    );
+    // 全局心愿详情/操作
+    cfg.service(
+        web::resource("/api/wishes/pending-fulfillment")
+            .route(web::get().to(pending_fulfillment)),
+    );
+    cfg.service(
+        web::resource("/api/wishes/{wish_id}")
+            .route(web::get().to(get_wish)),  // FSD v2 7.3 获取心愿详情
+    );
+    cfg.service(
+        web::resource("/api/wishes/{wish_id}/quote")
+            .route(web::post().to(wish_quote)),  // FSD v2 7.4 协商报价
+    );
+    cfg.service(
+        web::resource("/api/wishes/{wish_id}/deadline")
+            .route(web::post().to(wish_deadline)),  // FSD v2 7.5 协商履约期限
+    );
+    cfg.service(
+        web::resource("/api/wishes/{wish_id}/confirm-agreement")
+            .route(web::post().to(wish_confirm_agreement)),  // FSD v2 7.6 双方确认
+    );
+    cfg.service(
+        web::resource("/api/wishes/{wish_id}/reject")
+            .route(web::post().to(wish_reject)),  // FSD v2 7.7 拒绝/关闭
+    );
+    cfg.service(
+        web::resource("/api/wishes/{wish_id}/select")
+            .route(web::post().to(wish_select)),  // FSD v2 7.8 选择心愿
+    );
+    cfg.service(
+        web::resource("/api/wishes/{wish_id}/feedback")
+            .route(web::post().to(submit_feedback)),  // FSD v2 7.9 提交打卡反馈
+    );
+    cfg.service(
+        web::resource("/api/wishes/{wish_id}/expire")
+            .route(web::post().to(wish_expire)),  // FSD v2 7.10 逾期处理
+    );
+    cfg.service(
+        web::resource("/api/wishes/{wish_id}/close")
+            .route(web::post().to(wish_close)),  // FSD v2 7.11 关闭心愿
+    );
+    cfg.service(
+        web::resource("/api/wishes/{wish_id}/checkins")
+            .route(web::get().to(get_wish_checkins)),  // FSD v2 7.12 获取打卡记录
     );
 }
 

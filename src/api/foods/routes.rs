@@ -18,14 +18,21 @@ use crate::middlewares::require_group::RequireGroup;
 use crate::utils::response::ApiResponse;
 
 pub fn configure(cfg: &mut ServiceConfig) {
+    // 不用 web::scope —— 避免圈住 /api/groups/{id}/foods/{food_id}/mark 等
     cfg.service(
-        web::scope("/api/groups/{group_id}/foods")
-            .route("", web::post().to(create_food))
-            .route("", web::get().to(list_foods))
-            .route("/{food_id}", web::get().to(get_food))
-            .route("/{food_id}", web::patch().to(update_food))
-            .route("/{food_id}", web::delete().to(delete_food))
-            .route("/{food_id}/hide", web::post().to(hide_food)),
+        web::resource("/api/groups/{group_id}/foods")
+            .route(web::post().to(create_food))
+            .route(web::get().to(list_foods)),
+    );
+    cfg.service(
+        web::resource("/api/groups/{group_id}/foods/{food_id}")
+            .route(web::get().to(get_food))
+            .route(web::patch().to(update_food))
+            .route(web::delete().to(delete_food)),
+    );
+    cfg.service(
+        web::resource("/api/groups/{group_id}/foods/{food_id}/hide")
+            .route(web::post().to(hide_food)),
     );
 }
 

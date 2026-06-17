@@ -22,15 +22,17 @@ use crate::utils::response::ApiResponse;
 /// FSD v2: 路径为 /api/groups/{group_id}/footprints
 pub fn configure(cfg: &mut ServiceConfig) {
     cfg.service(
-        web::scope("/api/groups/{group_id}/footprints")
-            // 足迹列表
-            .route("", web::get().to(list_footprints))
-            // 发布足迹
-            .route("", web::post().to(create_footprint))
-            // 删除足迹
-            .route("/{footprint_id}", web::delete().to(delete_footprint))
-            // 扩容足迹容量
-            .route("/capacity/expand", web::post().to(expand_capacity)),
+        web::resource("/api/groups/{group_id}/footprints")
+            .route(web::get().to(list_footprints))
+            .route(web::post().to(create_footprint)),
+    );
+    cfg.service(
+        web::resource("/api/groups/{group_id}/footprints/{footprint_id}")
+            .route(web::delete().to(delete_footprint)),
+    );
+    cfg.service(
+        web::resource("/api/groups/{group_id}/footprints/capacity/expand")
+            .route(web::post().to(expand_capacity)),
     );
 }
 
@@ -402,8 +404,9 @@ pub async fn list_footprints(
     };
 
     // 获取总数和容量
+    // count 是 BIGINT,footprint_capacity 是 INT —— ::INT 强转保持 i32 类型
     let (total_count, capacity): (i64, i32) = sqlx::query_as(
-        r#"SELECT COUNT(*), COALESCE(g.footprint_capacity, 50)
+        r#"SELECT COUNT(*)::BIGINT, COALESCE(g.footprint_capacity, 50)::INT
            FROM association_groups g
            LEFT JOIN footprints f ON f.group_id = g.group_id
            WHERE g.group_id = $1"#,

@@ -464,7 +464,7 @@ impl GroupService {
 
         // 获取用户的组信息
         let membership: Option<(i64,)> = sqlx::query_as(
-            "SELECT group_id FROM association_group_members WHERE user_id = $1 AND is_primary = true"
+            "SELECT group_id FROM association_group_members WHERE user_id = $1 AND is_primary = 1"
         )
         .bind(user_id)
         .fetch_optional(db)
@@ -568,7 +568,7 @@ impl GroupService {
 
         // 获取当前用户的组
         let user_group_id: Option<(i64,)> = sqlx::query_as(
-            "SELECT group_id FROM association_group_members WHERE user_id = $1 AND is_primary = true"
+            "SELECT group_id FROM association_group_members WHERE user_id = $1 AND is_primary = 1"
         )
         .bind(user_id)
         .fetch_optional(db)
@@ -580,10 +580,11 @@ impl GroupService {
         };
 
         // 将目标用户绑定到组
+        // is_primary 是 smallint,不能写 true
         sqlx::query(
             r#"INSERT INTO association_group_members (user_id, group_id, is_primary, joined_at)
-               VALUES ($1, $2, true, $3)
-               ON CONFLICT (user_id) DO UPDATE SET group_id = $2, is_primary = true"#
+               VALUES ($1, $2, 1, $3)
+               ON CONFLICT (user_id) DO UPDATE SET group_id = $2, is_primary = 1"#
         )
         .bind(input.user_id)
         .bind(group_id)

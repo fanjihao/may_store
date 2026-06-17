@@ -12,6 +12,10 @@ use sqlx::Row;
 use std::sync::Arc;
 use utoipa::ToSchema;
 
+use crate::api::ws::get_connection_manager;
+use crate::api::ws::messages::{
+    WsEnvelope, WsGroupMemberChangeData, WsGroupMemberInfo,
+};
 use crate::config::AppState;
 use crate::domain::group::entities::{
     FulfillmentStats, GroupDetailInfo, GroupRecord, SettlementCheckResult,
@@ -23,34 +27,51 @@ use crate::utils::response::ApiResponse;
 
 /// 配置双人组路由
 pub fn configure(cfg: &mut ServiceConfig) {
+    // 写法说明:ntex 2.1 中,`web::scope("/prefix").route("/{param}", ...)` 这种
+    // 在 scope 内带动态路径参数的写法不会被路由命中(实测 0.4ms 404)。
+    // 必须用 `web::resource("/prefix/{param}").route(...)` 写法,或把动态路由
+    // 放在外部 resource(不在 scope 内)。本函数采用拆分写法:
+    // - scope 内部只放纯静态路由(POST 创建、加组)
+    // - 动态参数路由用独立 resource 挂在 cfg 上
     cfg.service(
         web::scope("/api/groups")
             .route("", web::post().to(create_group))
-            .route("/join", web::post().to(join_group))
-            .route("/{group_id}", web::get().to(get_group))
-            .route("/{group_id}/swap-role", web::post().to(swap_role))
-            .route(
-                "/{group_id}/swap-role/check",
-                web::get().to(swap_role_check),
-            )
-            .route("/{group_id}/exit", web::post().to(exit_group))
-            .route(
-                "/{group_id}/settlement-check",
-                web::get().to(settlement_check),
-            )
-            .route(
-                "/{group_id}/members",
-                web::get().to(get_group_members),
-            )
-            .route(
-                "/{group_id}/fulfillment-stats",
-                web::get().to(fulfillment_stats),
-            )
-            // FSD v2: 额外端点
-            .route("/{group_id}/invite", web::post().to(create_invite))
-            .route("/{group_id}/orders", web::post().to(create_group_order))
-            .route("/{group_id}/wishes", web::post().to(create_group_wish)),
+            .route("/join", web::post().to(join_group)),
     );
+    cfg.service(
+        web::resource("/api/groups/{group_id}")
+            .route(web::get().to(get_group))
+            .route(web::post().to(swap_role)),
+    );
+    cfg.service(
+        web::resource("/api/groups/{group_id}/swap-role/check")
+            .route(web::get().to(swap_role_check)),
+    );
+    cfg.service(
+        web::resource("/api/groups/{group_id}/exit")
+            .route(web::post().to(exit_group)),
+    );
+    cfg.service(
+        web::resource("/api/groups/{group_id}/settlement-check")
+            .route(web::get().to(settlement_check)),
+    );
+    cfg.service(
+        web::resource("/api/groups/{group_id}/members")
+            .route(web::get().to(get_group_members)),
+    );
+    cfg.service(
+        web::resource("/api/groups/{group_id}/fulfillment-stats")
+            .route(web::get().to(fulfillment_stats)),
+    );
+    cfg.service(
+        web::resource("/api/groups/{group_id}/invite")
+            .route(web::post().to(create_invite)),
+    );
+    cfg.service(
+        web::resource("/api/groups/{group_id}/orders")
+            .route(web::post().to(create_group_order)),
+    );
+    // 注:/api/groups/{group_id}/wishes 由 wishes 模块负责(POST + GET 都有)
 }
 
 /// 创建双人组
@@ -82,8 +103,9 @@ async fn create_group(
     let db = &state.db_pool;
 
     // 检查用户是否已在组中
+    // 注意:is_primary 是 smallint(0/1),不能用 true/false
     let existing: Option<(i64,)> = sqlx::query_as(
-        "SELECT group_id FROM association_group_members WHERE user_id = $1 AND is_primary = true",
+        "SELECT group_id FROM association_group_members WHERE user_id = $1 AND is_primary = 1",
     )
     .bind(token.user_id)
     .fetch_optional(db)
@@ -96,25 +118,27 @@ async fn create_group(
     let mut tx = db.begin().await?;
 
     // 创建组
+    // group_type / status 是 PG 自定义枚举,RETURNING 必须 ::text 强转,否则 sqlx 解不出
+    // seller_user_id 留空:双人组是创建者+受邀者两人,创建者为 buyer,seller 位置等受邀者
+    // 通过邀请码加入 (POST /api/groups/join) 时再填上
     let invite_code = format!("{:08x}", rand::random::<u32>());
     let group: GroupRecord = sqlx::query_as::<_, GroupRecord>(
         r#"INSERT INTO association_groups (group_name, group_type, status, invite_code, diamond, footprint_capacity, footprint_count, buyer_user_id, seller_user_id, level, exp, created_at, updated_at)
-           VALUES ($1, 'PAIR', 'ACTIVE', $2, 0, 50, 0, $3, $4, 1, 0, $5, $5)
-           RETURNING group_id, group_name, group_type, status, invite_code, diamond, footprint_capacity, footprint_count, created_at, updated_at,
+           VALUES ($1, 'PAIR', 'ACTIVE', $2, 0, 50, 0, $3, NULL, 1, 0, $4, $4)
+           RETURNING group_id, group_name, group_type::text AS group_type, status::text AS status, invite_code, diamond, footprint_capacity, footprint_count, created_at, updated_at,
                      buyer_user_id, seller_user_id, level, exp, settings"#
     )
     .bind(format!("{}的组", token.user.as_ref().map(|u| u.username.as_str()).unwrap_or("用户")))
     .bind(&invite_code)
-    .bind(token.user_id)
-    .bind(token.user_id) // 初始时创建者为 buyer
+    .bind(token.user_id) // 创建者填入 buyer 位置
     .bind(Utc::now())
     .fetch_one(&mut *tx)
     .await?;
 
-    // 将创建者加为组成员
+    // 将创建者加为组成员(is_primary 是 smallint,这里写 1 不用 true)
     sqlx::query(
         r#"INSERT INTO association_group_members (user_id, group_id, role_in_group, is_primary, joined_at)
-           VALUES ($1, $2, 'ORDERING', true, $3)"#
+           VALUES ($1, $2, 'ORDERING', 1, $3)"#
     )
     .bind(token.user_id)
     .bind(group.group_id)
@@ -348,6 +372,25 @@ async fn swap_role(
 
     tx.commit().await?;
 
+    // 通知组里"另一个人"—— 角色互换了
+    // 互换后,actor(token.user_id) 变成 new_* 之一,另一个 new_* 就是"目标"
+    let target = [new_buyer, new_seller]
+        .into_iter()
+        .flatten()
+        .find(|id| *id != token.user_id);
+    if let Some(target_id) = target {
+        push_group_member_change_notice(
+            db,
+            target_id,
+            gid,
+            "swapped",
+            token.user_id, // actor = 发起互换的人
+            new_buyer,
+            new_seller,
+        )
+        .await;
+    }
+
     Ok(ApiResponse::success(serde_json::json!({
         "status": "ok",
         "newBuyer": new_buyer,
@@ -422,9 +465,9 @@ async fn settlement_check(
     .await?
     .unwrap_or(0);
 
-    // 检查冻结爱心积分
+    // 检查冻结爱心积分(SUM 返回 NUMERIC,::BIGINT 强转)
     let frozen_points: i64 = sqlx::query_scalar::<_, Option<i64>>(
-        r#"SELECT COALESCE(SUM(amount), 0) FROM love_point_transactions
+        r#"SELECT COALESCE(SUM(amount), 0)::BIGINT FROM love_point_transactions
            WHERE user_id=$1 AND group_id=$2 AND type='FREEZE'"#,
     )
     .bind(token.user_id)
@@ -726,8 +769,9 @@ async fn create_group_order(
     }
 
     // 检查用户角色是否为 BUYER
+    // role_in_group 是 PG 自定义枚举,SELECT 必须 ::text 强转,否则 sqlx 解不出
     let user_role: Option<String> = sqlx::query_scalar(
-        "SELECT role_in_group FROM association_group_members WHERE group_id=$1 AND user_id=$2",
+        "SELECT role_in_group::text FROM association_group_members WHERE group_id=$1 AND user_id=$2",
     )
     .bind(gid)
     .bind(token.user_id)
@@ -829,9 +873,9 @@ async fn create_group_wish(
 
     let fulfiller_id = other_member.unwrap_or(0);
 
-    // 获取用户当前角色快照
+    // 获取用户当前角色快照(role_in_group 是自定义枚举,::text 强转)
     let user_role: Option<String> = sqlx::query_scalar(
-        "SELECT role_in_group FROM association_group_members WHERE group_id=$1 AND user_id=$2",
+        "SELECT role_in_group::text FROM association_group_members WHERE group_id=$1 AND user_id=$2",
     )
     .bind(gid)
     .bind(token.user_id)
@@ -939,10 +983,10 @@ async fn join_group(
 
     let mut tx = db.begin().await?;
 
-    // 加入组成员
+    // 加入组成员(is_primary 是 smallint,这里写 0 不用 false)
     sqlx::query(
         r#"INSERT INTO association_group_members (user_id, group_id, role_in_group, is_primary, member_status, joined_at)
-           VALUES ($1, $2, 'RECEIVING', false, 'ACTIVE', $3)"#
+           VALUES ($1, $2, 'RECEIVING', 0, 'ACTIVE', $3)"#
     )
     .bind(token.user_id)
     .bind(group_id)
@@ -968,6 +1012,31 @@ async fn join_group(
     .await?;
 
     tx.commit().await?;
+
+    // 通知组里另一个人(创建者/buyer)—— 有人加入了
+    let buyer_id_after: Option<i64> = sqlx::query_scalar(
+        "SELECT buyer_user_id FROM association_groups WHERE group_id = $1",
+    )
+    .bind(group_id)
+    .fetch_optional(db)
+    .await
+    .ok()
+    .flatten()
+    .flatten();
+    if let Some(target) = buyer_id_after {
+        if target != token.user_id {
+            push_group_member_change_notice(
+                db,
+                target,
+                group_id,
+                "joined",
+                token.user_id, // actor = 加入者
+                Some(target),  // buyer = 创建者(原本就在)
+                Some(token.user_id), // seller = 加入者(自己)
+            )
+            .await;
+        }
+    }
 
     Ok(ApiResponse::success(serde_json::json!({
         "groupId": group_id,
@@ -1024,9 +1093,9 @@ async fn exit_group(
 
     let mut tx = db.begin().await?;
 
-    // 获取用户角色
+    // 获取用户角色(role_in_group 是自定义枚举,::text 强转)
     let user_role: Option<String> = sqlx::query_scalar(
-        "SELECT role_in_group FROM association_group_members WHERE group_id=$1 AND user_id=$2"
+        "SELECT role_in_group::text FROM association_group_members WHERE group_id=$1 AND user_id=$2"
     )
     .bind(gid)
     .bind(token.user_id)
@@ -1056,6 +1125,46 @@ async fn exit_group(
     }
 
     tx.commit().await?;
+
+    // 通知组里"还留在组里的那个人"—— 有人退出了
+    // 退出后 buyer_user_id / seller_user_id 中被清空的那一方就是退出者,
+    // 另一方就是接收通知的目标(target)。target 可能为 null(组里已经没人了),此时不通知
+    let (remaining_buyer, remaining_seller): (Option<Option<i64>>, Option<Option<i64>>) = (
+        sqlx::query_scalar::<_, Option<i64>>(
+            "SELECT buyer_user_id FROM association_groups WHERE group_id = $1",
+        )
+        .bind(gid)
+        .fetch_optional(db)
+        .await
+        .ok()
+        .flatten(),
+        sqlx::query_scalar::<_, Option<i64>>(
+            "SELECT seller_user_id FROM association_groups WHERE group_id = $1",
+        )
+        .bind(gid)
+        .fetch_optional(db)
+        .await
+        .ok()
+        .flatten(),
+    );
+    let buyer_id_after = remaining_buyer.flatten();
+    let seller_id_after = remaining_seller.flatten();
+    let target = [buyer_id_after, seller_id_after]
+        .into_iter()
+        .flatten()
+        .find(|id| *id != token.user_id);
+    if let Some(target_id) = target {
+        push_group_member_change_notice(
+            db,
+            target_id,
+            gid,
+            "exited",
+            token.user_id, // actor = 退出者
+            buyer_id_after,
+            seller_id_after,
+        )
+        .await;
+    }
 
     Ok(ApiResponse::success(serde_json::json!({
         "status": "ok"
@@ -1101,9 +1210,9 @@ async fn get_group_members(
         return Err(CustomError::Forbidden("无权访问该组".into()));
     }
 
-    // 获取组成员列表
+    // 获取组成员列表(role_in_group 自定义枚举,::text 强转)
     let members = sqlx::query(
-        r#"SELECT agm.user_id, agm.role_in_group, agm.joined_at,
+        r#"SELECT agm.user_id, agm.role_in_group::text AS role_in_group, agm.joined_at,
                   u.nick_name, u.avatar,
                   COALESCE(ugp.available_love_point, 0) as available_love_point,
                   COALESCE(ugp.frozen_love_point, 0) as frozen_love_point
@@ -1283,10 +1392,11 @@ async fn swap_role_check(
     let user_id = token.user_id;
 
     // Q1：取组信息 + 用户角色 + ignore 配置
+    // role_in_group 自定义枚举,::text 强转
     let row = sqlx::query(
         r#"SELECT
              g.buyer_user_id, g.seller_user_id,
-             gm.role_in_group AS current_role,
+             gm.role_in_group::text AS current_role,
              COALESCE((g.settings->>'swap_ignore_ongoing_wish')::bool, false) AS ignore_ongoing_wish
            FROM association_groups g
            JOIN association_group_members gm
@@ -1403,4 +1513,82 @@ async fn swap_role_check(
         would_be_role,
         ignore_ongoing_wish_enabled: ignore_ongoing_wish,
     }))
+}
+
+// ============== 组员变化通知(服务端 -> 客户端 WebSocket) ==============
+
+/// 查用户的昵称和头像(用于通知里展示)。
+/// 查不到时返回 None,调用方决定要不要兜底。
+async fn fetch_user_info_for_notice(
+    db: &sqlx::PgPool,
+    user_id: i64,
+) -> Option<WsGroupMemberInfo> {
+    let row: Option<(Option<String>, Option<String>)> = sqlx::query_as(
+        "SELECT nick_name, avatar FROM users WHERE user_id = $1",
+    )
+    .bind(user_id)
+    .fetch_optional(db)
+    .await
+    .ok()
+    .flatten();
+
+    row.map(|(nick_name, avatar)| WsGroupMemberInfo {
+        user_id,
+        nick_name,
+        avatar,
+    })
+}
+
+/// 推送"组员变化"通知给组里"另一个人"。
+///
+/// - `target_id`: 接收通知的用户(组里除 actor 之外的另一个人)
+/// - `group_id` / `action` / `actor_id` / `buyer_id` / `seller_id`:
+///   详见 `WsGroupMemberChangeData`
+///
+/// 行为:target 不在线就静默丢弃(业务侧说"暂时不管离线")
+async fn push_group_member_change_notice(
+    db: &sqlx::PgPool,
+    target_id: i64,
+    group_id: i64,
+    action: &str,
+    actor_id: i64,
+    buyer_id: Option<i64>,
+    seller_id: Option<i64>,
+) {
+    let actor = fetch_user_info_for_notice(db, actor_id).await.unwrap_or(WsGroupMemberInfo {
+        user_id: actor_id,
+        nick_name: None,
+        avatar: None,
+    });
+    let buyer = match buyer_id {
+        Some(id) => fetch_user_info_for_notice(db, id).await,
+        None => None,
+    };
+    let seller = match seller_id {
+        Some(id) => fetch_user_info_for_notice(db, id).await,
+        None => None,
+    };
+
+    let payload = WsGroupMemberChangeData {
+        group_id,
+        action: action.to_string(),
+        actor,
+        buyer,
+        seller,
+    };
+
+    let envelope = WsEnvelope::group_member_change(&payload);
+    let Ok(json) = serde_json::to_string(&envelope) else {
+        log::error!("组员变化通知序列化失败: {:?}", payload);
+        return;
+    };
+
+    let manager = get_connection_manager();
+    let sent = manager.send_to_user(target_id, &json).await;
+    if !sent {
+        log::debug!(
+            "组员变化通知未送达(用户 {} 不在线): group_id={} action={}",
+            target_id, group_id, action
+        );
+    }
 }

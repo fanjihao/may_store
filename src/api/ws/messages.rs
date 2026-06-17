@@ -20,6 +20,8 @@ pub enum WsMessageType {
     Notification(WsNotificationData),
     /// 订单状态变更 - 服务器推送
     OrderUpdate(WsOrderUpdateData),
+    /// 组员变化 - 服务器推送(加入/退出/换角色)
+    GroupMemberChange(WsGroupMemberChangeData),
     /// 错误消息
     Error(WsErrorData),
     /// 未知消息
@@ -59,6 +61,41 @@ pub struct WsOrderUpdateData {
     pub order_id: i64,
     pub status: String,
     pub message: String,
+}
+
+/// 组员摘要信息(actor / buyer / seller 都用这个)
+#[allow(dead_code)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WsGroupMemberInfo {
+    pub user_id: i64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub nick_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub avatar: Option<String>,
+}
+
+/// 组员变化数据
+///
+/// action 取值:
+/// - "joined":  有人通过邀请码加入了组
+/// - "exited":  有人退出了组
+/// - "swapped": 互换 buyer/seller 角色
+///
+/// actor: 这次动作的发起人
+/// buyer / seller: 变化后(对 join/exit 是操作后,对 swap 是互换后)的角色归属;
+///                 swap 时两者都不为空,join/exit 时可能为 null(比如组里没人了)
+#[allow(dead_code)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WsGroupMemberChangeData {
+    pub group_id: i64,
+    pub action: String,
+    pub actor: WsGroupMemberInfo,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub buyer: Option<WsGroupMemberInfo>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub seller: Option<WsGroupMemberInfo>,
 }
 
 /// 错误数据
@@ -114,6 +151,14 @@ impl WsEnvelope {
         Self {
             msg_type: "order_update".to_string(),
             data: serde_json::json!(order_update),
+        }
+    }
+
+    /// 创建组员变化消息
+    pub fn group_member_change(change: &WsGroupMemberChangeData) -> Self {
+        Self {
+            msg_type: "group_member_change".to_string(),
+            data: serde_json::json!(change),
         }
     }
 

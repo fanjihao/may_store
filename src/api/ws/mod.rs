@@ -133,96 +133,127 @@ async fn handle_websocket_connection(
 }
 
 /// 处理 WebSocket 消息循环
+///
+/// 用 tokio::select! 多路复用:
+/// - ws_rx: 客户端发来的消息
+/// - internal_rx: 服务端通过 ConnectionManager::send_to_user 主动推送的消息
 async fn process_messages(
     ws_stream: tokio_tungstenite::WebSocketStream<tokio::net::TcpStream>,
     manager: Arc<ConnectionManager>,
     peer_addr: std::net::SocketAddr,
     state: Arc<AppState>,
 ) {
-    let mut ws_stream = ws_stream;
+    let (mut ws_tx, mut ws_rx) = ws_stream.split();
     let mut user_id: Option<i64> = None;
 
+    // 每条连接的内部消息通道。auth 成功时把 sender 交给 ConnectionManager,
+    // 之后服务端就能通过 send_to_user(uid, ...) 把消息投到这条通道
+    let (internal_tx, mut internal_rx) =
+        tokio::sync::mpsc::unbounded_channel::<String>();
+
     // 发送连接成功消息
-    let _ = ws_stream
+    let _ = ws_tx
         .send(Message::Text(r#"{"type":"connected","data":{}}"#.into()))
         .await;
 
-    while let Some(msg) = ws_stream.next().await {
-        match msg {
-            Ok(Message::Text(text)) => {
-                let text = text.to_string();
-                log::debug!("收到消息 from {}: {}", peer_addr, text);
+    loop {
+        tokio::select! {
+            // 客户端 -> 服务端
+            ws_msg = ws_rx.next() => {
+                match ws_msg {
+                    Some(Ok(Message::Text(text))) => {
+                        let text = text.to_string();
+                        log::debug!("收到消息 from {}: {}", peer_addr, text);
 
-                if let Ok(envelope) =
-                    serde_json::from_str::<crate::api::ws::messages::WsEnvelope>(&text)
-                {
-                    match envelope.msg_type.as_str() {
-                        "ping" => {
-                            let _ = ws_stream
-                                .send(Message::Text(r#"{"type":"pong","data":{}}"#.into()))
-                                .await;
-                        }
-                        "auth" => {
-                            if let Some(token) = envelope.data.get("token").and_then(|t| t.as_str())
-                            {
-                                // 统一走 jwt::verify —— 包括 jti 黑名单 + 全设备撤销
-                                let result = jwt::verify(
-                                    token,
-                                    &state.jwt_secret,
-                                    jwt::TokenType::Access,
-                                    &state.redis_cache,
-                                )
-                                .await
-                                .and_then(|c| c.user_id());
+                        if let Ok(envelope) =
+                            serde_json::from_str::<crate::api::ws::messages::WsEnvelope>(&text)
+                        {
+                            match envelope.msg_type.as_str() {
+                                "ping" => {
+                                    let _ = ws_tx
+                                        .send(Message::Text(r#"{"type":"pong","data":{}}"#.into()))
+                                        .await;
+                                }
+                                "auth" => {
+                                    if let Some(token) = envelope.data.get("token").and_then(|t| t.as_str())
+                                    {
+                                        // 统一走 jwt::verify —— 包括 jti 黑名单 + 全设备撤销
+                                        let result = jwt::verify(
+                                            token,
+                                            &state.jwt_secret,
+                                            jwt::TokenType::Access,
+                                            &state.redis_cache,
+                                        )
+                                        .await
+                                        .and_then(|c| c.user_id());
 
-                                match result {
-                                    Ok(uid) => {
-                                        user_id = Some(uid);
-                                        manager
-                                            .add_connection(
-                                                uid,
-                                                crate::api::ws::connection::ConnectionInfo {
-                                                    user_id: Some(uid),
-                                                    connected_at: chrono::Utc::now(),
-                                                    authenticated: true,
-                                                },
-                                            )
-                                            .await;
-                                        let _ = ws_stream.send(Message::Text(format!(
-                                            r#"{{"type":"auth_resp","data":{{"success":true,"userId":{}}}}}"#,
-                                            uid
-                                        ).into())).await;
-                                        log::info!("用户 {} 认证成功 from {}", uid, peer_addr);
+                                        match result {
+                                            Ok(uid) => {
+                                                user_id = Some(uid);
+                                                manager
+                                                    .add_connection(
+                                                        uid,
+                                                        crate::api::ws::connection::ConnectionInfo {
+                                                            user_id: Some(uid),
+                                                            connected_at: chrono::Utc::now(),
+                                                            authenticated: true,
+                                                            sender: internal_tx.clone(),
+                                                        },
+                                                    )
+                                                    .await;
+                                                let _ = ws_tx.send(Message::Text(format!(
+                                                    r#"{{"type":"auth_resp","data":{{"success":true,"userId":{}}}}}"#,
+                                                    uid
+                                                ).into())).await;
+                                                log::info!("用户 {} 认证成功 from {}", uid, peer_addr);
+                                            }
+                                            Err(e) => {
+                                                let _ = ws_tx.send(Message::Text(format!(
+                                                    r#"{{"type":"auth_resp","data":{{"success":false,"message":"{}"}}}}"#,
+                                                    e
+                                                ).into())).await;
+                                            }
+                                        }
                                     }
-                                    Err(e) => {
-                                        let _ = ws_stream.send(Message::Text(format!(
-                                            r#"{{"type":"auth_resp","data":{{"success":false,"message":"{}"}}}}"#,
-                                            e
-                                        ).into())).await;
+                                }
+                                _ => {
+                                    if user_id.is_none() {
+                                        let _ = ws_tx.send(Message::Text(r#"{"type":"error","data":{"code":401,"message":"请先认证"}}"#.into())).await;
                                     }
                                 }
                             }
                         }
-                        _ => {
-                            if user_id.is_none() {
-                                let _ = ws_stream.send(Message::Text(r#"{"type":"error","data":{"code":401,"message":"请先认证"}}"#.into())).await;
-                            }
+                    }
+                    Some(Ok(Message::Close(_))) => {
+                        log::info!("WebSocket 连接关闭: {}", peer_addr);
+                        break;
+                    }
+                    Some(Ok(Message::Ping(data))) => {
+                        let _ = ws_tx.send(Message::Pong(data)).await;
+                    }
+                    Some(Err(e)) => {
+                        log::error!("WebSocket 错误 from {}: {}", peer_addr, e);
+                        break;
+                    }
+                    None => break,
+                    _ => {}
+                }
+            }
+            // 服务端 -> 客户端(主动推送)
+            internal_msg = internal_rx.recv() => {
+                match internal_msg {
+                    Some(text) => {
+                        if ws_tx.send(Message::Text(text.into())).await.is_err() {
+                            log::info!("推送失败,连接可能已关闭: {}", peer_addr);
+                            break;
                         }
+                    }
+                    None => {
+                        // 所有 sender 都丢了,理论上不该发生
+                        break;
                     }
                 }
             }
-            Ok(Message::Close(_)) => {
-                log::info!("WebSocket 连接关闭: {}", peer_addr);
-                break;
-            }
-            Ok(Message::Ping(data)) => {
-                let _ = ws_stream.send(Message::Pong(data)).await;
-            }
-            Err(e) => {
-                log::error!("WebSocket 错误 from {}: {}", peer_addr, e);
-                break;
-            }
-            _ => {}
         }
     }
 

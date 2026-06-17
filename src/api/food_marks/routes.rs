@@ -20,10 +20,10 @@ use crate::utils::response::ApiResponse;
 
 pub fn configure(cfg: &mut ServiceConfig) {
     cfg.service(
-        web::scope("/api/groups/{group_id}/foods/{food_id}/mark")
-            .route("", web::post().to(mark_food))
-            .route("", web::delete().to(unmark_food))
-            .route("", web::get().to(get_food_mark)),
+        web::resource("/api/groups/{group_id}/foods/{food_id}/mark")
+            .route(web::post().to(mark_food))
+            .route(web::delete().to(unmark_food))
+            .route(web::get().to(get_food_mark)),
     );
 }
 

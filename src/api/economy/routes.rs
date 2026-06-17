@@ -19,17 +19,35 @@ use crate::utils::response::ApiResponse;
 
 /// 配置经济查询路由
 pub fn configure(cfg: &mut ServiceConfig) {
+    // 不再用 web::scope("/api/groups/{group_id}") —— 那种写法会"圈住"所有
+    // /api/groups/{id} 路径,导致 groups 模块的 GET /api/groups/{id} 等路由
+    // 全部 404(scope 内部找不到匹配就吞掉请求)。改为独立 resource 挂载。
+    // 爱心积分
     cfg.service(
-        web::scope("/api/groups/{group_id}")
-            // 爱心积分
-            .route("/points/balance", web::get().to(get_points_balance))
-            .route("/points/transactions", web::get().to(get_points_transactions))
-            // 钻石
-            .route("/diamonds/balance", web::get().to(get_diamonds_balance))
-            .route("/diamonds/transactions", web::get().to(get_diamonds_transactions))
-            // 组经验
-            .route("/exp", web::get().to(get_group_exp))
-            .route("/exp/transactions", web::get().to(get_exp_transactions)),
+        web::resource("/api/groups/{group_id}/points/balance")
+            .route(web::get().to(get_points_balance)),
+    );
+    cfg.service(
+        web::resource("/api/groups/{group_id}/points/transactions")
+            .route(web::get().to(get_points_transactions)),
+    );
+    // 钻石
+    cfg.service(
+        web::resource("/api/groups/{group_id}/diamonds/balance")
+            .route(web::get().to(get_diamonds_balance)),
+    );
+    cfg.service(
+        web::resource("/api/groups/{group_id}/diamonds/transactions")
+            .route(web::get().to(get_diamonds_transactions)),
+    );
+    // 组经验
+    cfg.service(
+        web::resource("/api/groups/{group_id}/exp")
+            .route(web::get().to(get_group_exp)),
+    );
+    cfg.service(
+        web::resource("/api/groups/{group_id}/exp/transactions")
+            .route(web::get().to(get_exp_transactions)),
     );
 }
 
@@ -205,7 +223,7 @@ async fn get_points_balance(
 
     // 获取今日获取积分（简化：从流水汇总）
     let today_earned: i64 = sqlx::query_scalar(
-        r#"SELECT COALESCE(SUM(amount), 0) FROM love_point_transactions
+        r#"SELECT COALESCE(SUM(amount), 0)::BIGINT FROM love_point_transactions
            WHERE user_id=$1 AND group_id=$2 AND type='EARN'
            AND created_at >= CURRENT_DATE"#
     )
@@ -382,8 +400,9 @@ async fn get_diamonds_balance(
     }
 
     // 查询组钻石
-    let group_info: Option<(i64, i32)> = sqlx::query_as(
-        "SELECT diamond, footprint_capacity FROM association_groups WHERE group_id=$1"
+    // diamond/footprint_capacity 在 DB 是 INT(INT4),Rust 想用 i64(INT8),::BIGINT 强转
+    let group_info: Option<(i64, i64)> = sqlx::query_as(
+        "SELECT diamond::BIGINT, footprint_capacity::BIGINT FROM association_groups WHERE group_id=$1"
     )
     .bind(gid)
     .fetch_optional(db)
@@ -393,7 +412,7 @@ async fn get_diamonds_balance(
 
     // 获取今日获取钻石
     let today_earned: i64 = sqlx::query_scalar(
-        r#"SELECT COALESCE(SUM(amount), 0) FROM diamond_transactions
+        r#"SELECT COALESCE(SUM(amount), 0)::BIGINT FROM diamond_transactions
            WHERE group_id=$1 AND type='EARN'
            AND created_at >= CURRENT_DATE"#
     )
@@ -572,7 +591,7 @@ async fn get_group_exp(
 
     // 获取今日获取经验
     let today_exp: i64 = sqlx::query_scalar(
-        r#"SELECT COALESCE(SUM(amount), 0) FROM group_exp_transactions
+        r#"SELECT COALESCE(SUM(amount), 0)::BIGINT FROM group_exp_transactions
            WHERE group_id=$1 AND type='EARN'
            AND created_at >= CURRENT_DATE"#
     )
