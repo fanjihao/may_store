@@ -252,6 +252,12 @@ impl Modify for SecurityAddon {
             // -- Sign-in --
             crate::api::sign_in::routes::SignInStatusResponse,
             crate::api::sign_in::routes::DailyCheckinResponse,
+            // -- Memorial Days (纪念日) --
+            // 之前只暴露了 input 类型,MemorialDayOut 没注册,前端自动生成时返回类型变 void
+            // 这里补上 schema 让前端的 MemorialDay 类型能正确生成
+            crate::api::memorial_days::routes::CreateMemorialDayInput,
+            crate::api::memorial_days::routes::UpdateMemorialDayInput,
+            crate::api::memorial_days::routes::MemorialDayOut,
             // -- Footprints --
             crate::api::footprints::routes::CreateFootprintRequest,
             crate::api::footprints::routes::FootprintItem,
