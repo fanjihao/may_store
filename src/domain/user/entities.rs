@@ -51,8 +51,10 @@ impl From<UserRecord> for UserPublic {
     fn from(r: UserRecord) -> Self {
         Self {
             user_id: r.user_id,
-            username: r.username,
-            nick_name: r.nick_name,
+            username: r.username.clone(),
+            // 兜底: 老用户(没有设过昵称)的 nick_name 是 NULL,这里用 username 顶
+            // 新用户走 create_wechat_user 时 nick_name 已经设成 username,不受影响
+            nick_name: r.nick_name.or(Some(r.username)),
             avatar: r.avatar,
             role: r.role,
             group_id: r.group_id,

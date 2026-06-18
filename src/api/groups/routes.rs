@@ -7,6 +7,7 @@ use ntex::web::{
     types::{Json, Path, State},
     HttpResponse, ServiceConfig,
 };
+use ntex::web::guard;
 use serde::{Deserialize, Serialize};
 use sqlx::Row;
 use std::sync::Arc;
@@ -25,22 +26,57 @@ use crate::middlewares::auth::UserToken;
 use crate::middlewares::require_group::RequireGroup;
 use crate::utils::response::ApiResponse;
 
+/// 路由守卫: 检查动态段 `{group_id}` 是不是 i64 数字
+/// 作用: `/api/groups/join`、`/api/groups/invite` 等字面量路径不会匹配到
+///       `/api/groups/{group_id}` 这条动态资源,避免被误路由到 swap_role 等
+///       需要 RequireGroup 的 handler 而返回 403 USER_NOT_IN_GROUP
+fn group_id_is_numeric() -> impl ntex::web::guard::Guard {
+    guard::fn_guard(|head| {
+        head.uri
+            .path()
+            .split('/')
+            .nth(3) // ["", "api", "groups", "{group_id}", ...]
+            .and_then(|s| s.parse::<i64>().ok())
+            .is_some()
+    })
+}
+
 /// 配置双人组路由
 pub fn configure(cfg: &mut ServiceConfig) {
     // 写法说明:ntex 2.1 中,`web::scope("/prefix").route("/{param}", ...)` 这种
     // 在 scope 内带动态路径参数的写法不会被路由命中(实测 0.4ms 404)。
     // 必须用 `web::resource("/prefix/{param}").route(...)` 写法,或把动态路由
     // 放在外部 resource(不在 scope 内)。本函数采用拆分写法:
-    // - scope 内部只放纯静态路由(POST 创建、加组)
+    // - 静态路由用独立 resource(避免与 {group_id} 动态段冲突)
     // - 动态参数路由用独立 resource 挂在 cfg 上
+    //
+    // 重要: `/api/groups/join` 必须用 web::resource 单独挂,不能放进 scope。
+    // 否则 ntex 2.1 会把 POST /api/groups/join 路由到 `/api/groups/{group_id}` 的
+    // swap_role handler,被 RequireGroup 误判为 403 USER_NOT_IN_GROUP。
+    //
+    // 双保险: 即使静态路由因 ntex 内部原因没匹配上,动态资源上挂了
+    // group_id_is_numeric guard,会拒绝匹配 "/api/groups/join" 这种非数字段
     cfg.service(
-        web::scope("/api/groups")
-            .route("", web::post().to(create_group))
-            .route("/join", web::post().to(join_group)),
+        web::resource("/api/groups/join")
+            .route(web::post().to(join_group)),
+    );
+    cfg.service(
+        web::resource("/api/groups")
+            .route(web::post().to(create_group)),
     );
     cfg.service(
         web::resource("/api/groups/{group_id}")
+            .guard(group_id_is_numeric())
             .route(web::get().to(get_group))
+            .route(web::post().to(swap_role)),
+    );
+    // 重要: utoipa::path 标注是 /api/groups/{group_id}/swap-role
+    // (前端 openapi 自动生成的代码按这个调),但历史上 swap_role 实际挂在
+    // POST /api/groups/{group_id} 上(无后缀),导致前端调过来 404。
+    // 这里补一个带后缀的路由,与 openapi 标注对齐;旧的保留以防其他客户端在用。
+    cfg.service(
+        web::resource("/api/groups/{group_id}/swap-role")
+            .guard(group_id_is_numeric())
             .route(web::post().to(swap_role)),
     );
     cfg.service(
@@ -147,6 +183,14 @@ async fn create_group(
     .await?;
 
     tx.commit().await?;
+
+    // 关键: 失效该用户的 UserPublic Redis 缓存,否则下一次请求 RequireGroup
+    // 还会读到旧 group_id=None,继续返回 USER_NOT_IN_GROUP。
+    // create_group 也是"是否在组里"状态的翻转点,必须清缓存。
+    let _ = state.redis_cache
+        .delete_user(&token.user_id.to_string())
+        .await
+        .map_err(|e| log::warn!("[create_group] failed to invalidate user cache: {}", e));
 
     Ok(ApiResponse::success(serde_json::json!({
         "groupId": group.group_id,
@@ -361,6 +405,11 @@ async fn swap_role(
             .bind(gid)
             .execute(&mut *tx)
             .await?;
+        // 关键: 同步更新 users.role,否则前端 userInfo.role 不会变(它来自 users 表)
+        sqlx::query("UPDATE users SET role='ORDERING', last_role_switch_at=NOW() WHERE user_id=$1")
+            .bind(buyer_id)
+            .execute(&mut *tx)
+            .await?;
     }
     if let Some(seller_id) = new_seller {
         sqlx::query("UPDATE association_group_members SET role_in_group='RECEIVING' WHERE user_id=$1 AND group_id=$2")
@@ -368,20 +417,33 @@ async fn swap_role(
             .bind(gid)
             .execute(&mut *tx)
             .await?;
+        sqlx::query("UPDATE users SET role='RECEIVING', last_role_switch_at=NOW() WHERE user_id=$1")
+            .bind(seller_id)
+            .execute(&mut *tx)
+            .await?;
     }
 
     tx.commit().await?;
 
-    // 通知组里"另一个人"—— 角色互换了
-    // 互换后,actor(token.user_id) 变成 new_* 之一,另一个 new_* 就是"目标"
-    let target = [new_buyer, new_seller]
+    // 关键: 失效双方 UserPublic Redis 缓存
+    // 否则下次 silentLogin 还会读到旧 users.role,前端看起来"没切换成功"
+    for uid in [new_buyer, new_seller].into_iter().flatten() {
+        let _ = state.redis_cache
+            .delete_user(&uid.to_string())
+            .await
+            .map_err(|e| log::warn!("[swap_role] failed to invalidate user cache for {}: {}", uid, e));
+    }
+
+    // 通知组里双方 —— 角色互换了
+    // 双方都推,让 actor 和 partner 都能即时刷新页面
+    let targets: Vec<i64> = [new_buyer, new_seller]
         .into_iter()
         .flatten()
-        .find(|id| *id != token.user_id);
-    if let Some(target_id) = target {
+        .collect();
+    if !targets.is_empty() {
         push_group_member_change_notice(
             db,
-            target_id,
+            targets,
             gid,
             "swapped",
             token.user_id, // actor = 发起互换的人
@@ -931,6 +993,8 @@ async fn join_group(
 ) -> Result<HttpResponse, CustomError> {
     let db = &state.db_pool;
     let input = body.into_inner();
+    // DEBUG: 诊断 join 流程到底走没走到 handler
+    log::info!("[join_group] ENTER user_id={} invite_code={}", token.user_id, input.invite_code);
 
     // 检查用户是否已在组中
     let existing: Option<(i64,)> = sqlx::query_as(
@@ -941,6 +1005,7 @@ async fn join_group(
     .await?;
 
     if existing.is_some() {
+        log::warn!("[join_group] REJECT: user_id={} 已在其他组中 (existing={:?})", token.user_id, existing);
         return Err(CustomError::BadRequest("您已在其他组中".into()));
     }
 
@@ -956,16 +1021,21 @@ async fn join_group(
 
     let (group_id, expires_at, max_uses, used_count) = match invite {
         Some(inv) => inv,
-        None => return Err(CustomError::BadRequest("邀请码无效或已过期".into())),
+        None => {
+            log::warn!("[join_group] REJECT: invite_code={} 未找到 ACTIVE 记录", input.invite_code);
+            return Err(CustomError::BadRequest("邀请码无效或已过期".into()));
+        }
     };
 
     // 检查是否过期
     if Utc::now() > expires_at {
+        log::warn!("[join_group] REJECT: invite_code={} 已过期 (expires_at={})", input.invite_code, expires_at);
         return Err(CustomError::BadRequest("邀请码已过期".into()));
     }
 
     // 检查使用次数
     if used_count >= max_uses {
+        log::warn!("[join_group] REJECT: invite_code={} 已用满 (used={}/max={})", input.invite_code, used_count, max_uses);
         return Err(CustomError::BadRequest("邀请码已使用".into()));
     }
 
@@ -978,6 +1048,7 @@ async fn join_group(
     .await?;
 
     if member_count >= 2 {
+        log::warn!("[join_group] REJECT: group_id={} 已满 (member_count={})", group_id, member_count);
         return Err(CustomError::BadRequest("组已满2人，无法加入".into()));
     }
 
@@ -1012,6 +1083,16 @@ async fn join_group(
     .await?;
 
     tx.commit().await?;
+    // DEBUG: 诊断日志
+    log::info!("[join_group] SUCCESS user_id={} joined group_id={}", token.user_id, group_id);
+
+    // 关键: 失效该用户的 UserPublic Redis 缓存,否则下一次请求 RequireGroup
+    // 还会读到旧 group_id=None,继续返回 USER_NOT_IN_GROUP。
+    // join 是用户"是否在组里"状态的翻转点,必须清缓存。
+    let _ = state.redis_cache
+        .delete_user(&token.user_id.to_string())
+        .await
+        .map_err(|e| log::warn!("[join_group] failed to invalidate user cache: {}", e));
 
     // 通知组里另一个人(创建者/buyer)—— 有人加入了
     let buyer_id_after: Option<i64> = sqlx::query_scalar(
@@ -1023,19 +1104,36 @@ async fn join_group(
     .ok()
     .flatten()
     .flatten();
+    // 双方都推: buyer(原本就在) 和 seller(刚加入的 actor) 都要收到,
+    // 这样加入方(seller)自己的页面也能及时刷新 groupDetail
     if let Some(target) = buyer_id_after {
-        if target != token.user_id {
-            push_group_member_change_notice(
-                db,
-                target,
-                group_id,
-                "joined",
-                token.user_id, // actor = 加入者
-                Some(target),  // buyer = 创建者(原本就在)
-                Some(token.user_id), // seller = 加入者(自己)
-            )
-            .await;
-        }
+        let targets: Vec<i64> = if target == token.user_id {
+            vec![target] // 极端兜底: 如果 buyer_user_id 就是 actor 自己,只推一次
+        } else {
+            vec![target, token.user_id] // buyer + seller 双方
+        };
+        push_group_member_change_notice(
+            db,
+            targets,
+            group_id,
+            "joined",
+            token.user_id, // actor = 加入者
+            Some(target),  // buyer = 创建者(原本就在)
+            Some(token.user_id), // seller = 加入者(自己)
+        )
+        .await;
+    } else {
+        // 兜底: 至少推给 actor 自己
+        push_group_member_change_notice(
+            db,
+            vec![token.user_id],
+            group_id,
+            "joined",
+            token.user_id,
+            None,           // buyer 还未知
+            Some(token.user_id),
+        )
+        .await;
     }
 
     Ok(ApiResponse::success(serde_json::json!({
@@ -1153,18 +1251,33 @@ async fn exit_group(
         .into_iter()
         .flatten()
         .find(|id| *id != token.user_id);
-    if let Some(target_id) = target {
-        push_group_member_change_notice(
-            db,
-            target_id,
-            gid,
-            "exited",
-            token.user_id, // actor = 退出者
-            buyer_id_after,
-            seller_id_after,
-        )
-        .await;
+    // 双方都推: 让退出方(actor)和留下来的那个人都即时刷新
+    // 退出方的 UserPublic.group_id 已经从 Some 变 None, 但 WS 收到通知
+    // 也能让 actor 端的首页从"等待伴侣"切回"未加入组"状态
+    let mut targets: Vec<i64> = vec![token.user_id];
+    if let Some(t) = target {
+        if t != token.user_id {
+            targets.push(t);
+        }
     }
+    push_group_member_change_notice(
+        db,
+        targets,
+        gid,
+        "exited",
+        token.user_id, // actor = 退出者
+        buyer_id_after,
+        seller_id_after,
+    )
+    .await;
+
+    // 关键: 失效该用户的 UserPublic Redis 缓存,否则下一次请求 RequireGroup
+    // 还会读到旧 group_id=Some(gid),继续允许访问旧组,或在某些边界下报错。
+    // exit_group 也是"是否在组里"状态的翻转点,必须清缓存。
+    let _ = state.redis_cache
+        .delete_user(&token.user_id.to_string())
+        .await
+        .map_err(|e| log::warn!("[exit_group] failed to invalidate user cache: {}", e));
 
     Ok(ApiResponse::success(serde_json::json!({
         "status": "ok"
@@ -1272,8 +1385,9 @@ async fn settlement_check_impl(
     .unwrap_or(0);
 
     // 检查冻结爱心积分
+    // SUM 在 PostgreSQL 返回 NUMERIC,::BIGINT 强转才能解 i64
     let frozen_points: i64 = sqlx::query_scalar::<_, Option<i64>>(
-        r#"SELECT COALESCE(SUM(amount), 0) FROM love_point_transactions
+        r#"SELECT COALESCE(SUM(amount)::BIGINT, 0) FROM love_point_transactions
            WHERE user_id=$1 AND group_id=$2 AND type='FREEZE'"#
     )
     .bind(user_id)
@@ -1393,11 +1507,20 @@ async fn swap_role_check(
 
     // Q1：取组信息 + 用户角色 + ignore 配置
     // role_in_group 自定义枚举,::text 强转
+    // settings JSONB 用 COALESCE((...->>'key')::bool, false) 可能在 settings IS NULL 时
+    // 因 null::bool 失败。改用 CASE WHEN 显式判断,避免 ::bool 在 NULL 上炸
     let row = sqlx::query(
         r#"SELECT
              g.buyer_user_id, g.seller_user_id,
              gm.role_in_group::text AS current_role,
-             COALESCE((g.settings->>'swap_ignore_ongoing_wish')::bool, false) AS ignore_ongoing_wish
+             COALESCE(
+               CASE g.settings->>'swap_ignore_ongoing_wish'
+                 WHEN 'true' THEN true
+                 WHEN 'false' THEN false
+                 ELSE false
+               END,
+               false
+             ) AS ignore_ongoing_wish
            FROM association_groups g
            JOIN association_group_members gm
              ON gm.group_id = g.group_id AND gm.user_id = $2
@@ -1406,7 +1529,11 @@ async fn swap_role_check(
     .bind(gid)
     .bind(user_id)
     .fetch_optional(db)
-    .await?;
+    .await
+    .map_err(|e| {
+        log::error!("[swap_role_check] Q1 failed: gid={} user_id={} err={:?}", gid, user_id, e);
+        CustomError::from(e)
+    })?;
 
     let row = match row {
         Some(r) => r,
@@ -1479,13 +1606,19 @@ async fn swap_role_check(
             Ok(n)
         },
         sqlx::query_scalar::<_, i64>(
-            r#"SELECT COALESCE(SUM(amount), 0) FROM love_point_transactions
+            // SUM 在 PostgreSQL 返回 NUMERIC,不是 BIGINT,直接解码 i64 会炸
+            // 加 ::BIGINT 显式强转,COALESCE 在 SUM 为 NULL 时(理论上不会)回退到 0
+            r#"SELECT COALESCE(SUM(amount)::BIGINT, 0) FROM love_point_transactions
                WHERE user_id = $1 AND group_id = $2 AND type = 'FREEZE'"#,
         )
         .bind(user_id)
         .bind(gid)
         .fetch_one(db),
-    )?;
+    )
+    .map_err(|e| {
+        log::error!("[swap_role_check] Q2-Q4 failed: gid={} user_id={} err={:?}", gid, user_id, e);
+        CustomError::from(e)
+    })?;
 
     // 拼装 reasons
     let mut reasons: Vec<String> = Vec::new();
@@ -1548,7 +1681,7 @@ async fn fetch_user_info_for_notice(
 /// 行为:target 不在线就静默丢弃(业务侧说"暂时不管离线")
 async fn push_group_member_change_notice(
     db: &sqlx::PgPool,
-    target_id: i64,
+    target_ids: Vec<i64>,
     group_id: i64,
     action: &str,
     actor_id: i64,
@@ -1584,11 +1717,15 @@ async fn push_group_member_change_notice(
     };
 
     let manager = get_connection_manager();
-    let sent = manager.send_to_user(target_id, &json).await;
-    if !sent {
-        log::debug!(
-            "组员变化通知未送达(用户 {} 不在线): group_id={} action={}",
-            target_id, group_id, action
-        );
+    // 双方都推: 这样加入方(actor)和原成员都能收到,各自刷新页面
+    // 之前只推给 buyer,导致加入方的页面没法及时刷新 groupDetail
+    for target_id in target_ids {
+        let sent = manager.send_to_user(target_id, &json).await;
+        if !sent {
+            log::debug!(
+                "组员变化通知未送达(用户 {} 不在线): group_id={} action={}",
+                target_id, group_id, action
+            );
+        }
     }
 }

@@ -4,7 +4,7 @@
 use ntex::web::{
     self,
     types::{Json, State},
-    HttpResponse, Responder, ServiceConfig,
+    Responder, ServiceConfig,
 };
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -18,10 +18,12 @@ use crate::utils::response::ApiResponse;
 
 /// 配置认证路由
 pub fn configure(cfg: &mut ServiceConfig) {
-    cfg.service(web::scope("/api/auth")
-        .route("/wechat-login", web::post().to(wechat_login))
-        .route("/refresh", web::post().to(refresh_token))
-        .route("/logout", web::post().to(logout)));
+    cfg.service(
+        web::scope("/api/auth")
+            .route("/wechat-login", web::post().to(wechat_login))
+            .route("/refresh", web::post().to(refresh_token))
+            .route("/logout", web::post().to(logout)),
+    );
 }
 
 /// 刷新访问令牌请求
@@ -264,10 +266,7 @@ async fn get_wechat_openid(code: &str, state: &AppState) -> Result<String, Custo
                 .get("errmsg")
                 .and_then(|v| v.as_str())
                 .unwrap_or("未知错误");
-            return Err(CustomError::BadRequest(format!(
-                "微信认证失败: {}",
-                errmsg
-            )));
+            return Err(CustomError::BadRequest(format!("微信认证失败: {}", errmsg)));
         }
     }
 
@@ -286,8 +285,10 @@ async fn create_wechat_user(db: &sqlx::PgPool, openid: &str) -> Result<i64, Cust
     let username = format!("用户{:08x}", rand::random::<u32>());
 
     sqlx::query(
-        r#"INSERT INTO users (user_id, username, open_id, status, role, login_method, created_at, updated_at)
-           VALUES ($1, $2, $3, 'ACTIVE', 'ORDERING'::user_role_enum, 'WEIXIN'::login_method_enum, NOW(), NOW())"#,
+        // nick_name 默认 = username,避免新用户没有昵称导致前端展示空白
+        // 用户后续可在 profile 修改 nick_name
+        r#"INSERT INTO users (user_id, username, nick_name, open_id, status, role, login_method, created_at, updated_at)
+           VALUES ($1, $2, $2, $3, 'ACTIVE', 'ORDERING'::user_role_enum, 'WEIXIN'::login_method_enum, NOW(), NOW())"#,
     )
     .bind(user_id)
     .bind(&username)
