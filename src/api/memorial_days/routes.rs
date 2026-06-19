@@ -90,6 +90,10 @@ pub struct CreateMemorialDayInput {
     pub is_leap_month: Option<bool>,  // 是否闰月（仅 LUNAR）
 }
 
+/// 更新纪念日输入
+///
+/// **设计约束**:不接收 `isDefault` 字段。pin 走专门的 `POST /pin` 端点,
+/// PATCH 只动 name/description/date/calendar 等普通字段,防止 PATCH 绕过 pin 流程。
 #[derive(Debug, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct UpdateMemorialDayInput {
