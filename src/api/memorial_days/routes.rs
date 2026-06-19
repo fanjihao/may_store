@@ -16,6 +16,7 @@ use crate::config::AppState;
 use crate::errors::CustomError;
 use crate::middlewares::auth::UserToken;
 use crate::middlewares::require_group::RequireGroup;
+use crate::models::pagination::{decode_cursor, encode_cursor, CursorPage};
 use crate::utils::response::ApiResponse;
 
 use chinese_lunisolar_calendar::LunisolarDate;
@@ -112,8 +113,18 @@ pub struct UpdateMemorialDayInput {
 #[serde(rename_all = "camelCase")]
 #[into_params(parameter_in = Query)]
 pub struct ListMemorialDaysQuery {
+    pub cursor: Option<String>,         // 上一页响应里的 next_cursor
     pub limit: Option<i64>,            // 默认 50, 最大 100
     pub upcoming_days: Option<i64>,    // 只返回 N 天内即将到来的
+}
+
+/// Cursor payload: 编码 (is_default, memorial_date, id) 三元组
+/// 用于纪念日列表的多字段排序 (is_default DESC, memorial_date ASC) 的稳定分页
+#[derive(Debug, Serialize, Deserialize)]
+struct MemorialDayCursor {
+    is_default: i16,
+    memorial_date: NaiveDate,
+    id: i64,
 }
 
 #[derive(Debug, Deserialize, utoipa::IntoParams)]
@@ -194,11 +205,12 @@ fn next_solar_occurrence(memorial_date: NaiveDate, today: NaiveDate) -> NaiveDat
     tag = "纪念日 (§24.9)",
     params(
         ("group_id" = i64, Path, description = "组 ID"),
+        ("cursor" = Option<String>, Query, description = "上一页响应里的 next_cursor"),
         ("limit" = Option<i64>, Query, description = "限制条数"),
         ("upcoming_days" = Option<i64>, Query, description = "只返回 N 天内即将到来")
     ),
     responses(
-        (status = 200, description = "成功"),
+        (status = 200, description = "成功", body = CursorPage<MemorialDayOut>),
         (status = 401, description = "未登录")
     ),
     security(("bearer_auth" = []))
@@ -213,25 +225,48 @@ pub async fn list_memorial_days(
     let group_id = path.into_inner();
     let limit = query.limit.unwrap_or(50).min(100);
     let upcoming_days = query.upcoming_days;
+    let cursor = query
+        .cursor
+        .as_deref()
+        .and_then(decode_cursor::<MemorialDayCursor>);
 
     // 校验成员身份
     verify_group_member(&state, token.user_id, group_id).await?;
 
     let today = chrono::Local::now().date_naive();
+
+    // Cursor 元组: (is_default, memorial_date, id) 全部 Option,
+    // 这样能用一条 SQL + COALESCE 风格的 NULL 短路
+    let (c_is_default, c_memorial_date, c_id): (Option<i16>, Option<NaiveDate>, Option<i64>) =
+        match &cursor {
+            Some(c) => (Some(c.is_default), Some(c.memorial_date), Some(c.id)),
+            None => (None, None, None),
+        };
+
+    // 多 limit+1 行,用来判定 has_more
     let rows = sqlx::query(
         r#"SELECT id, group_id, name, description, memorial_date, calendar_type,
                   lunar_month, lunar_day, is_leap_month, is_default, created_at
            FROM memorial_day
            WHERE group_id = $1
-           ORDER BY is_default DESC, memorial_date ASC
-           LIMIT $2"#,
+             AND (
+               $2::SMALLINT IS NULL
+               OR is_default < $2
+               OR (is_default = $2 AND memorial_date > $3)
+               OR (is_default = $2 AND memorial_date = $3 AND id > $4)
+             )
+           ORDER BY is_default DESC, memorial_date ASC, id ASC
+           LIMIT $5"#,
     )
     .bind(group_id)
-    .bind(limit)
+    .bind(c_is_default)
+    .bind(c_memorial_date)
+    .bind(c_id)
+    .bind(limit + 1)
     .fetch_all(&state.db_pool)
     .await?;
 
-    let result: Vec<MemorialDayOut> = rows
+    let mut result: Vec<MemorialDayOut> = rows
         .into_iter()
         .map(|r| {
             let memorial_date: NaiveDate = r.get("memorial_date");
@@ -271,7 +306,30 @@ pub async fn list_memorial_days(
         })
         .collect();
 
-    Ok(ApiResponse::success(result))
+    let has_more = result.len() > limit as usize;
+    if has_more {
+        result.truncate(limit as usize);
+    }
+
+    // next_cursor 用返回的最后一条的 (is_default, memorial_date, id)
+    let next_cursor = if has_more {
+        result.last().map(|last| {
+            encode_cursor(&MemorialDayCursor {
+                is_default: last.is_default,
+                memorial_date: last.memorial_date,
+                id: last.id,
+            })
+        })
+    } else {
+        None
+    };
+
+    Ok(ApiResponse::success(CursorPage {
+        items: result,
+        next_cursor,
+        has_more,
+        total: None,
+    }))
 }
 
 /// 创建纪念日

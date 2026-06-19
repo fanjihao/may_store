@@ -14,6 +14,7 @@ use utoipa::ToSchema;
 use crate::config::AppState;
 use crate::errors::CustomError;
 use crate::middlewares::admin_auth::AdminToken;
+use crate::models::pagination::{decode_cursor, encode_cursor, CursorPage};
 use crate::utils::response::ApiResponse;
 
 /// 配置后台管理路由
@@ -1160,8 +1161,16 @@ pub struct OrderRewardReviewInput {
 #[serde(rename_all = "camelCase")]
 #[into_params(parameter_in = Query)]
 pub struct PendingFoodAuditQuery {
+    pub cursor: Option<String>,         // 上一页响应里的 next_cursor
     pub limit: Option<i64>,
-    pub offset: Option<i64>,
+}
+
+/// Cursor payload: 编码 (created_at, food_id) 二元组
+/// 用于待审核菜品列表排序 (created_at ASC) 的稳定分页
+#[derive(Debug, Serialize, Deserialize)]
+struct PendingFoodCursor {
+    created_at: chrono::DateTime<chrono::Utc>,
+    food_id: i64,
 }
 
 /// 审核结果
@@ -1192,15 +1201,9 @@ pub struct PendingFoodOut {
     pub submitted_at: chrono::DateTime<chrono::Utc>,
 }
 
-/// 待审核菜品列表响应
-#[derive(Debug, Serialize, ToSchema)]
-#[serde(rename_all = "camelCase")]
-pub struct PendingFoodAuditListResponse {
-    pub items: Vec<PendingFoodOut>,
-    pub total: i64,
-    pub limit: i64,
-    pub offset: i64,
-}
+/// 待审核菜品列表响应（使用项目标准的 CursorPage）
+/// 与其他接口保持一致: cursor + next_cursor + has_more + total
+pub type PendingFoodAuditListResponse = CursorPage<PendingFoodOut>;
 
 /// 菜品审核结果响应
 #[derive(Debug, Serialize, ToSchema)]
@@ -1227,8 +1230,8 @@ pub struct FoodAuditInput {
     path = "/api/admin/foods/pending",
     tag = "菜品审核 (§24.7)",
     params(
-        ("limit" = Option<i64>, Query, description = "默认 20"),
-        ("offset" = Option<i64>, Query)
+        ("cursor" = Option<String>, Query, description = "上一页响应里的 next_cursor"),
+        ("limit" = Option<i64>, Query, description = "默认 20")
     ),
     responses(
         (status = 200, description = "获取成功", body = PendingFoodAuditListResponse)
@@ -1241,17 +1244,32 @@ pub async fn list_pending_food_audits(
     query: Query<PendingFoodAuditQuery>,
 ) -> Result<HttpResponse, CustomError> {
     let limit = query.limit.unwrap_or(20).min(100);
-    let offset = query.offset.unwrap_or(0);
+    let cursor = query
+        .cursor
+        .as_deref()
+        .and_then(decode_cursor::<PendingFoodCursor>);
+
+    let (c_created_at, c_food_id): (Option<chrono::DateTime<chrono::Utc>>, Option<i64>) =
+        match &cursor {
+            Some(c) => (Some(c.created_at), Some(c.food_id)),
+            None => (None, None),
+        };
 
     let rows = sqlx::query(
         r#"SELECT food_id, food_name, food_photo, group_id, created_by, apply_status, apply_remark, created_at
            FROM foods
            WHERE apply_status = 'PENDING' AND is_del = 0
-           ORDER BY created_at ASC
-           LIMIT $1 OFFSET $2"#,
+             AND (
+               $1::TIMESTAMPTZ IS NULL
+               OR created_at > $1
+               OR (created_at = $1 AND food_id > $2)
+             )
+           ORDER BY created_at ASC, food_id ASC
+           LIMIT $3"#,
     )
-    .bind(limit)
-    .bind(offset)
+    .bind(c_created_at)
+    .bind(c_food_id)
+    .bind(limit + 1)
     .fetch_all(&state.db_pool)
     .await?;
 
@@ -1261,7 +1279,7 @@ pub async fn list_pending_food_audits(
     .fetch_one(&state.db_pool)
     .await?;
 
-    let items: Vec<PendingFoodOut> = rows
+    let mut items: Vec<PendingFoodOut> = rows
         .iter()
         .map(|r| PendingFoodOut {
             food_id: r.get("food_id"),
@@ -1275,11 +1293,27 @@ pub async fn list_pending_food_audits(
         })
         .collect();
 
+    let has_more = items.len() > limit as usize;
+    if has_more {
+        items.truncate(limit as usize);
+    }
+
+    let next_cursor = if has_more {
+        items.last().map(|last| {
+            encode_cursor(&PendingFoodCursor {
+                created_at: last.submitted_at,
+                food_id: last.food_id,
+            })
+        })
+    } else {
+        None
+    };
+
     Ok(ApiResponse::success(PendingFoodAuditListResponse {
         items,
-        total,
-        limit,
-        offset,
+        next_cursor,
+        has_more,
+        total: Some(total),
     }))
 }
 

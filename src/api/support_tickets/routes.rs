@@ -16,6 +16,7 @@ use utoipa::ToSchema;
 use crate::config::AppState;
 use crate::errors::CustomError;
 use crate::middlewares::auth::UserToken;
+use crate::models::pagination::{decode_cursor, encode_cursor, CursorPage};
 use crate::utils::response::ApiResponse;
 
 pub fn configure(cfg: &mut ServiceConfig) {
@@ -60,8 +61,16 @@ pub struct CreateTicketInput {
 #[serde(rename_all = "camelCase")]
 #[into_params(parameter_in = Query)]
 pub struct ListMyTicketsQuery {
+    pub cursor: Option<String>,         // 上一页响应里的 next_cursor
     pub status: Option<String>,         // 筛选 PENDING / PROCESSING / RESOLVED / CLOSED
     pub limit: Option<i64>,            // 默认 20
+}
+
+/// Cursor payload: 编码 ticket_id（用 ticket_id 单一字段做稳定分页，
+/// 因为 created_at DESC 时 ticket_id 升序作为稳定的 tiebreaker）
+#[derive(Debug, Serialize, Deserialize)]
+struct TicketCursor {
+    ticket_id: i64,
 }
 
 /// 用户提交工单
@@ -159,8 +168,13 @@ pub async fn create_ticket(
     path = "/api/support-tickets",
     tag = "客服工单 (§15.3)",
     params(
+        ("cursor" = Option<String>, Query, description = "上一页响应里的 next_cursor"),
         ("status" = Option<String>, Query),
         ("limit" = Option<i64>, Query)
+    ),
+    responses(
+        (status = 200, description = "成功", body = CursorPage<TicketOut>),
+        (status = 401, description = "未登录")
     ),
     security(("bearer_auth" = []))
 )]
@@ -170,39 +184,48 @@ pub async fn list_my_tickets(
     query: Query<ListMyTicketsQuery>,
 ) -> Result<impl Responder, CustomError> {
     let limit = query.limit.unwrap_or(20).min(100);
-    let status = query.status.as_deref();
+    let status = query.status.clone();
+    let cursor = query.cursor.as_deref().and_then(decode_cursor::<TicketCursor>);
+    let c_ticket_id: Option<i64> = cursor.as_ref().map(|c| c.ticket_id);
 
-    let rows = if let Some(s) = status {
-        sqlx::query(
-            r#"SELECT ticket_id, user_id, group_id, order_id, wish_id, category, content, images,
-                      status, handler_id, resolution, created_at, resolved_at
-               FROM support_tickets
-               WHERE user_id = $1 AND status = $2
-               ORDER BY created_at DESC
-               LIMIT $3"#,
-        )
-        .bind(token.user_id)
-        .bind(s)
-        .bind(limit)
-        .fetch_all(&state.db_pool)
-        .await?
+    let rows = sqlx::query(
+        r#"SELECT ticket_id, user_id, group_id, order_id, wish_id, category, content, images,
+                  status, handler_id, resolution, created_at, resolved_at
+           FROM support_tickets
+           WHERE user_id = $1
+             AND ($2::TEXT IS NULL OR status = $2)
+             AND ($3::BIGINT IS NULL OR ticket_id < $3)
+           ORDER BY created_at DESC, ticket_id ASC
+           LIMIT $4"#,
+    )
+    .bind(token.user_id)
+    .bind(status)
+    .bind(c_ticket_id)
+    .bind(limit + 1)
+    .fetch_all(&state.db_pool)
+    .await?;
+
+    let mut tickets: Vec<TicketOut> = rows.iter().map(row_to_ticket_out).collect();
+
+    let has_more = tickets.len() > limit as usize;
+    if has_more {
+        tickets.truncate(limit as usize);
+    }
+
+    let next_cursor = if has_more {
+        tickets.last().map(|t| {
+            encode_cursor(&TicketCursor { ticket_id: t.ticket_id })
+        })
     } else {
-        sqlx::query(
-            r#"SELECT ticket_id, user_id, group_id, order_id, wish_id, category, content, images,
-                      status, handler_id, resolution, created_at, resolved_at
-               FROM support_tickets
-               WHERE user_id = $1
-               ORDER BY created_at DESC
-               LIMIT $2"#,
-        )
-        .bind(token.user_id)
-        .bind(limit)
-        .fetch_all(&state.db_pool)
-        .await?
+        None
     };
 
-    let tickets: Vec<TicketOut> = rows.iter().map(row_to_ticket_out).collect();
-    Ok(ApiResponse::success(tickets))
+    Ok(ApiResponse::success(CursorPage {
+        items: tickets,
+        next_cursor,
+        has_more,
+        total: None,
+    }))
 }
 
 /// 用户查看工单详情

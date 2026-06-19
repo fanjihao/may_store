@@ -212,6 +212,13 @@ impl Modify for SecurityAddon {
             crate::api::foods::routes::FoodDetail,
             crate::api::foods::routes::FoodSummary,
             crate::api::foods::routes::FoodListResponse,
+            // -- Tags (菜品标签 §24.4) --
+            crate::api::tags::routes::TagOut,
+            // -- Food Marks (菜品标记 §24.6) --
+            // -- Support Tickets (客服工单 §15.3) --
+            crate::api::support_tickets::routes::TicketOut,
+            // -- Admin 菜品审核 (§24.7) --
+            crate::api::admin::routes::PendingFoodOut,
             // -- Orders --
             crate::api::orders::routes::OrderCancelInput,
             crate::api::orders::routes::OrderRejectInput,

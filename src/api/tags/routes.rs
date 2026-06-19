@@ -16,6 +16,7 @@ use crate::config::AppState;
 use crate::errors::CustomError;
 use crate::middlewares::auth::UserToken;
 use crate::middlewares::require_group::RequireGroup;
+use crate::models::pagination::{decode_cursor, encode_cursor, CursorPage};
 use crate::utils::response::ApiResponse;
 
 pub fn configure(cfg: &mut ServiceConfig) {
@@ -63,8 +64,17 @@ pub struct UpdateTagInput {
 #[serde(rename_all = "camelCase")]
 #[into_params(parameter_in = Query)]
 pub struct ListTagsQuery {
+    pub cursor: Option<String>,         // 上一页响应里的 next_cursor
     pub keyword: Option<String>,        // 按名称模糊搜索
     pub limit: Option<i64>,            // 默认 50
+}
+
+/// Cursor payload: 编码 (sort, tag_id) 二元组
+/// 用于标签列表的多字段排序 (sort ASC, tag_id ASC) 的稳定分页
+#[derive(Debug, Serialize, Deserialize)]
+struct TagCursor {
+    sort: i32,
+    tag_id: i64,
 }
 
 /// 列出组内标签（包含全局标签）
@@ -74,11 +84,12 @@ pub struct ListTagsQuery {
     tag = "菜品标签 (§24.4)",
     params(
         ("group_id" = i64, Path, description = "组 ID"),
+        ("cursor" = Option<String>, Query, description = "上一页响应里的 next_cursor"),
         ("keyword" = Option<String>, Query),
         ("limit" = Option<i64>, Query)
     ),
     responses(
-        (status = 200, description = "获取成功", body = Vec<TagOut>),
+        (status = 200, description = "获取成功", body = CursorPage<TagOut>),
         (status = 403, description = "无权访问该组")
     ),
     security(("bearer_auth" = []))
@@ -92,8 +103,14 @@ pub async fn list_tags(
 ) -> Result<impl Responder, CustomError> {
     let group_id = path.into_inner();
     let limit = query.limit.unwrap_or(50).min(200);
+    let cursor = query.cursor.as_deref().and_then(decode_cursor::<TagCursor>);
 
     let keyword_pattern = query.keyword.as_ref().map(|k| format!("%{}%", k));
+
+    let (c_sort, c_tag_id): (Option<i32>, Option<i64>) = match &cursor {
+        Some(c) => (Some(c.sort), Some(c.tag_id)),
+        None => (None, None),
+    };
 
     let rows = sqlx::query(
         r#"SELECT t.tag_id, t.tag_name, t.icon, t.group_id, t.sort, t.created_at,
@@ -106,16 +123,22 @@ pub async fn list_tags(
            ) fc ON fc.tag_id = t.tag_id
            WHERE (t.group_id = $1 OR t.group_id IS NULL)
              AND ($2::text IS NULL OR t.tag_name ILIKE $2)
+             AND (
+               $3::INTEGER IS NULL
+               OR (t.sort, t.tag_id) > ($3, $4)
+             )
            ORDER BY t.sort ASC, t.tag_id ASC
-           LIMIT $3"#,
+           LIMIT $5"#,
     )
     .bind(group_id)
     .bind(keyword_pattern)
-    .bind(limit)
+    .bind(c_sort)
+    .bind(c_tag_id)
+    .bind(limit + 1)
     .fetch_all(&state.db_pool)
     .await?;
 
-    let result: Vec<TagOut> = rows
+    let mut result: Vec<TagOut> = rows
         .into_iter()
         .map(|r| TagOut {
             tag_id: r.get("tag_id"),
@@ -128,7 +151,28 @@ pub async fn list_tags(
         })
         .collect();
 
-    Ok(ApiResponse::success(result))
+    let has_more = result.len() > limit as usize;
+    if has_more {
+        result.truncate(limit as usize);
+    }
+
+    let next_cursor = if has_more {
+        result.last().map(|last| {
+            encode_cursor(&TagCursor {
+                sort: last.sort,
+                tag_id: last.tag_id,
+            })
+        })
+    } else {
+        None
+    };
+
+    Ok(ApiResponse::success(CursorPage {
+        items: result,
+        next_cursor,
+        has_more,
+        total: None,
+    }))
 }
 
 /// 创建标签
