@@ -55,7 +55,7 @@ pub struct MemorialDayOut {
     pub lunar_month: Option<i16>,
     pub lunar_day: Option<i16>,
     pub is_leap_month: bool,
-    pub is_default: bool,
+    pub is_default: i16,
     pub days_until: i64,             // 距离今天还有几天（负数=已过）
     pub created_at: chrono::DateTime<chrono::Utc>,
 }
