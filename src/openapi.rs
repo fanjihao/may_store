@@ -85,6 +85,7 @@ impl Modify for SecurityAddon {
         crate::api::memorial_days::routes::update_memorial_day,
         crate::api::memorial_days::routes::delete_memorial_day,
         crate::api::memorial_days::routes::upcoming_memorial_days,
+        crate::api::memorial_days::routes::pin_memorial_day,
         // ==================== Footprint Groups (足迹分组 §24.10) ====================
         crate::api::footprint_groups::routes::list_footprint_groups,
         crate::api::footprint_groups::routes::create_footprint_group,

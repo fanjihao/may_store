@@ -34,6 +34,10 @@ pub fn configure(cfg: &mut ServiceConfig) {
             .route(web::patch().to(update_memorial_day))
             .route(web::delete().to(delete_memorial_day)),
     );
+    cfg.service(
+        web::resource("/api/groups/{group_id}/memorial-days/{id}/pin")
+            .route(web::post().to(pin_memorial_day)),
+    );
 }
 
 // ========== 实体 / DTO ==========
@@ -439,6 +443,79 @@ pub async fn delete_memorial_day(
         return Err(CustomError::resource_not_found("纪念日不存在"));
     }
     Ok(ApiResponse::success(serde_json::json!({ "deleted": true })))
+}
+
+/// 置顶纪念日
+/// POST /api/groups/{group_id}/memorial-days/{id}/pin
+///
+/// 行为：
+/// - 事务里先清掉同组之前的置顶,再设新置顶（保证"一组同时只能 1 条"）
+/// - 不存在 / 跨组 → 404
+/// - 非组成员 → 403
+/// - 成功 → 200 + { pinnedId, pinnedAt }
+#[utoipa::path(
+    post,
+    path = "/api/groups/{group_id}/memorial-days/{id}/pin",
+    tag = "纪念日 (§24.9)",
+    params(
+        ("group_id" = i64, Path, description = "组 ID"),
+        ("id" = i64, Path, description = "纪念日 ID")
+    ),
+    responses(
+        (status = 200, description = "置顶成功"),
+        (status = 401, description = "未登录"),
+        (status = 403, description = "非组成员"),
+        (status = 404, description = "纪念日不存在")
+    ),
+    security(("bearer_auth" = []))
+)]
+pub async fn pin_memorial_day(
+    state: State<Arc<AppState>>,
+    token: UserToken,
+    _require: RequireGroup,
+    path: Path<(i64, i64)>,
+) -> Result<impl Responder, CustomError> {
+    let (group_id, id) = path.into_inner();
+    verify_group_member(&state, token.user_id, group_id).await?;
+
+    let mut tx = state.db_pool.begin().await?;
+
+    // 1) 清掉同组之前的置顶
+    sqlx::query("UPDATE memorial_day SET is_default = 0 WHERE group_id = $1 AND is_default = 1")
+        .bind(group_id)
+        .execute(&mut *tx)
+        .await?;
+
+    // 2) 设新置顶 (同时刷新 updated_at,作为 pinnedAt 返回)
+    let updated = sqlx::query(
+        "UPDATE memorial_day SET is_default = 1, updated_at = NOW() WHERE id = $1 AND group_id = $2",
+    )
+    .bind(id)
+    .bind(group_id)
+    .execute(&mut *tx)
+    .await?;
+
+    if updated.rows_affected() == 0 {
+        // 回滚 + 404
+        tx.rollback().await?;
+        return Err(CustomError::resource_not_found("纪念日不存在"));
+    }
+
+    // 3) 取回置顶时间（updated_at）作为 pinnedAt 返回
+    let row: (chrono::DateTime<chrono::Utc>,) = sqlx::query_as(
+        "SELECT updated_at FROM memorial_day WHERE id = $1 AND group_id = $2",
+    )
+    .bind(id)
+    .bind(group_id)
+    .fetch_one(&mut *tx)
+    .await?;
+
+    tx.commit().await?;
+
+    Ok(ApiResponse::success(PinResponse {
+        pinned_id: Some(id),
+        pinned_at: Some(row.0.to_rfc3339()),
+    }))
 }
 
 /// 即将到来的纪念日列表
