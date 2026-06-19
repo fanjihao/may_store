@@ -36,7 +36,8 @@ pub fn configure(cfg: &mut ServiceConfig) {
     );
     cfg.service(
         web::resource("/api/groups/{group_id}/memorial-days/{id}/pin")
-            .route(web::post().to(pin_memorial_day)),
+            .route(web::post().to(pin_memorial_day))
+            .route(web::delete().to(unpin_memorial_day)),
     );
 }
 
@@ -516,6 +517,49 @@ pub async fn pin_memorial_day(
         pinned_id: Some(id),
         pinned_at: Some(row.0.to_rfc3339()),
     }))
+}
+
+/// 取消置顶纪念日
+/// DELETE /api/groups/{group_id}/memorial-days/{id}/pin
+///
+/// 行为：
+/// - 把指定纪念日的 is_default 设为 0
+/// - 不存在 / 跨组 / 本来就未置顶 → 一律返回 200（幂等，不泄露旁路信息）
+/// - 非组成员 → 403
+#[utoipa::path(
+    delete,
+    path = "/api/groups/{group_id}/memorial-days/{id}/pin",
+    tag = "纪念日 (§24.9)",
+    params(
+        ("group_id" = i64, Path, description = "组 ID"),
+        ("id" = i64, Path, description = "纪念日 ID")
+    ),
+    responses(
+        (status = 200, description = "取消置顶成功（幂等）"),
+        (status = 401, description = "未登录"),
+        (status = 403, description = "非组成员")
+    ),
+    security(("bearer_auth" = []))
+)]
+pub async fn unpin_memorial_day(
+    state: State<Arc<AppState>>,
+    token: UserToken,
+    _require: RequireGroup,
+    path: Path<(i64, i64)>,
+) -> Result<impl Responder, CustomError> {
+    let (group_id, id) = path.into_inner();
+    verify_group_member(&state, token.user_id, group_id).await?;
+
+    // 幂等：不管该条纪念日存不存在、是 0 还是 1，都直接 UPDATE
+    let _ = sqlx::query(
+        "UPDATE memorial_day SET is_default = 0 WHERE id = $1 AND group_id = $2 AND is_default = 1",
+    )
+    .bind(id)
+    .bind(group_id)
+    .execute(&state.db_pool)
+    .await?;
+
+    Ok(ApiResponse::success(UnpinResponse { pinned_id: None }))
 }
 
 /// 即将到来的纪念日列表
