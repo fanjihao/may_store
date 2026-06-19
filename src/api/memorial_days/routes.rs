@@ -195,7 +195,7 @@ pub async fn list_memorial_days(
                   lunar_month, lunar_day, is_leap_month, is_default, created_at
            FROM memorial_day
            WHERE group_id = $1
-           ORDER BY memorial_date ASC
+           ORDER BY is_default DESC, memorial_date ASC
            LIMIT $2"#,
     )
     .bind(group_id)
@@ -591,7 +591,7 @@ pub async fn upcoming_memorial_days(
                   lunar_month, lunar_day, is_leap_month, is_default, created_at
            FROM memorial_day
            WHERE group_id = $1
-           ORDER BY memorial_date ASC"#,
+           ORDER BY is_default DESC, memorial_date ASC"#,
     )
     .bind(group_id)
     .fetch_all(&state.db_pool)
