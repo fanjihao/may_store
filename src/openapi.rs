@@ -258,6 +258,8 @@ impl Modify for SecurityAddon {
             crate::api::memorial_days::routes::CreateMemorialDayInput,
             crate::api::memorial_days::routes::UpdateMemorialDayInput,
             crate::api::memorial_days::routes::MemorialDayOut,
+            crate::api::memorial_days::routes::PinResponse,
+            crate::api::memorial_days::routes::UnpinResponse,
             // -- Footprints --
             crate::api::footprints::routes::CreateFootprintRequest,
             crate::api::footprints::routes::FootprintItem,

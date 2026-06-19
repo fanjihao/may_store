@@ -55,6 +55,24 @@ pub struct MemorialDayOut {
     pub created_at: chrono::DateTime<chrono::Utc>,
 }
 
+/// 置顶响应
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct PinResponse {
+    /// 当前置顶的纪念日 ID（None = 没置顶）
+    pub pinned_id: Option<i64>,
+    /// 置顶时间（ISO8601 字符串，None = 没置顶）
+    pub pinned_at: Option<String>,
+}
+
+/// 取消置顶响应
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct UnpinResponse {
+    /// 置顶后该字段为 None
+    pub pinned_id: Option<i64>,
+}
+
 #[derive(Debug, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct CreateMemorialDayInput {
@@ -511,4 +529,36 @@ async fn verify_group_member(state: &Arc<AppState>, user_id: i64, group_id: i64)
         return Err(CustomError::permission_denied("不是该组成员"));
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn pin_response_serializes_to_camel_case() {
+        let resp = PinResponse {
+            pinned_id: Some(100),
+            pinned_at: Some("2026-06-19T10:30:00Z".to_string()),
+        };
+        let json = serde_json::to_string(&resp).unwrap();
+        assert_eq!(
+            json,
+            r#"{"pinnedId":100,"pinnedAt":"2026-06-19T10:30:00Z"}"#
+        );
+    }
+
+    #[test]
+    fn unpin_response_serializes_to_null_pinned_id() {
+        let resp = UnpinResponse { pinned_id: None };
+        let json = serde_json::to_string(&resp).unwrap();
+        assert_eq!(json, r#"{"pinnedId":null}"#);
+    }
+
+    #[test]
+    fn pin_response_optional_pinned_at() {
+        let resp = PinResponse { pinned_id: None, pinned_at: None };
+        let json = serde_json::to_string(&resp).unwrap();
+        assert_eq!(json, r#"{"pinnedId":null,"pinnedAt":null}"#);
+    }
 }
