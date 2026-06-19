@@ -18,6 +18,8 @@ use crate::middlewares::auth::UserToken;
 use crate::middlewares::require_group::RequireGroup;
 use crate::utils::response::ApiResponse;
 
+use chinese_lunisolar_calendar::LunisolarDate;
+
 pub fn configure(cfg: &mut ServiceConfig) {
     cfg.service(
         web::resource("/api/groups/{group_id}/memorial-days")
@@ -129,21 +131,43 @@ fn days_until_next_occurrence(
     calendar_type: &str,
     lunar_month: Option<i16>,
     lunar_day: Option<i16>,
-    _is_leap_month: bool,
+    is_leap_month: bool,
     today: NaiveDate,
 ) -> i64 {
     if calendar_type == "SOLAR" {
         let next = next_solar_occurrence(memorial_date, today);
         (next - today).num_days()
     } else {
-        // 阴历：按月+日匹配明年（简化：明年同月同日）
+        // 阴历：用 chinese-lunisolar-calendar 做真实阴历→阳历转换
+        // 1) 试今年;过了或闰月不存在 → 试明年
+        // 2) 两年都失败 → 0 (sentinel,跟原来 lunar_month/lunar_day 为 None 时的行为一致)
         if let (Some(m), Some(d)) = (lunar_month, lunar_day) {
-            // 简化处理：阴历纪念日转换为阳历近似日期
-            // MVP: 假设每年阳历同日（生产可接入 chinese-lunisolar-calendar 库）
-            let next_year = today.year() + 1;
-            let approx = NaiveDate::from_ymd_opt(next_year, m as u32, d as u32)
-                .unwrap_or(memorial_date);
-            (approx - today).num_days()
+            let year = today.year() as u16;
+            let m_u8 = m as u8;
+            let d_u8 = d as u8;
+
+            let next_solar = (|| -> Option<NaiveDate> {
+                // 试今年
+                if let Ok(lunar) = LunisolarDate::from_ymd(year, m_u8, is_leap_month, d_u8) {
+                    let s = lunar.to_naive_date();
+                    if s >= today {
+                        return Some(s);
+                    }
+                }
+                // 试明年
+                if let Ok(lunar) = LunisolarDate::from_ymd(year + 1, m_u8, is_leap_month, d_u8) {
+                    let s = lunar.to_naive_date();
+                    if s >= today {
+                        return Some(s);
+                    }
+                }
+                None
+            })();
+
+            match next_solar {
+                Some(s) => (s - today).num_days(),
+                None => 0,
+            }
         } else {
             0
         }
@@ -685,5 +709,94 @@ mod tests {
         let resp = PinResponse { pinned_id: None, pinned_at: None };
         let json = serde_json::to_string(&resp).unwrap();
         assert_eq!(json, r#"{"pinnedId":null,"pinnedAt":null}"#);
+    }
+
+    // ============ days_until_next_occurrence 单测 ============
+
+    fn date(y: i32, m: u32, d: u32) -> NaiveDate {
+        NaiveDate::from_ymd_opt(y, m, d).unwrap()
+    }
+
+    /// 阳历未到 → 算到今年
+    #[test]
+    fn days_until_solar_future_uses_same_year() {
+        let today = date(2026, 6, 19);
+        // 纪念日 2026-12-25,今天 6/19 → 用今年,189 天
+        let days = days_until_next_occurrence(
+            date(2025, 12, 25), "SOLAR", None, None, false, today,
+        );
+        assert_eq!(days, 189);
+    }
+
+    /// 阳历已过 → 算到明年
+    #[test]
+    fn days_until_solar_past_jumps_to_next_year() {
+        let today = date(2026, 6, 19);
+        // 纪念日 2025-06-10, 今年 6/10 已过 → 算到 2027-06-10
+        // 2027-06-10 - 2026-06-19 = 356 天
+        let days = days_until_next_occurrence(
+            date(2025, 6, 10), "SOLAR", None, None, false, today,
+        );
+        assert_eq!(days, 356);
+    }
+
+    /// 阳历今天 → 0 天(今天就是纪念日)
+    #[test]
+    fn days_until_solar_today_is_zero() {
+        let today = date(2026, 6, 19);
+        let days = days_until_next_occurrence(
+            date(2024, 6, 19), "SOLAR", None, None, false, today,
+        );
+        assert_eq!(days, 0);
+    }
+
+    /// 阴历 8/15(中秋)用真转换: 2026 中秋 = 2026-09-25
+    /// 今天 2026-06-19 → 98 天
+    #[test]
+    fn days_until_lunar_mid_autumn_2026() {
+        let today = date(2026, 6, 19);
+        let days = days_until_next_occurrence(
+            today, "LUNAR", Some(8), Some(15), false, today,
+        );
+        assert_eq!(days, 98); // 2026-09-25 - 2026-06-19
+    }
+
+    /// 阴历 8/15 在 2026 中秋之后 → 跳到 2027 中秋
+    /// 2027 中秋的阳历日期由库算出,不写死
+    #[test]
+    fn days_until_lunar_past_jumps_to_next_year() {
+        let today = date(2026, 10, 1); // 2026 中秋已过
+        let next_mid_autumn = LunisolarDate::from_ymd(2027, 8, false, 15)
+            .unwrap()
+            .to_naive_date();
+        let expected = (next_mid_autumn - today).num_days();
+        let days = days_until_next_occurrence(
+            today, "LUNAR", Some(8), Some(15), false, today,
+        );
+        assert_eq!(days, expected);
+        assert!(days > 0, "下一个中秋应该在未来,不应是 0 或负数");
+    }
+
+    /// 闰月在该年不存在 → 试明年 → 都失败时返 0 (sentinel)
+    /// 用 2026 闰六月 (2026 没有闰月) 触发 Err,不论 2027 有没有都不会 panic
+    #[test]
+    fn days_until_lunar_invalid_leap_does_not_panic() {
+        let today = date(2026, 6, 19);
+        let days = days_until_next_occurrence(
+            today, "LUNAR", Some(6), Some(1), true, today,
+        );
+        // 2026 闰六月不存在 → Err → 试 2027 → 可能 Ok 也可能 Err
+        // 不管哪种,函数都不 panic,且返回值 >= 0
+        assert!(days >= 0, "闰月 fallback 不应返回负数");
+    }
+
+    /// 阴历但 lunar_month 或 lunar_day 缺失 → 0 (sentinel)
+    #[test]
+    fn days_until_lunar_missing_fields_returns_zero() {
+        let today = date(2026, 6, 19);
+        let days = days_until_next_occurrence(
+            today, "LUNAR", None, Some(15), false, today,
+        );
+        assert_eq!(days, 0);
     }
 }
