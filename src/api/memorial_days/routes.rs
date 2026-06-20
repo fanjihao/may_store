@@ -459,6 +459,11 @@ pub async fn update_memorial_day(
     let input = body.into_inner();
     verify_group_member(&state, token.user_id, group_id).await?;
 
+    // 校验:把 calendarType 改成 LUNAR 时必须同时提供 lunarMonth 和 lunarDay
+    // 否则 DB 会留下半残数据(calendar_type=LUNAR 但 lunar_month/lunar_day 都是 NULL),
+    // 导致 days_until_next_occurrence 返 0。create_memorial_day 已有同等校验。
+    validate_update_memorial_day_input(&input)?;
+
     // 动态更新（仅更新有值的字段）
     let mut updates = Vec::new();
     if input.name.is_some() { updates.push("name = $3"); }
@@ -694,6 +699,22 @@ pub async fn upcoming_memorial_days(
 
 // ========== 辅助函数 ==========
 
+/// 校验 PATCH 输入:
+/// - 把 calendarType 改成 LUNAR 时必须同时提供 lunarMonth 和 lunarDay
+/// - 防止 DB 留下半残数据(calendar_type=LUNAR 但 lunar_month/lunar_day NULL),
+///   导致 days_until_next_occurrence 返 0
+/// - 跟 create_memorial_day 的同等校验对齐
+fn validate_update_memorial_day_input(input: &UpdateMemorialDayInput) -> Result<(), CustomError> {
+    if input.calendar_type.as_deref() == Some("LUNAR")
+        && (input.lunar_month.is_none() || input.lunar_day.is_none())
+    {
+        return Err(CustomError::invalid_parameter(
+            "calendarType 改为 LUNAR 时必须同时提供 lunarMonth 和 lunarDay",
+        ));
+    }
+    Ok(())
+}
+
 fn row_to_memorial_out(row: sqlx::postgres::PgRow, today: NaiveDate) -> MemorialDayOut {
     let memorial_date: NaiveDate = row.get("memorial_date");
     let calendar_type: String = row.get("calendar_type");
@@ -856,5 +877,69 @@ mod tests {
             today, "LUNAR", None, Some(15), false, today,
         );
         assert_eq!(days, 0);
+    }
+
+    // ============ validate_update_memorial_day_input 单测 ============
+
+    fn make_update_input(
+        calendar_type: Option<&str>,
+        lunar_month: Option<i16>,
+        lunar_day: Option<i16>,
+    ) -> UpdateMemorialDayInput {
+        UpdateMemorialDayInput {
+            name: None,
+            description: None,
+            memorial_date: None,
+            calendar_type: calendar_type.map(String::from),
+            lunar_month,
+            lunar_day,
+            is_leap_month: None,
+        }
+    }
+
+    /// 把 calendarType 改成 LUNAR 但缺 lunarMonth → 应拒绝
+    #[test]
+    fn validate_update_lunar_missing_month_rejected() {
+        let input = make_update_input(Some("LUNAR"), None, Some(15));
+        let result = validate_update_memorial_day_input(&input);
+        assert!(result.is_err(), "应该拒绝缺少 lunarMonth 的 LUNAR 更新");
+    }
+
+    /// 把 calendarType 改成 LUNAR 但缺 lunarDay → 应拒绝
+    #[test]
+    fn validate_update_lunar_missing_day_rejected() {
+        let input = make_update_input(Some("LUNAR"), Some(8), None);
+        let result = validate_update_memorial_day_input(&input);
+        assert!(result.is_err(), "应该拒绝缺少 lunarDay 的 LUNAR 更新");
+    }
+
+    /// calendarType=LUNAR + lunarMonth + lunarDay 都有 → 允许
+    #[test]
+    fn validate_update_lunar_complete_accepted() {
+        let input = make_update_input(Some("LUNAR"), Some(8), Some(15));
+        assert!(validate_update_memorial_day_input(&input).is_ok());
+    }
+
+    /// calendarType=SOLAR, lunar 字段不传 → 允许
+    #[test]
+    fn validate_update_solar_no_lunar_accepted() {
+        let input = make_update_input(Some("SOLAR"), None, None);
+        assert!(validate_update_memorial_day_input(&input).is_ok());
+    }
+
+    /// 不传 calendarType (PATCH 不动 calendar_type) → 允许 (不管原来是 SOLAR 还是 LUNAR)
+    #[test]
+    fn validate_update_no_calendar_type_change_accepted() {
+        let input_solar = make_update_input(None, None, None);
+        let input_lunar_incomplete = make_update_input(None, None, None);
+        assert!(validate_update_memorial_day_input(&input_solar).is_ok());
+        assert!(validate_update_memorial_day_input(&input_lunar_incomplete).is_ok());
+    }
+
+    /// calendarType=SOLAR 但带 lunar 字段 (改回 SOLAR + 留 lunar 数据) → 允许
+    #[test]
+    fn validate_update_solar_with_lunar_fields_accepted() {
+        let input = make_update_input(Some("SOLAR"), Some(8), Some(15));
+        assert!(validate_update_memorial_day_input(&input).is_ok());
     }
 }
