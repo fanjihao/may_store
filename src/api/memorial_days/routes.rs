@@ -137,6 +137,9 @@ pub struct UpcomingQuery {
 // ========== 工具函数 ==========
 
 /// 计算到下一个纪念日的天数
+///
+/// 语义:"下一次"指**下一个还没到的**周年。今天就是纪念日的话,
+/// "下一次"算明年同一天 (返回 ~365 天)。让前端用 0 表示"今天到了"即可。
 fn days_until_next_occurrence(
     memorial_date: NaiveDate,
     calendar_type: &str,
@@ -150,7 +153,7 @@ fn days_until_next_occurrence(
         (next - today).num_days()
     } else {
         // 阴历：用 chinese-lunisolar-calendar 做真实阴历→阳历转换
-        // 1) 试今年;过了或闰月不存在 → 试明年
+        // 1) 试今年;今年已过(<= today) → 试明年
         // 2) 两年都失败 → 0 (sentinel,跟原来 lunar_month/lunar_day 为 None 时的行为一致)
         if let (Some(m), Some(d)) = (lunar_month, lunar_day) {
             let year = today.year() as u16;
@@ -161,14 +164,14 @@ fn days_until_next_occurrence(
                 // 试今年
                 if let Ok(lunar) = LunisolarDate::from_ymd(year, m_u8, is_leap_month, d_u8) {
                     let s = lunar.to_naive_date();
-                    if s >= today {
+                    if s > today {
                         return Some(s);
                     }
                 }
                 // 试明年
                 if let Ok(lunar) = LunisolarDate::from_ymd(year + 1, m_u8, is_leap_month, d_u8) {
                     let s = lunar.to_naive_date();
-                    if s >= today {
+                    if s > today {
                         return Some(s);
                     }
                 }
@@ -189,7 +192,7 @@ fn next_solar_occurrence(memorial_date: NaiveDate, today: NaiveDate) -> NaiveDat
     let this_year_date = memorial_date
         .with_year(today.year())
         .unwrap_or(memorial_date);
-    if this_year_date >= today {
+    if this_year_date > today {
         this_year_date
     } else {
         memorial_date.with_year(today.year() + 1).unwrap_or(memorial_date)
@@ -819,14 +822,16 @@ mod tests {
         assert_eq!(days, 356);
     }
 
-    /// 阳历今天 → 0 天(今天就是纪念日)
+    /// 阳历今天 → 跳到明年(纪念日是今天的话,"下一次"是明年同一天)
+    /// 2024-06-19 纪念日,今天 2026-06-19 → 下次 = 2027-06-19
+    /// 2027-06-19 - 2026-06-19 = 365 天
     #[test]
-    fn days_until_solar_today_is_zero() {
+    fn days_until_solar_today_jumps_to_next_year() {
         let today = date(2026, 6, 19);
         let days = days_until_next_occurrence(
             date(2024, 6, 19), "SOLAR", None, None, false, today,
         );
-        assert_eq!(days, 0);
+        assert_eq!(days, 365);
     }
 
     /// 阴历 8/15(中秋)用真转换: 2026 中秋 = 2026-09-25
