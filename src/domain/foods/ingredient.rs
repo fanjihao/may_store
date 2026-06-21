@@ -13,6 +13,9 @@ pub struct IngredientRecord {
     pub id: i64,
     pub group_id: i64,
     pub name: String,
+    pub unit: Option<String>,
+    pub calories: Option<i32>,
+    pub description: Option<String>,
     pub icon: Option<String>,
     pub sort: i32,
     pub created_at: DateTime<Utc>,
@@ -24,6 +27,9 @@ pub struct IngredientRecord {
 #[serde(rename_all = "camelCase")]
 pub struct IngredientCreateInput {
     pub name: String,
+    pub unit: Option<String>,
+    pub calories: Option<i32>,
+    pub description: Option<String>,
     pub icon: Option<String>,
 }
 
@@ -32,6 +38,9 @@ pub struct IngredientCreateInput {
 #[serde(rename_all = "camelCase")]
 pub struct IngredientUpdateInput {
     pub name: Option<String>,
+    pub unit: Option<String>,
+    pub calories: Option<i32>,
+    pub description: Option<String>,
     pub icon: Option<String>,
 }
 
@@ -53,6 +62,9 @@ pub struct IngredientOut {
     pub id: i64,
     pub group_id: i64,
     pub name: String,
+    pub unit: Option<String>,
+    pub calories: Option<i32>,
+    pub description: Option<String>,
     pub icon: Option<String>,
     pub sort: i32,
     pub created_at: DateTime<Utc>,
@@ -71,4 +83,37 @@ pub struct BatchIngredientSortInput {
 pub struct IngredientSortItem {
     pub ingredient_id: i64,
     pub sort: i32,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn ingredient_create_input_deserializes_all_fields() {
+        let json = r#"{
+            "name": "鸡蛋",
+            "unit": "个",
+            "calories": 60,
+            "icon": "https://example.com/egg.png",
+            "description": "本地土鸡蛋"
+        }"#;
+        let input: IngredientCreateInput = serde_json::from_str(json).expect("must parse");
+        assert_eq!(input.name, "鸡蛋");
+        assert_eq!(input.unit.as_deref(), Some("个"));
+        assert_eq!(input.calories, Some(60));
+        assert_eq!(input.icon.as_deref(), Some("https://example.com/egg.png"));
+        assert_eq!(input.description.as_deref(), Some("本地土鸡蛋"));
+    }
+
+    #[test]
+    fn ingredient_create_input_minimal_only_name() {
+        let json = r#"{"name": "盐"}"#;
+        let input: IngredientCreateInput = serde_json::from_str(json).expect("must parse");
+        assert_eq!(input.name, "盐");
+        assert!(input.unit.is_none());
+        assert!(input.calories.is_none());
+        assert!(input.icon.is_none());
+        assert!(input.description.is_none());
+    }
 }
