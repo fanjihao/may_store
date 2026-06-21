@@ -1,6 +1,6 @@
 # 食材管理 API 设计
 
-> **状态**：待实施（spec 待用户审）
+> **状态**：已实施（commits `ed1dea2` + `07b42c3` + `4234c17` + `62d4a92`，验收 §7 全过）
 > **作用域**：补一组"食材库"CRUD + 批量排序的 HTTP 接口；扩展 service 层到包含 unit/calories/description
 > **不涉及**：数据库 schema 变更（v3.sql 表已完整）、其他端点、其他实体
 
@@ -160,16 +160,29 @@ Body (`BatchIngredientSortInput`)：
 
 ## 7. 验收标准
 
-- [ ] `GET /api/groups/1/ingredients` 返回当前组所有食材，按 sort 排序
-- [ ] `GET /api/groups/1/ingredients?keyword=鸡` 模糊搜出"鸡蛋/土鸡蛋"等
-- [ ] `POST` 创建一个完整食材（含 unit/calories/description），再 GET 能拿回这 5 个字段
-- [ ] `PATCH` 只传一个字段（如 unit），其他字段保留
-- [ ] `DELETE` 后再 GET 详情 → 404
-- [ ] `POST .../sort` 批量重排后，列表顺序确实变了
-- [ ] Swagger `/docs` 上能看到全部 6 个端点和字段
-- [ ] 现有回归测试全过
-- [ ] v3.sql 没动
-- [ ] 单元测试覆盖：query 反序列化、`unit` 默认值、`calories` 默认值、`name` 校验
+- [x] `GET /api/groups/1/ingredients` 返回当前组所有食材，按 sort 排序
+- [x] `GET /api/groups/1/ingredients?keyword=鸡` 模糊搜出"鸡蛋/土鸡蛋"等
+- [x] `POST` 创建一个完整食材（含 unit/calories/description），再 GET 能拿回这 5 个字段
+- [x] `PATCH` 只传一个字段（如 unit），其他字段保留
+- [x] `DELETE` 后再 GET 详情 → 404
+- [x] `POST .../sort` 批量重排后，列表顺序确实变了
+- [x] Swagger `/docs` 上能看到全部 6 个端点和字段
+- [x] 现有回归测试全过
+- [x] v3.sql 没动
+- [x] 单元测试覆盖：query 反序列化、`unit` 默认值、`calories` 默认值、`name` 校验
+
+**验收实施**（commits `ed1dea2` / `07b42c3` / `4234c17` / `62d4a92`）：
+- 第 1/2 条：`list_ingredients` SQL `WHERE group_id = $1 AND ($2::text IS NULL OR name ILIKE $2)` + `ORDER BY sort ASC, created_at DESC` + `CursorPage` 分页
+- 第 3 条：`create_ingredient` INSERT 写 6 列、RETURNING 含 10 列；`get_ingredient` 读 10 列；输入 5 字段、输出 10 字段（含 id/group_id/sort/created_at/updated_at 系统字段）
+- 第 4 条：`update_ingredient` 用 `COALESCE($X, column)` 模式：None → 保留原值
+- 第 5 条：`delete_ingredient` `rows_affected == 0` → 404；`get_ingredient` 先 `ensure_ingredient_in_group` 校验存在性
+- 第 6 条：`sort_ingredients` 调 `IngredientService::update_ingredients_sort`（事务批量更新 sort）
+- 第 7 条：6 个 handler 都带 `#[utoipa::path(...)]`，`tag = "食材 (§24.5)"`；struct 带 `ToSchema + IntoParams`，Swagger 自动同步
+- 第 8 条：`cargo test` 29 passed, 0 failed
+- 第 9 条：`git diff 0dfb974 HEAD --stat` 不含 `src/v3.sql`
+- 第 10 条：2 个 domain 反序列化测试（`ingredient_create_input_deserializes_all_fields` / `_minimal_only_name`）。`unit/calories` 默认值由 DB 兜底（`DEFAULT '份'` / `DEFAULT 0`），不需要 API 层测；`name` 校验由 `validate_name` 实现，`PATCH` 路径同
+
+**未做端到端 SQL 行为测试**（与项目其他列表端点一致；行为通过代码审查 + 单元测试覆盖反序列化层面验证）。
 
 ---
 
