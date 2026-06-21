@@ -78,6 +78,13 @@ impl Modify for SecurityAddon {
         crate::api::tags::routes::create_tag,
         crate::api::tags::routes::update_tag,
         crate::api::tags::routes::delete_tag,
+        // ==================== Ingredients (食材 §24.5) ====================
+        crate::api::ingredients::routes::list_ingredients,
+        crate::api::ingredients::routes::get_ingredient,
+        crate::api::ingredients::routes::create_ingredient,
+        crate::api::ingredients::routes::update_ingredient,
+        crate::api::ingredients::routes::delete_ingredient,
+        crate::api::ingredients::routes::sort_ingredients,
         // ==================== Memorial Days (纪念日 §24.9) ====================
         crate::api::memorial_days::routes::list_memorial_days,
         crate::api::memorial_days::routes::create_memorial_day,
@@ -214,6 +221,13 @@ impl Modify for SecurityAddon {
             crate::api::foods::routes::FoodListResponse,
             // -- Tags (菜品标签 §24.4) --
             crate::api::tags::routes::TagOut,
+            // -- Ingredients (食材 §24.5) --
+            crate::domain::foods::ingredient::IngredientOut,
+            crate::domain::foods::ingredient::IngredientCreateInput,
+            crate::domain::foods::ingredient::IngredientUpdateInput,
+            crate::domain::foods::ingredient::BatchIngredientSortInput,
+            crate::domain::foods::ingredient::IngredientSortItem,
+            crate::api::ingredients::routes::IngredientListQuery,
             // -- Food Marks (菜品标记 §24.6) --
             // -- Support Tickets (客服工单 §15.3) --
             crate::api::support_tickets::routes::TicketOut,
@@ -284,6 +298,7 @@ impl Modify for SecurityAddon {
         (name = "菜品", description = "菜品 CRUD (§5)"),
         (name = "菜品标记 (§24.6)", description = "用户对菜品的 LIKE / NOT_RECOMMEND"),
         (name = "菜品标签 (§24.4)", description = "组内菜品标签管理"),
+        (name = "食材 (§24.5)", description = "组内食材库管理"),
         (name = "纪念日 (§24.9)", description = "组内纪念日管理"),
         (name = "足迹分组 (§24.10)", description = "足迹分组管理"),
         (name = "客服工单", description = "用户提交客服工单"),
