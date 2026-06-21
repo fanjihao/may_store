@@ -109,6 +109,9 @@ pub struct FoodListQuery {
     pub tag_id: Option<i64>,
     /// 按菜品名/描述模糊搜索
     pub keyword: Option<String>,
+    /// 仅返回当前用户点过 LIKE 的菜（"我的最爱"过滤）；
+    /// 传 true 时强制 status=ACTIVE，与 tag_id/keyword 是 AND 关系
+    pub is_favorite: Option<bool>,
 }
 
 /// 标签引用(挂在菜品上,只带最常用的展示字段)
@@ -811,4 +814,32 @@ pub async fn hide_food(
         "food_id": food_id,
         "status": if body.hidden { "HIDDEN" } else { "ACTIVE" }
     })))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn food_list_query_deserializes_is_favorite_true() {
+        let q: FoodListQuery = serde_urlencoded::from_str("isFavorite=true&limit=10")
+            .expect("must deserialize");
+        assert_eq!(q.is_favorite, Some(true));
+        assert_eq!(q.limit, Some(10));
+    }
+
+    #[test]
+    fn food_list_query_deserializes_is_favorite_false() {
+        let q: FoodListQuery = serde_urlencoded::from_str("isFavorite=false")
+            .expect("must deserialize");
+        assert_eq!(q.is_favorite, Some(false));
+    }
+
+    #[test]
+    fn food_list_query_omits_is_favorite_when_absent() {
+        let q: FoodListQuery = serde_urlencoded::from_str("limit=20")
+            .expect("must deserialize");
+        assert_eq!(q.is_favorite, None);
+        assert_eq!(q.limit, Some(20));
+    }
 }
