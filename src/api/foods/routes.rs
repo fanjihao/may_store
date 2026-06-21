@@ -390,19 +390,25 @@ pub async fn list_foods(
         .as_deref()
         .and_then(|s| base64_decode_cursor(s));
 
-    // 状态过滤(默认仅 ACTIVE)
-    let want_status = q.status.as_deref().unwrap_or("ACTIVE");
-    let (food_status_filter, include_deleted) = match want_status {
-        "DELETED" => (None, true),
-        "HIDDEN" => (Some("OFF"), false),
-        "ACTIVE" => (Some("NORMAL"), false),
-        "AUDITING" => (Some("AUDITING"), false),
-        "REJECTED" => (Some("REJECTED"), false),
-        other => {
-            return Err(CustomError::BadRequest(format!(
-                "未知 status: {}",
-                other
-            )))
+    // 仅看"我的最爱"时强制 status=ACTIVE（覆盖请求里的 status 参数）；
+    // 不传或 false → 按用户传的 status 走原逻辑
+    let favorite_only = q.is_favorite.unwrap_or(false);
+    let (food_status_filter, include_deleted) = if favorite_only {
+        (Some("NORMAL"), false)
+    } else {
+        let want_status = q.status.as_deref().unwrap_or("ACTIVE");
+        match want_status {
+            "DELETED" => (None, true),
+            "HIDDEN" => (Some("OFF"), false),
+            "ACTIVE" => (Some("NORMAL"), false),
+            "AUDITING" => (Some("AUDITING"), false),
+            "REJECTED" => (Some("REJECTED"), false),
+            other => {
+                return Err(CustomError::BadRequest(format!(
+                    "未知 status: {}",
+                    other
+                )))
+            }
         }
     };
 
@@ -415,42 +421,59 @@ pub async fn list_foods(
         .map(|k| format!("%{}%", k));
 
     // 多取 1 行判 has_more
-    let rows = sqlx::query(
+    // 当 favorite_only 时多拼一个 AND EXISTS 子句，只看我点过 LIKE 的菜
+    let mut sql = String::from(
         r#"SELECT f.food_id, f.food_name, f.description, f.images, f.tag_id,
-                  t.tag_name, t.icon AS tag_icon,
-                  f.food_status::text AS food_status, f.is_del, f.created_by, f.group_id, f.created_at, f.updated_at,
-                  lo.last_order_at,
-                  lo.last_completed_at,
-                  EXISTS(SELECT 1 FROM user_food_mark ufm
-                         WHERE ufm.user_id = $8 AND ufm.food_id = f.food_id AND ufm.mark_type = 'LIKE') AS is_favorited
-           FROM foods f
-           LEFT JOIN tags t ON t.tag_id = f.tag_id
-           LEFT JOIN LATERAL (
-             SELECT MAX(o.created_at) AS last_order_at,
-                    MAX(CASE WHEN o.status = 'CONFIRMED_COMPLETED' THEN o.updated_at END) AS last_completed_at
-             FROM order_items oi
-             JOIN orders o ON o.order_id = oi.order_id
-             WHERE oi.food_id = f.food_id
-           ) lo ON true
-           WHERE f.group_id = $1
-             AND ($2::food_status_enum IS NULL OR f.food_status = $2::food_status_enum)
-             AND f.is_del = $3
-             AND ($4::bigint IS NULL OR f.food_id < $4)
-             AND ($5::bigint IS NULL OR f.tag_id = $5)
-             AND ($6::text IS NULL OR f.food_name ILIKE $6 OR f.description ILIKE $6)
-           ORDER BY f.food_id DESC
-           LIMIT $7"#,
-    )
-    .bind(group_id)
-    .bind(food_status_filter)
-    .bind(if include_deleted { 1_i16 } else { 0_i16 })
-    .bind(after_food_id)
-    .bind(q.tag_id)
-    .bind(&keyword_pattern)
-    .bind(limit + 1)
-    .bind(token.user_id)
-    .fetch_all(&state.db_pool)
-    .await?;
+              t.tag_name, t.icon AS tag_icon,
+              f.food_status::text AS food_status, f.is_del, f.created_by, f.group_id, f.created_at, f.updated_at,
+              lo.last_order_at,
+              lo.last_completed_at,
+              EXISTS(SELECT 1 FROM user_food_mark ufm
+                     WHERE ufm.user_id = $8 AND ufm.food_id = f.food_id AND ufm.mark_type = 'LIKE') AS is_favorited
+       FROM foods f
+       LEFT JOIN tags t ON t.tag_id = f.tag_id
+       LEFT JOIN LATERAL (
+         SELECT MAX(o.created_at) AS last_order_at,
+                MAX(CASE WHEN o.status = 'CONFIRMED_COMPLETED' THEN o.updated_at END) AS last_completed_at
+         FROM order_items oi
+         JOIN orders o ON o.order_id = oi.order_id
+         WHERE oi.food_id = f.food_id
+       ) lo ON true
+       WHERE f.group_id = $1
+         AND ($2::food_status_enum IS NULL OR f.food_status = $2::food_status_enum)
+         AND f.is_del = $3
+         AND ($4::bigint IS NULL OR f.food_id < $4)
+         AND ($5::bigint IS NULL OR f.tag_id = $5)
+         AND ($6::text IS NULL OR f.food_name ILIKE $6 OR f.description ILIKE $6)"#,
+    );
+    if favorite_only {
+        sql.push_str(
+            r#"
+         AND EXISTS (
+           SELECT 1 FROM user_food_mark ufm_fav
+           WHERE ufm_fav.user_id = $8
+             AND ufm_fav.food_id = f.food_id
+             AND ufm_fav.mark_type = 'LIKE'
+         )"#,
+        );
+    }
+    sql.push_str(
+        r#"
+       ORDER BY f.food_id DESC
+       LIMIT $7"#,
+    );
+
+    let rows = sqlx::query(&sql)
+        .bind(group_id)
+        .bind(food_status_filter)
+        .bind(if include_deleted { 1_i16 } else { 0_i16 })
+        .bind(after_food_id)
+        .bind(q.tag_id)
+        .bind(&keyword_pattern)
+        .bind(limit + 1)
+        .bind(token.user_id)
+        .fetch_all(&state.db_pool)
+        .await?;
 
     let has_more = rows.len() as i64 > limit;
     let take = if has_more { limit as usize } else { rows.len() };
