@@ -1,6 +1,6 @@
 # Foods 列表加「我的最爱」过滤
 
-> **状态**：待实施（spec 待用户审）
+> **状态**：已实施（commits `fcdd95a` + `97b6185` + `da7f6f4`，验收 §7 全过）
 > **作用域**：`GET /api/groups/{group_id}/foods` 加一个查询参数 `isFavorite`
 > **不涉及**：数据库 schema 变更、其他端点
 
