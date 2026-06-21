@@ -101,13 +101,23 @@ GET /api/groups/1/foods?keyword=牛&isFavorite=true&limit=10
 
 ## 7. 验收标准
 
-- [ ] `GET .../foods?isFavorite=true` 只返回当前用户点过 LIKE 的菜
-- [ ] `GET .../foods?isFavorite=true&tagId=5` 返回「tagId=5 且我点过 LIKE」的交集
-- [ ] `GET .../foods?isFavorite=true&keyword=牛` 返回「名/描述含"牛"且我点过 LIKE」的交集
-- [ ] `GET .../foods?isFavorite=true&status=HIDDEN` 仍只返回 ACTIVE（`isFavorite` 覆盖 `status`）
-- [ ] 不传 `isFavorite` 或 `isFavorite=false` → 行为与现在完全一致
-- [ ] Swagger UI 上能看到 `isFavorite` 参数
-- [ ] v3.sql 不动
+- [x] `GET .../foods?isFavorite=true` 只返回当前用户点过 LIKE 的菜
+- [x] `GET .../foods?isFavorite=true&tagId=5` 返回「tagId=5 且我点过 LIKE」的交集
+- [x] `GET .../foods?isFavorite=true&keyword=牛` 返回「名/描述含"牛"且我点过 LIKE」的交集
+- [x] `GET .../foods?isFavorite=true&status=HIDDEN` 仍只返回 ACTIVE（`isFavorite` 覆盖 `status`）
+- [x] 不传 `isFavorite` 或 `isFavorite=false` → 行为与现在完全一致
+- [x] Swagger UI 上能看到 `isFavorite` 参数
+- [x] v3.sql 不动
+
+**验收实施**（commit `97b6185` + `fcdd95a`）：
+- 第 1 条由 `list_foods` SQL 在 `favorite_only=true` 时拼的 `AND EXISTS (... user_food_mark ufm_fav WHERE ufm_fav.user_id = $8 AND ufm_fav.food_id = f.food_id AND ufm_fav.mark_type = 'LIKE')` 保证
+- 第 2/3 条：tag_id 与 keyword 是已有 WHERE 子句，与 favorite EXISTS 是 AND 关系，未被覆盖
+- 第 4 条：`if favorite_only { (Some("NORMAL"), false) }` 直接覆盖了 status match
+- 第 5 条：`let favorite_only = q.is_favorite.unwrap_or(false);` → Some(false) 或 None 都走 else 分支（原 match）
+- 第 6 条：`FoodListQuery` 已带 `ToSchema + IntoParams`，Swagger 自动同步
+- 第 7 条：`git diff d60e4bf HEAD -- src/v3.sql` 输出为空
+
+**未做端到端 SQL 行为测试**（与项目其他列表端点一致；行为通过代码审查 + 单元测试覆盖反序列化层面验证）。
 
 ---
 
