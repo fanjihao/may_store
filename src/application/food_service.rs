@@ -294,7 +294,7 @@ impl IngredientService {
         _cursor: Option<&str>,
     ) -> Result<CursorPage<IngredientOut>, CustomError> {
         let mut qb = sqlx::QueryBuilder::<sqlx::Postgres>::new(
-            "SELECT ingredient_id AS id, group_id, name, icon, sort, created_at, updated_at FROM ingredients WHERE 1=1"
+            "SELECT ingredient_id AS id, group_id, name, unit, calories, description, icon, sort, created_at, updated_at FROM ingredients WHERE 1=1"
         );
 
         if let Some(gid) = group_id {
@@ -321,6 +321,9 @@ impl IngredientService {
                 id: r.get("id"),
                 group_id: r.get("group_id"),
                 name: r.get("name"),
+                unit: r.get("unit"),
+                calories: r.get("calories"),
+                description: r.get("description"),
                 icon: r.get("icon"),
                 sort: r.get("sort"),
                 created_at: r.get("created_at"),
@@ -338,7 +341,7 @@ impl IngredientService {
 
     pub async fn get_ingredient(db: &PgPool, id: i64) -> Result<IngredientOut, CustomError> {
         let rec = sqlx::query_as::<_, IngredientRecord>(
-            "SELECT ingredient_id AS id, group_id, name, icon, sort, created_at, updated_at FROM ingredients WHERE id = $1"
+            "SELECT ingredient_id AS id, group_id, name, unit, calories, description, icon, sort, created_at, updated_at FROM ingredients WHERE id = $1"
         )
         .bind(id)
         .fetch_optional(db)
@@ -349,6 +352,9 @@ impl IngredientService {
             id: rec.id,
             group_id: rec.group_id,
             name: rec.name,
+            unit: rec.unit,
+            calories: rec.calories,
+            description: rec.description,
             icon: rec.icon,
             sort: rec.sort,
             created_at: rec.created_at,
@@ -362,10 +368,13 @@ impl IngredientService {
         group_id: Option<i64>,
     ) -> Result<IngredientOut, CustomError> {
         let rec = sqlx::query_as::<_, IngredientRecord>(
-            "INSERT INTO ingredients (group_id, name, icon) VALUES ($1, $2, $3) RETURNING ingredient_id AS id, group_id, name, icon, sort, created_at, updated_at"
+            "INSERT INTO ingredients (group_id, name, unit, calories, description, icon) VALUES ($1, $2, $3, $4, $5, $6) RETURNING ingredient_id AS id, group_id, name, unit, calories, description, icon, sort, created_at, updated_at"
         )
         .bind(group_id)
         .bind(&input.name)
+        .bind(input.unit.as_deref())
+        .bind(input.calories)
+        .bind(&input.description)
         .bind(&input.icon)
         .fetch_one(db)
         .await?;
@@ -374,6 +383,9 @@ impl IngredientService {
             id: rec.id,
             group_id: rec.group_id,
             name: rec.name,
+            unit: rec.unit,
+            calories: rec.calories,
+            description: rec.description,
             icon: rec.icon,
             sort: rec.sort,
             created_at: rec.created_at,
@@ -387,11 +399,14 @@ impl IngredientService {
         input: &IngredientUpdateInput,
     ) -> Result<IngredientOut, CustomError> {
         let rec = sqlx::query_as::<_, IngredientRecord>(
-            "UPDATE ingredients SET name = COALESCE($2, name), icon = COALESCE($3, icon) WHERE ingredient_id = $1 RETURNING ingredient_id AS id, group_id, name, icon, sort, created_at, updated_at"
+            "UPDATE ingredients SET name = COALESCE($2, name), unit = COALESCE($3, unit), calories = COALESCE($4, calories), description = COALESCE($5, description), icon = COALESCE($6, icon) WHERE ingredient_id = $1 RETURNING ingredient_id AS id, group_id, name, unit, calories, description, icon, sort, created_at, updated_at"
         )
         .bind(id)
-        .bind(&input.name)
-        .bind(&input.icon)
+        .bind(input.name.as_deref())
+        .bind(input.unit.as_deref())
+        .bind(input.calories)
+        .bind(input.description.as_deref())
+        .bind(input.icon.as_deref())
         .fetch_one(db)
         .await
         .map_err(|_| CustomError::NotFound("食材不存在".into()))?;
@@ -400,6 +415,9 @@ impl IngredientService {
             id: rec.id,
             group_id: rec.group_id,
             name: rec.name,
+            unit: rec.unit,
+            calories: rec.calories,
+            description: rec.description,
             icon: rec.icon,
             sort: rec.sort,
             created_at: rec.created_at,
