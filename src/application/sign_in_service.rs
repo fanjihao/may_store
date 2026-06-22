@@ -163,6 +163,8 @@ impl SignService {
             diamond_reward,
             consecutive_days,
             total_diamonds: new_total,
+            full_team_bonus: false,
+            full_team_bonus_amt: 0,
         })
     }
 }
