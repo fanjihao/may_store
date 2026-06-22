@@ -17,6 +17,68 @@ use crate::middlewares::admin_auth::AdminToken;
 use crate::models::pagination::{decode_cursor, encode_cursor, CursorPage};
 use crate::utils::response::ApiResponse;
 
+/// Single config whitelist + range + category
+const CONFIG_ENTRIES: &[(&str, i64, i64, &str)] = &[
+    ("orderPointPercent", 1, 200, "ORDER"),
+    ("diamondUnlockCost", 10, 10000, "REWARDS"),
+    ("defaultFootprintCapacity", 10, 1000, "GENERAL"),
+    ("fullTeamBonusAmt", 0, 100, "SIGN_IN"),
+];
+
+const SIGN_IN_REWARDS_ELEMENT_MIN: i64 = 1;
+const SIGN_IN_REWARDS_ELEMENT_MAX: i64 = 100;
+const SIGN_IN_REWARDS_REQUIRED_LEN: usize = 7;
+
+/// Validate a single config value
+///
+/// - Integer keys: must be within [min, max]
+/// - signInRewards7Days: must be a 7-element array, each element 1-100
+/// - Unknown key: BadRequest
+pub fn validate_config(
+    key: &str,
+    value: &serde_json::Value,
+) -> Result<(), CustomError> {
+    if key == "signInRewards7Days" {
+        let arr = value.as_array().ok_or_else(|| {
+            CustomError::BadRequest("signInRewards7Days 必须是数组".into())
+        })?;
+        if arr.len() != SIGN_IN_REWARDS_REQUIRED_LEN {
+            return Err(CustomError::BadRequest(format!(
+                "signInRewards7Days 必须正好 {} 个元素,当前 {} 个",
+                SIGN_IN_REWARDS_REQUIRED_LEN,
+                arr.len()
+            )));
+        }
+        for v in arr {
+            let n = v.as_i64().ok_or_else(|| {
+                CustomError::BadRequest("signInRewards7Days 元素必须是整数".into())
+            })?;
+            if !(SIGN_IN_REWARDS_ELEMENT_MIN..=SIGN_IN_REWARDS_ELEMENT_MAX).contains(&n) {
+                return Err(CustomError::BadRequest(format!(
+                    "signInRewards7Days 元素必须在 {}-{} 之间,当前 {}",
+                    SIGN_IN_REWARDS_ELEMENT_MIN, SIGN_IN_REWARDS_ELEMENT_MAX, n
+                )));
+            }
+        }
+        return Ok(());
+    }
+
+    let (_, lo, hi, _cat) = CONFIG_ENTRIES
+        .iter()
+        .find(|(k, _, _, _)| *k == key)
+        .ok_or_else(|| CustomError::BadRequest(format!("未知配置键: {}", key)))?;
+    let v = value
+        .as_i64()
+        .ok_or_else(|| CustomError::BadRequest("value 必须是整数".into()))?;
+    if v < *lo || v > *hi {
+        return Err(CustomError::BadRequest(format!(
+            "{} 必须在 {}-{} 之间",
+            key, lo, hi
+        )));
+    }
+    Ok(())
+}
+
 /// 配置后台管理路由
 pub fn configure(cfg: &mut ServiceConfig) {
     cfg.service(
@@ -101,8 +163,8 @@ pub struct UserListItem {
 #[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct ConfigResponse {
-    pub sign_reward_daily: i32,
-    pub sign_reward_consecutive: i32,
+    /// 7 天轮回签到奖励配置(数组下标对应 1~7 天)
+    pub sign_in_rewards_7_days: Vec<i32>,
     pub order_point_percent: i32,
     pub diamond_unlock_cost: i32,
     pub default_footprint_capacity: i32,
@@ -311,8 +373,10 @@ pub async fn get_config(
 
     if config.is_empty() {
         // 数据库未初始化时回退到默认配置
-        config.insert("signRewardDaily".into(), serde_json::json!(5));
-        config.insert("signRewardConsecutive".into(), serde_json::json!(10));
+        config.insert(
+            "signInRewards7Days".into(),
+            serde_json::json!([5, 6, 7, 8, 9, 10, 20]),
+        );
         config.insert("orderPointPercent".into(), serde_json::json!(100));
         config.insert("diamondUnlockCost".into(), serde_json::json!(100));
         config.insert("defaultFootprintCapacity".into(), serde_json::json!(50));
@@ -326,7 +390,7 @@ pub async fn get_config(
     patch,
     path = "/api/admin/configs/{config_key}",
     tag = "后台管理",
-    params(("config_key" = String, Path, description = "配置键名,如 signRewardDaily")),
+    params(("config_key" = String, Path, description = "配置键名,如 signInRewards7Days")),
     request_body = UpdateConfigInput,
     responses(
         (status = 200, description = "更新成功", body = serde_json::Value),
@@ -346,32 +410,17 @@ pub async fn update_config(
     let config_key = path.into_inner();
     let new_value = body.into_inner().value;
 
-    // 已知配置键白名单 + 校验范围 + 所属 category
-    // 新增配置需在此登记,未登记的 key 一律拒绝(防止任意 jsonb 注入)
-    let entries: &[(&str, i64, i64, &str)] = &[
-        ("signRewardDaily", 1, 100, "SIGN_IN"),
-        ("signRewardConsecutive", 1, 100, "SIGN_IN"),
-        ("orderPointPercent", 1, 200, "ORDER"),
-        ("diamondUnlockCost", 10, 10000, "REWARDS"),
-        ("defaultFootprintCapacity", 10, 1000, "GENERAL"),
-    ];
+    validate_config(&config_key, &new_value)?;
 
-    let (_, lo, hi, cat) = entries
-        .iter()
-        .find(|(k, _, _, _)| *k == config_key.as_str())
-        .ok_or_else(|| {
-            CustomError::BadRequest(format!("未知配置键: {}", config_key))
-        })?;
-
-    let v = new_value
-        .as_i64()
-        .ok_or_else(|| CustomError::BadRequest("value 必须是整数".into()))?;
-    if v < *lo || v > *hi {
-        return Err(CustomError::BadRequest(format!(
-            "{} 必须在 {}-{} 之间",
-            config_key, lo, hi
-        )));
-    }
+    let category = if config_key == "signInRewards7Days" {
+        "SIGN_IN"
+    } else {
+        let (_, _, _, cat) = CONFIG_ENTRIES
+            .iter()
+            .find(|(k, _, _, _)| *k == config_key.as_str())
+            .expect("validate_config 已确保 key 存在");
+        *cat
+    };
 
     sqlx::query(
         r#"INSERT INTO global_configs (config_key, config_value, category, updated_by, updated_at)
@@ -382,25 +431,24 @@ pub async fn update_config(
                updated_at = NOW()"#,
     )
     .bind(&config_key)
-    .bind(v as i32)
-    .bind(*cat)
+    .bind(&new_value)
+    .bind(category)
     .bind(admin.user_id)
     .execute(db)
     .await?;
 
-    // 写审计日志
     let _ = sqlx::query(
         r#"INSERT INTO audit_logs (operator_id, operator_type, action_type, target_type, detail)
            VALUES ($1, 'ADMIN', 'CONFIG_UPDATE', 'GLOBAL_CONFIG', $2)"#,
     )
     .bind(admin.user_id)
-    .bind(serde_json::json!({ "config_key": config_key, "value": v }))
+    .bind(serde_json::json!({ "config_key": config_key, "value": new_value }))
     .execute(db)
     .await;
 
     Ok(ApiResponse::success(serde_json::json!({
         "config_key": config_key,
-        "value": v,
+        "value": new_value,
         "status": "ok"
     })))
 }
@@ -1413,4 +1461,117 @@ pub async fn audit_food(
         food_status: new_food_status.to_string(),
         audited_by: admin.user_id,
     }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    // ---- signInRewards7Days array validation ----
+
+    #[test]
+    fn validate_sign_in_rewards_7_elements_passes() {
+        let v = json!([5, 6, 7, 8, 9, 10, 20]);
+        assert!(validate_config("signInRewards7Days", &v).is_ok());
+    }
+
+    #[test]
+    fn validate_sign_in_rewards_6_elements_rejected() {
+        let v = json!([5, 6, 7, 8, 9, 10]);
+        let err = validate_config("signInRewards7Days", &v).unwrap_err();
+        assert!(format!("{}", err).contains("必须正好 7 个元素"));
+    }
+
+    #[test]
+    fn validate_sign_in_rewards_8_elements_rejected() {
+        let v = json!([5, 6, 7, 8, 9, 10, 20, 99]);
+        assert!(validate_config("signInRewards7Days", &v).is_err());
+    }
+
+    #[test]
+    fn validate_sign_in_rewards_empty_rejected() {
+        let v = json!([]);
+        assert!(validate_config("signInRewards7Days", &v).is_err());
+    }
+
+    #[test]
+    fn validate_sign_in_rewards_element_zero_rejected() {
+        let v = json!([0, 6, 7, 8, 9, 10, 20]);
+        let err = validate_config("signInRewards7Days", &v).unwrap_err();
+        assert!(format!("{}", err).contains("元素必须在 1-100"));
+    }
+
+    #[test]
+    fn validate_sign_in_rewards_element_101_rejected() {
+        let v = json!([5, 6, 7, 8, 9, 10, 101]);
+        assert!(validate_config("signInRewards7Days", &v).is_err());
+    }
+
+    #[test]
+    fn validate_sign_in_rewards_element_string_rejected() {
+        let v = json!([5, 6, "7", 8, 9, 10, 20]);
+        assert!(validate_config("signInRewards7Days", &v).is_err());
+    }
+
+    #[test]
+    fn validate_sign_in_rewards_not_array_rejected() {
+        let v = json!(5);
+        let err = validate_config("signInRewards7Days", &v).unwrap_err();
+        assert!(format!("{}", err).contains("必须是数组"));
+    }
+
+    // ---- integer config range ----
+
+    #[test]
+    fn validate_int_config_in_range_passes() {
+        let v = json!(50);
+        assert!(validate_config("orderPointPercent", &v).is_ok());
+    }
+
+    #[test]
+    fn validate_int_config_below_min_rejected() {
+        let v = json!(0);
+        assert!(validate_config("orderPointPercent", &v).is_err());
+    }
+
+    #[test]
+    fn validate_int_config_above_max_rejected() {
+        let v = json!(300);
+        assert!(validate_config("orderPointPercent", &v).is_err());
+    }
+
+    #[test]
+    fn validate_int_config_string_rejected() {
+        let v = json!("100");
+        let err = validate_config("orderPointPercent", &v).unwrap_err();
+        assert!(format!("{}", err).contains("value 必须是整数"));
+    }
+
+    #[test]
+    fn validate_full_team_bonus_amt_zero_passes() {
+        let v = json!(0);
+        assert!(validate_config("fullTeamBonusAmt", &v).is_ok());
+    }
+
+    #[test]
+    fn validate_full_team_bonus_amt_100_passes() {
+        let v = json!(100);
+        assert!(validate_config("fullTeamBonusAmt", &v).is_ok());
+    }
+
+    #[test]
+    fn validate_full_team_bonus_amt_101_rejected() {
+        let v = json!(101);
+        assert!(validate_config("fullTeamBonusAmt", &v).is_err());
+    }
+
+    // ---- unknown key ----
+
+    #[test]
+    fn validate_unknown_key_rejected() {
+        let v = json!(10);
+        let err = validate_config("fooBar", &v).unwrap_err();
+        assert!(format!("{}", err).contains("未知配置键"));
+    }
 }
