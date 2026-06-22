@@ -38,6 +38,7 @@ rust-crypto = "0.2.36"                                           # 加密
 rand = "0.8.5"                                                   # 随机
 argon2 = { version = "0.5", features = ["password-hash"] }
 password-hash = "0.5"
+bcrypt = "0.15"
 
 # Tencent Cloud IM (UserSig)
 hmac = "0.12"

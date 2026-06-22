@@ -11,6 +11,7 @@ use sqlx::Row;
 use std::sync::Arc;
 use utoipa::ToSchema;
 
+use crate::api::admin::auth;
 use crate::config::AppState;
 use crate::errors::CustomError;
 use crate::middlewares::admin_auth::AdminToken;
@@ -81,6 +82,9 @@ pub fn validate_config(
 
 /// 配置后台管理路由
 pub fn configure(cfg: &mut ServiceConfig) {
+    // 先注册 auth 子模块（独立的 /api/admin/auth 作用域）
+    auth::configure(cfg);
+
     cfg.service(
         web::scope("/api/admin")
             .route("/stats", web::get().to(get_stats))
