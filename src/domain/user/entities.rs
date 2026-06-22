@@ -261,8 +261,6 @@ pub struct BindUserDirectlyInput {
 #[serde(rename_all = "camelCase")]
 pub struct GroupPointConfig {
     pub group_id: i64,
-    pub sign_reward_daily: i32,
-    pub sign_reward_consecutive: i32,
     pub order_point_percent: i32,
 }
 
@@ -270,7 +268,5 @@ pub struct GroupPointConfig {
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct GroupPointConfigUpdateInput {
-    pub sign_reward_daily: Option<i32>,
-    pub sign_reward_consecutive: Option<i32>,
     pub order_point_percent: Option<i32>,
 }

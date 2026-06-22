@@ -640,7 +640,7 @@ impl GroupService {
     ) -> Result<GroupPointConfig, CustomError> {
         let db = &state.db_pool;
         let cfg = sqlx::query_as::<_, GroupPointConfig>(
-            "SELECT group_id, sign_reward_daily, sign_reward_consecutive, order_point_percent FROM group_point_configs WHERE group_id=$1"
+            "SELECT group_id, order_point_percent FROM group_point_configs WHERE group_id=$1"
         )
         .bind(group_id)
         .fetch_optional(db)
@@ -674,14 +674,6 @@ impl GroupService {
         let mut updates = Vec::new();
         let mut param_count = 1;
 
-        if input.sign_reward_daily.is_some() {
-            updates.push(format!("sign_reward_daily = ${}", param_count));
-            param_count += 1;
-        }
-        if input.sign_reward_consecutive.is_some() {
-            updates.push(format!("sign_reward_consecutive = ${}", param_count));
-            param_count += 1;
-        }
         if input.order_point_percent.is_some() {
             updates.push(format!("order_point_percent = ${}", param_count));
             param_count += 1;
@@ -698,8 +690,6 @@ impl GroupService {
         );
 
         sqlx::query(&query)
-            .bind(input.sign_reward_daily)
-            .bind(input.sign_reward_consecutive)
             .bind(input.order_point_percent)
             .bind(group_id)
             .execute(db)
