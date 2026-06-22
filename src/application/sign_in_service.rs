@@ -53,7 +53,7 @@ impl SignService {
         }
     }
 
-    /// 每日签到
+    /// 每日签到(加组钻石 + 全组满签奖励)
     pub async fn daily_checkin(
         token: crate::middlewares::auth::UserToken,
         state: &Arc<AppState>,
@@ -62,83 +62,145 @@ impl SignService {
         let db = &state.db_pool;
         let today = Local::now().date_naive();
 
-        // 检查今日是否已签到
+        // 1. 今日是否已签到
         let existing: Option<(i64,)> = sqlx::query_as(
             "SELECT id FROM sign_in_records WHERE user_id = $1 AND sign_date = $2",
         )
-        .bind(user_id as i64)
+        .bind(user_id)
         .bind(today)
         .fetch_optional(db)
         .await?;
-
         if existing.is_some() {
             return Err(CustomError::BadRequest("今日已签到".into()));
         }
 
-        // 获取用户组信息
+        // 2. 拿主组
         let group_id: Option<i64> = sqlx::query(
-            "SELECT group_id FROM association_group_members WHERE user_id = $1 AND is_primary = 1 LIMIT 1"
+            "SELECT group_id FROM association_group_members
+             WHERE user_id = $1 AND is_primary = 1 AND member_status = 'ACTIVE' LIMIT 1",
         )
-        .bind(user_id as i64)
+        .bind(user_id)
         .fetch_optional(db)
         .await?
         .map(|r| r.get("group_id"));
 
-        // 计算连续签到天数
+        // 3. 算连续天数
         let yesterday = today.pred_opt().unwrap();
         let last_sign: Option<(NaiveDate, i32)> = sqlx::query_as(
-            "SELECT sign_date, consecutive_days FROM sign_in_records WHERE user_id = $1 AND sign_date = $2"
+            "SELECT sign_date, consecutive_days FROM sign_in_records
+             WHERE user_id = $1 AND sign_date = $2",
         )
-        .bind(user_id as i64)
+        .bind(user_id)
         .bind(yesterday)
         .fetch_optional(db)
         .await?;
-
         let consecutive_days = last_sign.map(|(_, cd)| cd + 1).unwrap_or(1);
 
-        // 从 admin 配置读 7 天奖励数组,按 (consecutive_days-1) % 7 取值
+        // 4. 读 7 天奖励配置
         let rewards = Self::load_sign_rewards(db).await;
         let diamond_reward = calculate_sign_diamonds(consecutive_days, &rewards);
 
-        // 获取用户当前钻石
-        let total_diamonds: i32 = sqlx::query("SELECT diamond FROM users WHERE user_id = $1")
-            .bind(user_id as i64)
-            .fetch_one(db)
-            .await?
-            .get(0);
+        // 5. 事务:写记录 + 加组钻石 + 写基础流水
+        let mut tx = db.begin().await?;
 
-        // 插入签到记录
         let sign_id: i64 = sqlx::query_scalar(
-            "INSERT INTO sign_in_records (user_id, sign_date, consecutive_days, diamond_reward) VALUES ($1, $2, $3, $4) RETURNING id"
+            "INSERT INTO sign_in_records
+                (group_id, user_id, sign_date, consecutive_days, diamond_reward, full_team_bonus, full_team_bonus_amt)
+             VALUES ($1, $2, $3, $4, $5, FALSE, 0)
+             RETURNING id",
         )
-        .bind(user_id as i64)
+        .bind(group_id)
+        .bind(user_id)
         .bind(today)
         .bind(consecutive_days)
         .bind(diamond_reward)
-        .fetch_one(db)
+        .fetch_one(&mut *tx)
         .await?;
 
-        // 更新用户钻石
-        let new_total = total_diamonds + diamond_reward;
-        sqlx::query("UPDATE users SET diamond = $2 WHERE user_id = $1")
-            .bind(user_id as i64)
-            .bind(new_total)
-            .execute(db)
+        let mut full_team_bonus_amt: i32 = 0;
+
+        if let Some(gid) = group_id {
+            // 写基础流水 + 加组钻石
+            let sign_idempotency_key = format!("sign_in_{}", sign_id);
+            sqlx::query(
+                r#"INSERT INTO diamond_transactions
+                   (group_id, type, amount, balance_before, balance_after, biz_type, biz_id, idempotency_key, created_at)
+                   SELECT $1, 'EARN', $2, diamond, diamond + $2, 'SIGN_IN', $3, $4, NOW()
+                   FROM association_groups WHERE group_id = $1"#,
+            )
+            .bind(gid)
+            .bind(diamond_reward as i64)
+            .bind(sign_id)
+            .bind(&sign_idempotency_key)
+            .execute(&mut *tx)
             .await?;
 
-        // 记录钻石流水 (user diamond, not group diamond)
-        sqlx::query(
-            "INSERT INTO diamond_transactions (user_id, type, scene, amount, balance_after) VALUES ($1, $2, $3, $4, $5)"
-        )
-        .bind(user_id as i64)
-        .bind(1) // type 1 = earn
-        .bind("sign")
-        .bind(diamond_reward)
-        .bind(new_total)
-        .execute(db)
-        .await?;
+            sqlx::query(
+                "UPDATE association_groups SET diamond = diamond + $1, updated_at = NOW() WHERE group_id = $2",
+            )
+            .bind(diamond_reward as i64)
+            .bind(gid)
+            .execute(&mut *tx)
+            .await?;
 
-        // 发布签到事件
+            // 6. 满签判定(在事务内)
+            let full_signed = Self::is_full_team_signed_in_tx(&mut tx, gid, today).await?;
+            if full_signed {
+                let amt = Self::load_full_team_bonus_amt_in_tx(&mut tx).await;
+                if amt > 0 {
+                    // 标记当前 sign_in_records
+                    sqlx::query(
+                        "UPDATE sign_in_records
+                         SET full_team_bonus = TRUE, full_team_bonus_amt = $1
+                         WHERE id = $2",
+                    )
+                    .bind(amt)
+                    .bind(sign_id)
+                    .execute(&mut *tx)
+                    .await?;
+                    // 加组钻石 + 写满签流水
+                    let bonus_idempotency_key = format!("full_team_bonus_{}", sign_id);
+                    sqlx::query(
+                        r#"INSERT INTO diamond_transactions
+                           (group_id, type, amount, balance_before, balance_after, biz_type, biz_id, idempotency_key, created_at)
+                           SELECT $1, 'EARN', $2, diamond, diamond + $2, 'FULL_TEAM_BONUS', $3, $4, NOW()
+                           FROM association_groups WHERE group_id = $1"#,
+                    )
+                    .bind(gid)
+                    .bind(amt as i64)
+                    .bind(sign_id)
+                    .bind(&bonus_idempotency_key)
+                    .execute(&mut *tx)
+                    .await?;
+                    sqlx::query(
+                        "UPDATE association_groups SET diamond = diamond + $1, updated_at = NOW() WHERE group_id = $2",
+                    )
+                    .bind(amt as i64)
+                    .bind(gid)
+                    .execute(&mut *tx)
+                    .await?;
+                    full_team_bonus_amt = amt;
+                }
+            }
+        }
+
+        tx.commit().await?;
+
+        // 7. 拿最终组钻石用于返回
+        let total_diamonds: i32 = if let Some(gid) = group_id {
+            sqlx::query_scalar("SELECT diamond FROM association_groups WHERE group_id = $1")
+                .bind(gid)
+                .fetch_one(db)
+                .await?
+        } else {
+            // 没有主组(边缘情况):从 users 表读(保持旧行为)
+            sqlx::query_scalar("SELECT diamond FROM users WHERE user_id = $1")
+                .bind(user_id)
+                .fetch_one(db)
+                .await?
+        };
+
+        // 8. 发事件
         let payload = SignInPayload {
             sign_id,
             user_id,
@@ -162,10 +224,66 @@ impl SignService {
         Ok(DailyCheckinOut {
             diamond_reward,
             consecutive_days,
-            total_diamonds: new_total,
-            full_team_bonus: false,
-            full_team_bonus_amt: 0,
+            total_diamonds,
+            full_team_bonus: full_team_bonus_amt > 0,
+            full_team_bonus_amt,
         })
+    }
+
+    /// 事务版本的满签判定(接收 &mut Transaction)
+    async fn is_full_team_signed_in_tx(
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+        group_id: i64,
+        today: NaiveDate,
+    ) -> Result<bool, CustomError> {
+        let member_count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM association_group_members
+             WHERE group_id = $1 AND member_status = 'ACTIVE'",
+        )
+        .bind(group_id)
+        .fetch_one(&mut **tx)
+        .await?;
+        if member_count < 2 {
+            return Ok(false);
+        }
+        let signed_today: i64 = sqlx::query_scalar(
+            "SELECT COUNT(DISTINCT user_id) FROM sign_in_records
+             WHERE group_id = $1 AND sign_date = $2",
+        )
+        .bind(group_id)
+        .bind(today)
+        .fetch_one(&mut **tx)
+        .await?;
+        if signed_today < member_count {
+            return Ok(false);
+        }
+        let already_paid: bool = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM sign_in_records
+             WHERE group_id = $1 AND sign_date = $2 AND full_team_bonus = TRUE)",
+        )
+        .bind(group_id)
+        .bind(today)
+        .fetch_one(&mut **tx)
+        .await?;
+        Ok(!already_paid)
+    }
+
+    /// 事务版本读 fullTeamBonusAmt
+    async fn load_full_team_bonus_amt_in_tx(
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    ) -> i32 {
+        let row: Option<(Option<serde_json::Value>,)> = sqlx::query_as(
+            "SELECT config_value FROM global_configs WHERE config_key = $1",
+        )
+        .bind("fullTeamBonusAmt")
+        .fetch_optional(&mut **tx)
+        .await
+        .ok()
+        .flatten();
+        row.and_then(|(v,)| v)
+            .and_then(|v| v.as_i64().map(|n| n as i32))
+            .filter(|n| (0..=100).contains(n))
+            .unwrap_or(10)
     }
 }
 
