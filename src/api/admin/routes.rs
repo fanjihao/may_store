@@ -168,6 +168,8 @@ pub struct ConfigResponse {
     pub order_point_percent: i32,
     pub diamond_unlock_cost: i32,
     pub default_footprint_capacity: i32,
+    /// 全组满签时最后签到用户获得的组钻石数
+    pub full_team_bonus_amt: i32,
 }
 
 /// 心愿质量奖励响应
@@ -353,36 +355,55 @@ pub async fn get_config(
     _admin: AdminToken,
 ) -> Result<impl Responder, CustomError> {
     let db = &state.db_pool;
-    // 从 global_configs 表读取
-    let rows = sqlx::query(
-        r#"SELECT config_key, config_value, category, description
-           FROM global_configs
-           WHERE category IS NOT NULL
-           ORDER BY category, config_key"#,
+
+    // 默认值（DB 无记录时兜底）
+    let default_rewards: Vec<i32> = vec![5, 6, 7, 8, 9, 10, 20];
+    let default_order_point_percent: i32 = 100;
+    let default_diamond_unlock_cost: i32 = 100;
+    let default_footprint_capacity: i32 = 50;
+    let default_full_team_bonus_amt: i32 = 10;
+
+    // 读 7 天奖励数组
+    let rewards: Vec<i32> = sqlx::query_as::<_, (Option<serde_json::Value>,)>(
+        "SELECT config_value FROM global_configs WHERE config_key = $1",
     )
-    .fetch_all(db)
+    .bind("signInRewards7Days")
+    .fetch_optional(db)
     .await
-    .unwrap_or_default();
+    .ok()
+    .flatten()
+    .and_then(|(v,)| v)
+    .and_then(|v| serde_json::from_value::<Vec<i32>>(v).ok())
+    .unwrap_or(default_rewards);
 
-    let mut config = serde_json::Map::new();
-    for r in rows {
-        let key: String = r.get("config_key");
-        let val: Option<serde_json::Value> = r.get("config_value");
-        config.insert(key, val.unwrap_or(serde_json::Value::Null));
+    // 读 4 个整数配置（共享 helper 闭包）
+    async fn read_int(
+        db: &sqlx::PgPool,
+        key: &str,
+        default: i32,
+    ) -> i32 {
+        sqlx::query_as::<_, (Option<serde_json::Value>,)>(
+            "SELECT config_value FROM global_configs WHERE config_key = $1",
+        )
+        .bind(key)
+        .fetch_optional(db)
+        .await
+        .ok()
+        .flatten()
+        .and_then(|(v,)| v)
+        .and_then(|v| v.as_i64().map(|n| n as i32))
+        .unwrap_or(default)
     }
 
-    if config.is_empty() {
-        // 数据库未初始化时回退到默认配置
-        config.insert(
-            "signInRewards7Days".into(),
-            serde_json::json!([5, 6, 7, 8, 9, 10, 20]),
-        );
-        config.insert("orderPointPercent".into(), serde_json::json!(100));
-        config.insert("diamondUnlockCost".into(), serde_json::json!(100));
-        config.insert("defaultFootprintCapacity".into(), serde_json::json!(50));
-    }
+    let response = ConfigResponse {
+        sign_in_rewards_7_days: rewards,
+        order_point_percent: read_int(db, "orderPointPercent", default_order_point_percent).await,
+        diamond_unlock_cost: read_int(db, "diamondUnlockCost", default_diamond_unlock_cost).await,
+        default_footprint_capacity: read_int(db, "defaultFootprintCapacity", default_footprint_capacity).await,
+        full_team_bonus_amt: read_int(db, "fullTeamBonusAmt", default_full_team_bonus_amt).await,
+    };
 
-    Ok(ApiResponse::success(serde_json::Value::Object(config)))
+    Ok(ApiResponse::success(response))
 }
 
 /// 更新单条系统配置 (FSD §11.22 - PATCH /api/admin/configs/{config_key})
