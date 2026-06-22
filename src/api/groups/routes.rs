@@ -140,8 +140,9 @@ async fn create_group(
 
     // 检查用户是否已在组中
     // 注意:is_primary 是 smallint(0/1),不能用 true/false
+    // 必须同时过滤 member_status='ACTIVE',否则 LEFT 状态的旧记录也会被算成"已在组中"
     let existing: Option<(i64,)> = sqlx::query_as(
-        "SELECT group_id FROM association_group_members WHERE user_id = $1 AND is_primary = 1",
+        "SELECT group_id FROM association_group_members WHERE user_id = $1 AND is_primary = 1 AND member_status = 'ACTIVE'",
     )
     .bind(token.user_id)
     .fetch_optional(db)

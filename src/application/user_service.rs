@@ -80,7 +80,7 @@ impl UserService {
 
         let record = sqlx::query_as::<_, UserRecord>(
             r#"SELECT u.user_id, u.username, u.nick_name, u.email, u.role, u.love_point, u.diamond, u.avatar, u.phone, u.open_id, u.status, u.created_at, u.updated_at, u.password_hash, u.password_algo, u.gender, u.birthday, u.username_change, u.login_method, u.last_login_at, u.password_updated_at, u.is_temp_password, u.push_id, u.last_role_switch_at,
-               (SELECT agm.group_id FROM association_group_members agm JOIN association_groups g ON g.group_id=agm.group_id AND g.status='ACTIVE' WHERE agm.user_id=u.user_id ORDER BY agm.is_primary DESC, agm.group_id ASC LIMIT 1) AS group_id
+               (SELECT agm.group_id FROM association_group_members agm JOIN association_groups g ON g.group_id=agm.group_id AND g.status='ACTIVE' WHERE agm.user_id=u.user_id AND agm.member_status='ACTIVE' ORDER BY agm.is_primary DESC, agm.group_id ASC LIMIT 1) AS group_id
                FROM users u WHERE u.username = $1 OR u.open_id = $1"#
         )
         .bind(&account)
@@ -139,7 +139,7 @@ impl UserService {
         let db = &state.db_pool;
         let rec = sqlx::query_as::<_, UserRecord>(r#"
             SELECT u.user_id, u.username, u.email, u.nick_name, u.role, u.love_point, u.diamond, u.avatar, u.phone, u.open_id, u.status, u.created_at, u.updated_at, u.password_hash, u.password_algo, u.gender, u.birthday, u.username_change, u.login_method, u.last_login_at, u.password_updated_at, u.is_temp_password, u.push_id, u.last_role_switch_at,
-                   (SELECT agm.group_id FROM association_group_members agm JOIN association_groups g ON g.group_id=agm.group_id AND g.status='ACTIVE' WHERE agm.user_id=u.user_id ORDER BY agm.is_primary DESC, agm.group_id ASC LIMIT 1) AS group_id
+                   (SELECT agm.group_id FROM association_group_members agm JOIN association_groups g ON g.group_id=agm.group_id AND g.status='ACTIVE' WHERE agm.user_id=u.user_id AND agm.member_status='ACTIVE' ORDER BY agm.is_primary DESC, agm.group_id ASC LIMIT 1) AS group_id
             FROM users u WHERE u.user_id = $1
         "#)
         .bind(user_id)
@@ -156,7 +156,7 @@ impl UserService {
         let db = &state.db_pool;
         let rec = sqlx::query_as::<_, UserRecord>(r#"
             SELECT u.user_id, u.username, u.email, u.nick_name, u.role, u.love_point, u.diamond, u.avatar, u.phone, u.open_id, u.status, u.created_at, u.updated_at, u.password_hash, u.password_algo, u.gender, u.birthday, u.username_change, u.login_method, u.last_login_at, u.password_updated_at, u.is_temp_password, u.push_id, u.last_role_switch_at,
-                   (SELECT agm.group_id FROM association_group_members agm JOIN association_groups g ON g.group_id=agm.group_id AND g.status='ACTIVE' WHERE agm.user_id=u.user_id ORDER BY agm.is_primary DESC, agm.group_id ASC LIMIT 1) AS group_id
+                   (SELECT agm.group_id FROM association_group_members agm JOIN association_groups g ON g.group_id=agm.group_id AND g.status='ACTIVE' WHERE agm.user_id=u.user_id AND agm.member_status='ACTIVE' ORDER BY agm.is_primary DESC, agm.group_id ASC LIMIT 1) AS group_id
             FROM users u WHERE u.username = $1
         "#)
         .bind(username)
@@ -275,7 +275,7 @@ impl UserService {
                       push_id, last_role_switch_at,
                       (SELECT agm.group_id FROM association_group_members agm
                          JOIN association_groups g ON g.group_id = agm.group_id AND g.status = 'ACTIVE'
-                         WHERE agm.user_id = users.user_id
+                         WHERE agm.user_id = users.user_id AND agm.member_status = 'ACTIVE'
                          ORDER BY agm.is_primary DESC, agm.group_id ASC LIMIT 1) AS group_id
             "#,
         )
@@ -530,10 +530,13 @@ impl GroupService {
         // 获取群组成员
         let members = sqlx::query_as::<_, UserRecord>(
             r#"SELECT u.user_id, u.username, u.nick_name, u.avatar, u.role, u.love_point, u.diamond,
-               (SELECT agm.group_id FROM association_group_members agm WHERE agm.user_id=u.user_id ORDER BY agm.is_primary DESC, agm.group_id ASC LIMIT 1) AS group_id
+               (SELECT agm.group_id FROM association_group_members agm
+                  JOIN association_groups g ON g.group_id = agm.group_id AND g.status = 'ACTIVE'
+                  WHERE agm.user_id = u.user_id AND agm.member_status = 'ACTIVE'
+                  ORDER BY agm.is_primary DESC, agm.group_id ASC LIMIT 1) AS group_id
                FROM users u
                JOIN association_group_members agm ON agm.user_id = u.user_id
-               WHERE agm.group_id = $1"#
+               WHERE agm.group_id = $1 AND agm.member_status = 'ACTIVE'"#
         )
         .bind(group_id)
         .fetch_all(db)

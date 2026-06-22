@@ -51,7 +51,7 @@ pub async fn load_user_public_for_token(
                u.push_id, u.last_role_switch_at,
                (SELECT agm.group_id FROM association_group_members agm
                   JOIN association_groups g ON g.group_id=agm.group_id AND g.status='ACTIVE'
-                  WHERE agm.user_id=u.user_id
+                  WHERE agm.user_id=u.user_id AND agm.member_status='ACTIVE'
                   ORDER BY agm.is_primary DESC, agm.group_id ASC LIMIT 1) AS "group_id!: Option<i64>"
         FROM users u WHERE u.user_id=$1 AND u.status='ACTIVE'
         "#,

@@ -151,11 +151,11 @@ pub async fn get_user_groups(
     let rows = sqlx::query(
         r#"SELECT g.group_id, g.group_name,
            CASE WHEN g.buyer_user_id = $1 THEN 'BUYER' ELSE 'SELLER' END as my_role,
-           (SELECT COUNT(*) FROM association_group_members WHERE group_id = g.group_id) as member_count,
+           (SELECT COUNT(*) FROM association_group_members WHERE group_id = g.group_id AND member_status = 'ACTIVE') as member_count,
            g.diamond, g.level, g.created_at
            FROM association_groups g
            JOIN association_group_members gm ON gm.group_id = g.group_id
-           WHERE gm.user_id = $1 AND gm.is_primary = 1
+           WHERE gm.user_id = $1 AND gm.member_status = 'ACTIVE'
            ORDER BY g.created_at DESC"#,
     )
     .bind(token.user_id)
