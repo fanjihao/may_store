@@ -1111,17 +1111,11 @@ CREATE TABLE group_point_configs (
     overdue_unfinished_points INT NOT NULL DEFAULT -10,
     unlock_card_diamond_cost INT NOT NULL DEFAULT 100,
     default_footprint_capacity INT NOT NULL DEFAULT 10,
-    daily_checkin_rewards INT[] NOT NULL DEFAULT '{5,6,7,8,9,10,20}',
-    -- 兼容代码引用:签到奖励百分比、订单积分百分比
-    sign_reward_daily INT NOT NULL DEFAULT 5,
-    sign_reward_consecutive INT NOT NULL DEFAULT 10,
     order_point_percent INT NOT NULL DEFAULT 100,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 COMMENT ON TABLE group_point_configs IS '组积分奖惩配置';
-COMMENT ON COLUMN group_point_configs.sign_reward_daily IS '每日签到奖励积分(兼容旧版 user_service 引用)';
-COMMENT ON COLUMN group_point_configs.sign_reward_consecutive IS '连续签到奖励积分';
 COMMENT ON COLUMN group_point_configs.order_point_percent IS '订单积分百分比';
 
 -- ================= USER DIAMOND (legacy) =================
@@ -1505,6 +1499,16 @@ COMMENT ON COLUMN global_configs.config_key IS 'sign_in_diamond_reward 等';
 COMMENT ON COLUMN global_configs.category IS 'REWARDS/SIGN_IN/WISH/ORDER/RISK/UPLOAD/GENERAL';
 CREATE UNIQUE INDEX uniq_global_config_key ON global_configs(config_key);
 CREATE INDEX idx_global_config_category ON global_configs(category);
+
+-- 默认系统配置（admin 可改）。由应用启动时检测 + admin 在 multi-admin 维护。
+-- 缺失时 sign_in_service 与 admin/configs 走各自的 DEFAULT_* 常量兜底。
+INSERT INTO global_configs (config_key, config_value, category, description) VALUES
+    ('signInRewards7Days', '[5, 6, 7, 8, 9, 10, 20]'::jsonb, 'SIGN_IN', '7 天轮回签到奖励(数组下标 1~7)'),
+    ('orderPointPercent', '100'::jsonb, 'ORDER', '订单积分百分比'),
+    ('diamondUnlockCost', '100'::jsonb, 'REWARDS', '钻石解锁价格'),
+    ('defaultFootprintCapacity', '50'::jsonb, 'GENERAL', '默认足迹容量'),
+    ('fullTeamBonusAmt', '10'::jsonb, 'SIGN_IN', '全组满签时最后签到用户获得的组钻石数')
+ON CONFLICT (config_key) DO NOTHING;
 
 -- ================= GROUP CONFIGS (§11.23) =================
 -- 替代 group_point_configs；统一为 FSD 定义的 9 个字段
