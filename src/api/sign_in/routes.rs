@@ -50,7 +50,10 @@ pub struct DailyCheckinResponse {
     pub diamond_reward: i32,
     pub consecutive_days: i32,
     pub total_diamonds: i32,
+    /// 本次签到是否拿到满签奖励
     pub full_team_bonus: bool,
+    /// 满签奖励金额（0 表示没拿到）
+    pub full_team_bonus_amt: i32,
 }
 
 /// 签到记录项
@@ -112,7 +115,8 @@ pub async fn sign_in(
         diamond_reward: result.diamond_reward,
         consecutive_days: result.consecutive_days,
         total_diamonds: result.total_diamonds,
-        full_team_bonus: false,
+        full_team_bonus: result.full_team_bonus,
+        full_team_bonus_amt: result.full_team_bonus_amt,
     }))
 }
 
