@@ -12,6 +12,7 @@ use std::sync::Arc;
 use utoipa::ToSchema;
 
 use crate::api::admin::auth;
+use crate::api::admin::users;
 use crate::config::AppState;
 use crate::errors::CustomError;
 use crate::middlewares::admin_auth::AdminToken;
@@ -84,6 +85,9 @@ pub fn validate_config(
 pub fn configure(cfg: &mut ServiceConfig) {
     // 先注册 auth 子模块（独立的 /api/admin/auth 作用域）
     auth::configure(cfg);
+
+    // 注册 users 子模块（独立的作用域，避免被 /users 列表 GET 覆盖 PATCH 路由）
+    users::configure(cfg);
 
     cfg.service(
         web::scope("/api/admin")

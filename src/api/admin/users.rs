@@ -107,6 +107,137 @@ pub fn validate_user_update(input: &UserUpdateInput) -> Result<(), CustomError> 
     Ok(())
 }
 
+/// 配置路由(在 admin::routes::configure 里被调)
+pub fn configure(cfg: &mut ServiceConfig) {
+    cfg.service(
+        web::scope("/api/admin/users")
+            .route("/{user_id}", web::patch().to(update_user)),
+    );
+}
+
+/// PATCH /api/admin/users/{user_id}
+///
+/// 管理员修改用户字段。至少一个字段。改 username 需唯一性校验(409)。
+/// 每次 PATCH 写 audit_logs(operator_id=admin, action_type='USER_UPDATE', detail 含原值/新值)
+#[utoipa::path(
+    patch,
+    path = "/api/admin/users/{user_id}",
+    tag = "后台管理 - 用户",
+    params(("user_id" = i64, Path, description = "用户 ID")),
+    request_body = UserUpdateInput,
+    responses(
+        (status = 200, description = "更新成功", body = UserOut),
+        (status = 400, description = "字段非法"),
+        (status = 401, description = "未登录"),
+        (status = 404, description = "用户不存在"),
+        (status = 409, description = "username 已被占用")
+    ),
+    security(("bearer_auth" = []))
+)]
+pub async fn update_user(
+    state: State<Arc<AppState>>,
+    admin: crate::middlewares::admin_auth::AdminToken,
+    path: Path<i64>,
+    body: Json<UserUpdateInput>,
+) -> Result<impl Responder, CustomError> {
+    let user_id = path.into_inner();
+    let input = body.into_inner();
+    let db = &state.db_pool;
+
+    validate_user_update(&input)?;
+
+    let mut tx = db.begin().await?;
+
+    let row: Option<(String, Option<String>, String, String)> = sqlx::query_as(
+        r#"SELECT username, nick_name, role::text, status::text
+           FROM users WHERE user_id = $1 FOR UPDATE"#,
+    )
+    .bind(user_id)
+    .fetch_optional(&mut *tx)
+    .await?;
+
+    let (old_username, old_nick_name, old_role, old_status) = match row {
+        Some(r) => r,
+        None => return Err(CustomError::NotFound("用户不存在".into())),
+    };
+
+    if let Some(ref new_username) = input.username {
+        if new_username != &old_username {
+            let exists: Option<i64> = sqlx::query_scalar(
+                "SELECT user_id FROM users WHERE username = $1 AND user_id != $2 LIMIT 1",
+            )
+            .bind(new_username)
+            .bind(user_id)
+            .fetch_optional(&mut *tx)
+            .await?;
+            if exists.is_some() {
+                return Err(CustomError::Conflict("该用户名已被使用".into()));
+            }
+        }
+    }
+
+    let new_username = input.username.clone().unwrap_or_else(|| old_username.clone());
+    let new_nick_name = input.nick_name.clone().or_else(|| old_nick_name.clone());
+    let new_role = input.role.clone().unwrap_or_else(|| old_role.clone());
+    let new_status = input.status.clone().unwrap_or_else(|| old_status.clone());
+
+    sqlx::query(
+        r#"UPDATE users
+           SET username = $1, nick_name = $2, role = $3::user_role_enum, status = $4::user_status_enum, updated_at = NOW()
+           WHERE user_id = $5"#,
+    )
+    .bind(&new_username)
+    .bind(&new_nick_name)
+    .bind(&new_role)
+    .bind(&new_status)
+    .bind(user_id)
+    .execute(&mut *tx)
+    .await?;
+
+    let detail = serde_json::json!({
+        "user_id": user_id,
+        "before": {
+            "username": old_username, "nick_name": old_nick_name,
+            "role": old_role, "status": old_status,
+        },
+        "after": {
+            "username": new_username, "nick_name": new_nick_name,
+            "role": new_role, "status": new_status,
+        },
+    });
+    let _ = sqlx::query(
+        r#"INSERT INTO audit_logs (operator_id, operator_type, action_type, target_type, target_id, detail)
+           VALUES ($1, 'ADMIN', 'USER_UPDATE', 'USER', $2, $3)"#,
+    )
+    .bind(admin.user_id)
+    .bind(user_id)
+    .bind(&detail)
+    .execute(&mut *tx)
+    .await;
+
+    tx.commit().await?;
+
+    let out: (i64, String, Option<String>, String, String, i32, i32, chrono::DateTime<chrono::Utc>) =
+        sqlx::query_as(
+            r#"SELECT user_id, username, nick_name, role::text, status::text, love_point, diamond, created_at
+               FROM users WHERE user_id = $1"#,
+        )
+        .bind(user_id)
+        .fetch_one(db)
+        .await?;
+
+    Ok(ApiResponse::success(UserOut {
+        user_id: out.0,
+        username: out.1,
+        nick_name: out.2,
+        role: out.3,
+        status: out.4,
+        love_point: out.5,
+        diamond: out.6,
+        created_at: out.7,
+    }))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
