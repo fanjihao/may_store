@@ -149,9 +149,9 @@ pub async fn sign_in(
     _require: RequireGroup,
     path: ntex::web::types::Path<i64>,
 ) -> Result<impl Responder, CustomError> {
-    let _group_id = *path;
+    let group_id = *path;
     let app_state = (*state).clone();
-    let result = SignService::daily_checkin(token, &app_state).await?;
+    let result = SignService::daily_checkin(token, group_id, &app_state).await?;
     Ok(ApiResponse::success(DailyCheckinResponse {
         diamond_reward: result.diamond_reward,
         consecutive_days: result.consecutive_days,
