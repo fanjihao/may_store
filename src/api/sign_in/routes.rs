@@ -73,6 +73,14 @@ pub struct SignInStatusResponse {
     pub date: String,
     pub members: Vec<MemberSignStatus>,
     pub full_team_today: bool,
+    /// 当前用户今日是否已签到
+    pub today_signed: bool,
+    /// 当前用户连续签到天数
+    pub consecutive_days: i32,
+    /// 当前用户累计签到天数
+    pub total_sign_days: i32,
+    /// 当前用户今日签到获得的钻石数(未签到时为 0)
+    pub today_diamonds: i32,
     /// 7 天连续签到奖励配置(全局,管理员可配)
     /// 数组下标 1~7 对应连续第 N 天的奖励钻石
     /// 兜底值见 SignService::load_sign_rewards
@@ -198,10 +206,41 @@ pub async fn sign_in_status(
     // 加载 7 天奖励配置
     let daily_checkin_rewards = SignService::load_sign_rewards(db).await;
 
+    // 找出当前用户
+    let my_member = member_statuses
+        .iter()
+        .find(|m| m.user_id == token.user_id);
+
+    // 当前用户今日签到状态
+    let today_signed = my_member.map(|m| m.signed).unwrap_or(false);
+    let consecutive_days = my_member.map(|m| m.consecutive_days).unwrap_or(0);
+
+    // 累计签到天数(从 sign_in_records 查 COUNT)
+    let total_sign_days: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM sign_in_records WHERE user_id = $1 AND group_id = $2",
+    )
+    .bind(token.user_id)
+    .bind(group_id)
+    .fetch_one(db)
+    .await?;
+
+    // 今日签到获得的钻石数(从 daily_checkin_rewards 数组按 consecutive_days 索引取)
+    // 数组下标 1~7 对应连续第 N 天的奖励,索引为 consecutive_days - 1
+    let today_diamonds = if today_signed && consecutive_days > 0 {
+        let idx = (consecutive_days as usize).saturating_sub(1);
+        daily_checkin_rewards.get(idx).copied().unwrap_or(0)
+    } else {
+        0
+    };
+
     Ok(ApiResponse::success(SignInStatusResponse {
         date: today.to_string(),
         members: member_statuses,
         full_team_today: all_signed,
+        today_signed,
+        consecutive_days,
+        total_sign_days: total_sign_days as i32,
+        today_diamonds,
         daily_checkin_rewards,
     }))
 }
@@ -301,6 +340,10 @@ mod tests {
             date: "2026-06-23".to_string(),
             members: vec![],
             full_team_today: false,
+            today_signed: false,
+            consecutive_days: 0,
+            total_sign_days: 0,
+            today_diamonds: 0,
             daily_checkin_rewards: vec![5, 6, 7, 8, 9, 10, 20],
         };
         let json = serde_json::to_value(&resp).unwrap();
@@ -309,5 +352,25 @@ mod tests {
         assert_eq!(arr.len(), 7);
         assert_eq!(arr[0].as_i64().unwrap(), 5);
         assert_eq!(arr[6].as_i64().unwrap(), 20);
+    }
+
+    #[test]
+    fn sign_in_status_response_serializes_all_four_new_top_level_fields() {
+        // 验证响应序列化后包含 4 个新顶层字段: today_signed / consecutive_days / total_sign_days / today_diamonds
+        let resp = SignInStatusResponse {
+            date: "2026-06-23".to_string(),
+            members: vec![],
+            full_team_today: false,
+            today_signed: true,
+            consecutive_days: 3,
+            total_sign_days: 15,
+            today_diamonds: 7,
+            daily_checkin_rewards: vec![5, 6, 7, 8, 9, 10, 20],
+        };
+        let json = serde_json::to_value(&resp).unwrap();
+        assert_eq!(json.get("today_signed").unwrap().as_bool().unwrap(), true);
+        assert_eq!(json.get("consecutive_days").unwrap().as_i64().unwrap(), 3);
+        assert_eq!(json.get("total_sign_days").unwrap().as_i64().unwrap(), 15);
+        assert_eq!(json.get("today_diamonds").unwrap().as_i64().unwrap(), 7);
     }
 }
