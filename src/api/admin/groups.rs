@@ -14,6 +14,15 @@ use crate::config::AppState;
 use crate::errors::CustomError;
 use crate::utils::response::ApiResponse;
 
+/// 配置路由(在 admin::routes::configure 里被调)
+pub fn configure(cfg: &mut ServiceConfig) {
+    cfg.service(
+        web::scope("/api/admin/groups")
+            .route("/{group_id}", web::patch().to(update_group))
+            .route("/{group_id}/members", web::get().to(get_group_members)),
+    );
+}
+
 /// 组名最大长度(查 association_groups.group_name VARCHAR(64))
 const GROUP_NAME_MAX_LEN: usize = 64;
 

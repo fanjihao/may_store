@@ -12,6 +12,7 @@ use std::sync::Arc;
 use utoipa::ToSchema;
 
 use crate::api::admin::auth;
+use crate::api::admin::groups;
 use crate::api::admin::users;
 use crate::config::AppState;
 use crate::errors::CustomError;
@@ -88,6 +89,9 @@ pub fn configure(cfg: &mut ServiceConfig) {
 
     // 注册 users 子模块（独立的作用域，避免被 /users 列表 GET 覆盖 PATCH 路由）
     users::configure(cfg);
+
+    // 注册 groups 子模块（独立的 /api/admin/groups 作用域，注册 PATCH /{group_id} 和 GET /{group_id}/members）
+    groups::configure(cfg);
 
     cfg.service(
         web::scope("/api/admin")
