@@ -53,7 +53,7 @@
 | `username` | 登录名（唯一） | ✓ | ✓（需唯一性校验） |
 | `nick_name` | 昵称 | ✓ | ✓ |
 | `role` | 角色（`user_role_enum`） | ✓ | ✓（白名单） |
-| `status` | ACTIVE/DISABLED（`user_status_enum`） | ✓ | ✓（白名单） |
+| `status` | `ACTIVE` / `BANNED` / `DELETED`（`user_status_enum`） | ✓ | ✓（白名单） |
 
 `role` 和 `status` 的合法 enum 值需在 `validate_user_update` 里硬编码白名单（不能依赖 sqlx 的 cast 在错误时返 400——它会 panic）。
 
