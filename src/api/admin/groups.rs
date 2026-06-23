@@ -68,6 +68,93 @@ pub fn validate_group_update(input: &GroupUpdateInput) -> Result<(), CustomError
     Ok(())
 }
 
+/// PATCH /api/admin/groups/{group_id}
+///
+/// 管理员修改双人组名。空名 / 超 64 → 400，不存在 → 404。
+/// 每次 PATCH 写 audit_logs。
+#[utoipa::path(
+    patch,
+    path = "/api/admin/groups/{group_id}",
+    tag = "后台管理 - 双人组",
+    params(("group_id" = i64, Path, description = "组 ID")),
+    request_body = GroupUpdateInput,
+    responses(
+        (status = 200, description = "更新成功", body = GroupOut),
+        (status = 400, description = "groupName 非法"),
+        (status = 401, description = "未登录"),
+        (status = 404, description = "组不存在")
+    ),
+    security(("bearer_auth" = []))
+)]
+pub async fn update_group(
+    state: State<Arc<AppState>>,
+    admin: crate::middlewares::admin_auth::AdminToken,
+    path: Path<i64>,
+    body: Json<GroupUpdateInput>,
+) -> Result<impl Responder, CustomError> {
+    let group_id = path.into_inner();
+    let input = body.into_inner();
+    let db = &state.db_pool;
+
+    validate_group_update(&input)?;
+    let new_name = input.group_name.unwrap().trim().to_string();
+
+    let mut tx = db.begin().await?;
+
+    let old_name: Option<String> = sqlx::query_scalar(
+        "SELECT group_name FROM association_groups WHERE group_id = $1 FOR UPDATE",
+    )
+    .bind(group_id)
+    .fetch_optional(&mut *tx)
+    .await?;
+
+    let old_name = match old_name {
+        Some(n) => n,
+        None => return Err(CustomError::NotFound("组不存在".into())),
+    };
+
+    sqlx::query(
+        "UPDATE association_groups SET group_name = $1, updated_at = NOW() WHERE group_id = $2",
+    )
+    .bind(&new_name)
+    .bind(group_id)
+    .execute(&mut *tx)
+    .await?;
+
+    let detail = serde_json::json!({
+        "group_id": group_id,
+        "before": { "group_name": old_name },
+        "after": { "group_name": new_name },
+    });
+    let _ = sqlx::query(
+        r#"INSERT INTO audit_logs (operator_id, operator_type, action_type, target_type, target_id, detail)
+           VALUES ($1, 'ADMIN', 'GROUP_UPDATE', 'ASSOCIATION_GROUP', $2, $3)"#,
+    )
+    .bind(admin.user_id)
+    .bind(group_id)
+    .bind(&detail)
+    .execute(&mut *tx)
+    .await;
+
+    tx.commit().await?;
+
+    let out: (String, i64, i32, chrono::DateTime<chrono::Utc>) = sqlx::query_as(
+        r#"SELECT group_name, diamond, member_count, created_at
+           FROM association_groups WHERE group_id = $1"#,
+    )
+    .bind(group_id)
+    .fetch_one(db)
+    .await?;
+
+    Ok(ApiResponse::success(GroupOut {
+        group_id,
+        group_name: out.0,
+        diamond: out.1,
+        member_count: out.2,
+        created_at: out.3,
+    }))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
