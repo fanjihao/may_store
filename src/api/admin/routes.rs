@@ -84,15 +84,11 @@ pub fn validate_config(
 
 /// 配置后台管理路由
 pub fn configure(cfg: &mut ServiceConfig) {
-    // 先注册 auth 子模块（独立的 /api/admin/auth 作用域）
+    // auth 子模块在独立 scope /api/admin/auth/login —— 不冲突,先注册
     auth::configure(cfg);
 
-    // 注册 users 子模块（独立的作用域，避免被 /users 列表 GET 覆盖 PATCH 路由）
-    users::configure(cfg);
-
-    // 注册 groups 子模块（独立的 /api/admin/groups 作用域，注册 PATCH /{group_id} 和 GET /{group_id}/members）
-    groups::configure(cfg);
-
+    // 所有路由放主 scope /api/admin 下,避免 sub-scope shadow 父 scope 的 bare GET
+    // (T2/T6 教训:把 PATCH /users/{user_id} 放独立 sub-scope 会让 GET /users 返 404)
     cfg.service(
         web::scope("/api/admin")
             .route("/stats", web::get().to(get_stats))
@@ -100,6 +96,14 @@ pub fn configure(cfg: &mut ServiceConfig) {
             .route("/users", web::get().to(list_all_users))
             .route("/configs", web::get().to(get_config))
             .route("/configs/{config_key}", web::patch().to(update_config))
+            // 用户管理 (T2)
+            .route("/users/{user_id}", web::patch().to(crate::api::admin::users::update_user))
+            // 双人组管理 (T4/T5)
+            .route("/groups/{group_id}", web::patch().to(crate::api::admin::groups::update_group))
+            .route(
+                "/groups/{group_id}/members",
+                web::get().to(crate::api::admin::groups::get_group_members),
+            )
             // FSD v2: 心愿质量奖励审核
             .route(
                 "/wishes/{wish_id}/quality-reward",
@@ -319,7 +323,7 @@ pub async fn list_all_users(
     _admin: AdminToken,
 ) -> Result<impl Responder, CustomError> {
     let users = sqlx::query(
-        "SELECT user_id, username, nick_name, role, love_point, diamond, created_at FROM users ORDER BY created_at DESC LIMIT 100"
+        "SELECT user_id, username, nick_name, role::text, love_point, diamond, created_at FROM users ORDER BY created_at DESC LIMIT 100"
     )
     .fetch_all(&state.db_pool)
     .await?;
