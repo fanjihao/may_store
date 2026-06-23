@@ -155,6 +155,69 @@ pub async fn update_group(
     }))
 }
 
+/// GET /api/admin/groups/{group_id}/members
+///
+/// 返回 ACTIVE 成员列表，按 is_primary DESC, joined_at ASC。
+/// 不存在 → 404。
+#[utoipa::path(
+    get,
+    path = "/api/admin/groups/{group_id}/members",
+    tag = "后台管理 - 双人组",
+    params(("group_id" = i64, Path, description = "组 ID")),
+    responses(
+        (status = 200, description = "成员列表", body = Vec<GroupMember>),
+        (status = 401, description = "未登录"),
+        (status = 404, description = "组不存在")
+    ),
+    security(("bearer_auth" = []))
+)]
+pub async fn get_group_members(
+    state: State<Arc<AppState>>,
+    _admin: crate::middlewares::admin_auth::AdminToken,
+    path: Path<i64>,
+) -> Result<impl Responder, CustomError> {
+    let group_id = path.into_inner();
+    let db = &state.db_pool;
+
+    let exists: Option<i64> = sqlx::query_scalar(
+        "SELECT group_id FROM association_groups WHERE group_id = $1",
+    )
+    .bind(group_id)
+    .fetch_optional(db)
+    .await?;
+
+    if exists.is_none() {
+        return Err(CustomError::NotFound("组不存在".into()));
+    }
+
+    let rows = sqlx::query(
+        r#"SELECT m.user_id, u.username, u.nick_name, m.is_primary,
+                  m.role_in_group::text, m.member_status::text, m.joined_at
+           FROM association_group_members m
+           JOIN users u ON u.user_id = m.user_id
+           WHERE m.group_id = $1 AND m.member_status = 'ACTIVE'
+           ORDER BY m.is_primary DESC, m.joined_at ASC"#,
+    )
+    .bind(group_id)
+    .fetch_all(db)
+    .await?;
+
+    let members: Vec<GroupMember> = rows
+        .iter()
+        .map(|r| GroupMember {
+            user_id: r.get("user_id"),
+            username: r.get("username"),
+            nick_name: r.get("nick_name"),
+            is_primary: r.get::<i16, _>("is_primary") != 0,
+            role_in_group: r.get("role_in_group"),
+            member_status: r.get("member_status"),
+            joined_at: r.get("joined_at"),
+        })
+        .collect();
+
+    Ok(ApiResponse::success(members))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
