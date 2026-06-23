@@ -72,7 +72,11 @@ pub struct SignRecordItem {
 /// - 积分字段:正数加分,负数扣分
 /// - 容量字段:默认值
 /// - 7 天签到奖励:数组下标 1~7 对应连续第 N 天的奖励钻石
+///
+/// 序列化时字段名转 camelCase,这样 OpenAPI 输出的字段名跟前端
+/// 现有代码 (signIn.vue / configs.vue) 保持一致,前端不需要改访问方式
 #[derive(Debug, Serialize, Deserialize, ToSchema, Clone)]
+#[serde(rename_all = "camelCase")]
 pub struct GroupPointConfig {
     /// 清单确认完成加分
     pub confirmed_finished_points: i32,
