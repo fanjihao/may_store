@@ -16,7 +16,7 @@
 - admin 想改一个用户的 nick_name 或 role、或想看一个组里有哪些成员 → **做不到**
 
 **用户诉求**（人话版）：
-- **用户管理**：能看 + 改 4 个字段：`nick_name`（昵称）、`role`（角色）、`status`（ACTIVE/DISABLED）、`username`（登录名）
+- **用户管理**：能看 + 改 4 个字段：`nick_name`（昵称）、`role`（角色）、`status`（ACTIVE/BANNED/DELETED）、`username`（登录名）
 - **双人组管理**：能看 + 改 `group_name`、能看组成员列表（只读）
 - **每次改动写审计**：能查谁改了什么、什么时候改的、值是什么
 
