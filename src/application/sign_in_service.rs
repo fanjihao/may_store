@@ -26,7 +26,7 @@ pub struct SignService;
 impl SignService {
     /// 从 global_configs 读取 7 天签到奖励配置
     /// 失败 / 缺失 / 格式错 → 兜底为 DEFAULT_SIGN_REWARDS_7DAYS
-    async fn load_sign_rewards(db: &sqlx::PgPool) -> Vec<i32> {
+    pub async fn load_sign_rewards(db: &sqlx::PgPool) -> Vec<i32> {
         let row: Option<(Option<serde_json::Value>,)> = sqlx::query_as(
             "SELECT config_value FROM global_configs WHERE config_key = $1",
         )

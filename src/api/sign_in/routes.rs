@@ -73,6 +73,10 @@ pub struct SignInStatusResponse {
     pub date: String,
     pub members: Vec<MemberSignStatus>,
     pub full_team_today: bool,
+    /// 7 天连续签到奖励配置(全局,管理员可配)
+    /// 数组下标 1~7 对应连续第 N 天的奖励钻石
+    /// 兜底值见 SignService::load_sign_rewards
+    pub daily_checkin_rewards: Vec<i32>,
 }
 
 #[derive(Debug, Serialize, ToSchema)]
@@ -191,10 +195,14 @@ pub async fn sign_in_status(
         });
     }
 
+    // 加载 7 天奖励配置
+    let daily_checkin_rewards = SignService::load_sign_rewards(db).await;
+
     Ok(ApiResponse::success(SignInStatusResponse {
         date: today.to_string(),
         members: member_statuses,
         full_team_today: all_signed,
+        daily_checkin_rewards,
     }))
 }
 
@@ -280,4 +288,26 @@ pub async fn get_sign_ins(
 #[derive(Debug, Deserialize, utoipa::IntoParams)]
 pub struct SignInsQuery {
     pub year_month: Option<String>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sign_in_status_response_contains_rewards_field() {
+        // 验证响应结构体序列化后包含 daily_checkin_rewards 字段
+        let resp = SignInStatusResponse {
+            date: "2026-06-23".to_string(),
+            members: vec![],
+            full_team_today: false,
+            daily_checkin_rewards: vec![5, 6, 7, 8, 9, 10, 20],
+        };
+        let json = serde_json::to_value(&resp).unwrap();
+        assert!(json.get("daily_checkin_rewards").is_some());
+        let arr = json.get("daily_checkin_rewards").unwrap().as_array().unwrap();
+        assert_eq!(arr.len(), 7);
+        assert_eq!(arr[0].as_i64().unwrap(), 5);
+        assert_eq!(arr[6].as_i64().unwrap(), 20);
+    }
 }
