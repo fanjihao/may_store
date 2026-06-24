@@ -435,24 +435,17 @@ async fn swap_role(
             .map_err(|e| log::warn!("[swap_role] failed to invalidate user cache for {}: {}", uid, e));
     }
 
-    // 通知组里双方 —— 角色互换了
-    // 双方都推,让 actor 和 partner 都能即时刷新页面
-    let targets: Vec<i64> = [new_buyer, new_seller]
-        .into_iter()
-        .flatten()
-        .collect();
-    if !targets.is_empty() {
-        push_group_member_change_notice(
-            db,
-            targets,
-            gid,
-            "swapped",
-            token.user_id, // actor = 发起互换的人
-            new_buyer,
-            new_seller,
-        )
-        .await;
-    }
+    // 通知组里所有人 —— 角色互换了
+    // 推函数内部按 group_id 反查所有 ACTIVE 成员, 这里不再手撸 target Vec
+    push_group_member_change_notice(
+        db,
+        gid,
+        "swapped",
+        token.user_id, // actor = 发起互换的人
+        new_buyer,
+        new_seller,
+    )
+    .await;
 
     Ok(ApiResponse::success(serde_json::json!({
         "status": "ok",
@@ -995,22 +988,12 @@ async fn join_group(
     let db = &state.db_pool;
     let input = body.into_inner();
     // DEBUG: 诊断 join 流程到底走没走到 handler
-    log::info!("[join_group] ENTER user_id={} invite_code={}", token.user_id, input.invite_code);
+    log::info!(
+        "[join_group] ENTER user_id={} invite_code={} invite_link_group_id={:?}",
+        token.user_id, input.invite_code, input.group_id
+    );
 
-    // 检查用户是否已在组中
-    let existing: Option<(i64,)> = sqlx::query_as(
-        "SELECT group_id FROM association_group_members WHERE user_id = $1 AND member_status = 'ACTIVE'",
-    )
-    .bind(token.user_id)
-    .fetch_optional(db)
-    .await?;
-
-    if existing.is_some() {
-        log::warn!("[join_group] REJECT: user_id={} 已在其他组中 (existing={:?})", token.user_id, existing);
-        return Err(CustomError::BadRequest("您已在其他组中".into()));
-    }
-
-    // 查找邀请码对应的邀请记录
+    // 查找邀请码对应的邀请记录 (权威 group_id 来源)
     let invite: Option<(i64, chrono::DateTime<chrono::Utc>, i32, i32)> = sqlx::query_as(
         r#"SELECT group_id, expires_at, max_uses, used_count
            FROM guest_invitations
@@ -1027,6 +1010,62 @@ async fn join_group(
             return Err(CustomError::BadRequest("邀请码无效或已过期".into()));
         }
     };
+
+    // 可选防御: 链接里带的 group_id 必须跟 invite_code 反查的 group_id 一致,
+    // 不一致说明链接被篡改/拼接错, 直接拒绝。
+    if let Some(link_gid) = input.group_id {
+        if link_gid != group_id {
+            log::warn!(
+                "[join_group] REJECT: invite_link.group_id={} != invite_record.group_id={}",
+                link_gid, group_id
+            );
+            return Err(CustomError::BadRequest("邀请码与群信息不匹配".into()));
+        }
+    }
+
+    // 幂等: 用户已经在本 group 的 ACTIVE 成员里, 直接返回成功 (跳过 INSERT / 推送)
+    let same_group_existing: Option<(i64,)> = sqlx::query_as(
+        "SELECT group_id FROM association_group_members
+         WHERE user_id = $1 AND group_id = $2 AND member_status = 'ACTIVE'"
+    )
+    .bind(token.user_id)
+    .bind(group_id)
+    .fetch_optional(db)
+    .await?;
+
+    if same_group_existing.is_some() {
+        log::info!(
+            "[join_group] IDEMPOTENT user_id={} 已在 group_id={}, 直接返回成功",
+            token.user_id, group_id
+        );
+        // 让前端拿到的 groupId 跟正常入群路径一致, 便于它清缓存/刷新
+        let _ = state.redis_cache
+            .delete_user(&token.user_id.to_string())
+            .await
+            .map_err(|e| log::warn!("[join_group] failed to invalidate user cache (idempotent): {}", e));
+        return Ok(ApiResponse::success(serde_json::json!({
+            "groupId": group_id,
+            "role": "SELLER",
+            "status": "ok"
+        })));
+    }
+
+    // 用户已经在别的 group 的 ACTIVE 成员里, 拒绝 (业务规则)
+    let other_group_existing: Option<(i64,)> = sqlx::query_as(
+        "SELECT group_id FROM association_group_members
+         WHERE user_id = $1 AND member_status = 'ACTIVE'"
+    )
+    .bind(token.user_id)
+    .fetch_optional(db)
+    .await?;
+
+    if other_group_existing.is_some() {
+        log::warn!(
+            "[join_group] REJECT: user_id={} 已在其他组中 (existing={:?})",
+            token.user_id, other_group_existing
+        );
+        return Err(CustomError::BadRequest("您已在其他组中".into()));
+    }
 
     // 检查是否过期
     if Utc::now() > expires_at {
@@ -1095,47 +1134,19 @@ async fn join_group(
         .await
         .map_err(|e| log::warn!("[join_group] failed to invalidate user cache: {}", e));
 
-    // 通知组里另一个人(创建者/buyer)—— 有人加入了
-    let buyer_id_after: Option<i64> = sqlx::query_scalar(
-        "SELECT buyer_user_id FROM association_groups WHERE group_id = $1",
+    // 通知 group 里所有 ACTIVE 成员 —— 有人加入了
+    // 推函数内部按 group_id 反查所有 ACTIVE 成员 (含 buyer + seller 双方),
+    // 这里不需要再手撸 target Vec, 也不需要兜底分支
+    // (tx 已 commit, association_group_members 已写入, 反查一定拿得到)
+    push_group_member_change_notice(
+        db,
+        group_id,
+        "joined",
+        token.user_id, // actor = 加入者
+        None,          // buyer 信息由 fetch_user_info_for_notice 按需查; 这里不强制带
+        Some(token.user_id), // seller = 加入者(自己)
     )
-    .bind(group_id)
-    .fetch_optional(db)
-    .await
-    .ok()
-    .flatten()
-    .flatten();
-    // 双方都推: buyer(原本就在) 和 seller(刚加入的 actor) 都要收到,
-    // 这样加入方(seller)自己的页面也能及时刷新 groupDetail
-    if let Some(target) = buyer_id_after {
-        let targets: Vec<i64> = if target == token.user_id {
-            vec![target] // 极端兜底: 如果 buyer_user_id 就是 actor 自己,只推一次
-        } else {
-            vec![target, token.user_id] // buyer + seller 双方
-        };
-        push_group_member_change_notice(
-            db,
-            targets,
-            group_id,
-            "joined",
-            token.user_id, // actor = 加入者
-            Some(target),  // buyer = 创建者(原本就在)
-            Some(token.user_id), // seller = 加入者(自己)
-        )
-        .await;
-    } else {
-        // 兜底: 至少推给 actor 自己
-        push_group_member_change_notice(
-            db,
-            vec![token.user_id],
-            group_id,
-            "joined",
-            token.user_id,
-            None,           // buyer 还未知
-            Some(token.user_id),
-        )
-        .await;
-    }
+    .await;
 
     Ok(ApiResponse::success(serde_json::json!({
         "groupId": group_id,
@@ -1225,9 +1236,9 @@ async fn exit_group(
 
     tx.commit().await?;
 
-    // 通知组里"还留在组里的那个人"—— 有人退出了
-    // 退出后 buyer_user_id / seller_user_id 中被清空的那一方就是退出者,
-    // 另一方就是接收通知的目标(target)。target 可能为 null(组里已经没人了),此时不通知
+    // 通知 group 里所有 ACTIVE 成员 —— 有人退出了
+    // 推函数内部按 group_id 反查所有 ACTIVE 成员, 不需要手撸 target Vec
+    // 退出后 group 里只剩另一个人(也可能没人了), 反查会自动跳过 actor
     let (remaining_buyer, remaining_seller): (Option<Option<i64>>, Option<Option<i64>>) = (
         sqlx::query_scalar::<_, Option<i64>>(
             "SELECT buyer_user_id FROM association_groups WHERE group_id = $1",
@@ -1248,22 +1259,9 @@ async fn exit_group(
     );
     let buyer_id_after = remaining_buyer.flatten();
     let seller_id_after = remaining_seller.flatten();
-    let target = [buyer_id_after, seller_id_after]
-        .into_iter()
-        .flatten()
-        .find(|id| *id != token.user_id);
-    // 双方都推: 让退出方(actor)和留下来的那个人都即时刷新
-    // 退出方的 UserPublic.group_id 已经从 Some 变 None, 但 WS 收到通知
-    // 也能让 actor 端的首页从"等待伴侣"切回"未加入组"状态
-    let mut targets: Vec<i64> = vec![token.user_id];
-    if let Some(t) = target {
-        if t != token.user_id {
-            targets.push(t);
-        }
-    }
+
     push_group_member_change_notice(
         db,
-        targets,
         gid,
         "exited",
         token.user_id, // actor = 退出者
@@ -1441,10 +1439,15 @@ pub struct GroupWishInput {
 }
 
 /// 通过邀请码加入组输入
+/// `group_id` 来自邀请链接 (前端拼链接时带上), 后端仍以 invite_code 反查的
+/// group_id 为准; group_id 仅用于日志/审计, 以及让前端"已在同群"幂等判断
+/// 时的请求语义自洽。
 #[derive(Debug, Deserialize, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct JoinGroupInput {
     pub invite_code: String,
+    #[serde(default)]
+    pub group_id: Option<i64>,
 }
 
 // ============== Swap Role Check (FSD 2026-06-15 设计稿 §4) ==============
@@ -1673,16 +1676,18 @@ async fn fetch_user_info_for_notice(
     })
 }
 
-/// 推送"组员变化"通知给组里"另一个人"。
+/// 推送"组员变化"通知给 group 里**所有 ACTIVE 成员**。
 ///
-/// - `target_id`: 接收通知的用户(组里除 actor 之外的另一个人)
-/// - `group_id` / `action` / `actor_id` / `buyer_id` / `seller_id`:
+/// - `group_id`: 从 association_group_members 反查所有 ACTIVE 成员后广播
+/// - `action` / `actor_id` / `buyer_id` / `seller_id`:
 ///   详见 `WsGroupMemberChangeData`
 ///
 /// 行为:target 不在线就静默丢弃(业务侧说"暂时不管离线")
+///
+/// 设计:不再让调用方手撸"目标 user_id Vec", 而是按 group_id 反查。
+/// PAIR 组目前 2 人, FUTURE 多人组 (FAMILY/TEAM) 也能直接复用。
 async fn push_group_member_change_notice(
     db: &sqlx::PgPool,
-    target_ids: Vec<i64>,
     group_id: i64,
     action: &str,
     actor_id: i64,
@@ -1717,9 +1722,25 @@ async fn push_group_member_change_notice(
         return;
     };
 
+    // 按 group_id 反查所有 ACTIVE 成员 -> 全体推送
+    // 之前手撸 buyer/seller 两人 Vec, 会漏掉多人组成员/以及新加进来但还没
+    // 落到 association_groups.buyer/seller 字段的瞬间状态。
+    let target_ids: Vec<i64> = sqlx::query_scalar(
+        "SELECT user_id FROM association_group_members
+         WHERE group_id = $1 AND member_status = 'ACTIVE'"
+    )
+    .bind(group_id)
+    .fetch_all(db)
+    .await
+    .unwrap_or_else(|e| {
+        log::error!(
+            "[push_group_member_change] 查 group_id={} 成员失败: {:?}",
+            group_id, e
+        );
+        Vec::new()
+    });
+
     let manager = get_connection_manager();
-    // 双方都推: 这样加入方(actor)和原成员都能收到,各自刷新页面
-    // 之前只推给 buyer,导致加入方的页面没法及时刷新 groupDetail
     for target_id in target_ids {
         let sent = manager.send_to_user(target_id, &json).await;
         if !sent {
