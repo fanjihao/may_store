@@ -98,6 +98,30 @@ pub struct WsGroupMemberChangeData {
     pub seller: Option<WsGroupMemberInfo>,
 }
 
+/// 组钻石/经验变化数据
+///
+/// 触发场景:
+/// - 签到成功(本次新增)
+/// - 后续其它会动组钻石的业务(留扩展位)
+///
+/// reason 取值:
+/// - "sign_in": 签到
+/// - "full_team_bonus": 全组满签奖励
+/// - 后续可加 "order_reward" 等
+#[allow(dead_code)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WsGroupDiamondChangeData {
+    pub group_id: i64,
+    /// 触发本次钻石变化的用户(签到时是签到者)
+    pub user_id: i64,
+    pub diamond: i32,
+    pub exp: i32,
+    pub level: i32,
+    pub consecutive_days: i32,
+    pub reason: String,
+}
+
 /// 错误数据
 #[allow(dead_code)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -158,6 +182,14 @@ impl WsEnvelope {
     pub fn group_member_change(change: &WsGroupMemberChangeData) -> Self {
         Self {
             msg_type: "group_member_change".to_string(),
+            data: serde_json::json!(change),
+        }
+    }
+
+    /// 创建组钻石变化消息
+    pub fn group_diamond_change(change: &WsGroupDiamondChangeData) -> Self {
+        Self {
+            msg_type: "group_diamond_change".to_string(),
             data: serde_json::json!(change),
         }
     }
