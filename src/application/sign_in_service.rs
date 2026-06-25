@@ -3,6 +3,7 @@
 // 签到奖励由 admin 在 global_configs.signInRewards7Days 配置(7 位数组),
 // 连续 7 天后第 8 天循环回第 1 天,中断则从第 1 天重新开始
 
+use crate::api::sign_in::broadcast::push_group_diamond_change_notice;
 use crate::config::AppState;
 use crate::domain::event::{EventType, SignInPayload};
 use crate::domain::sign_in::entities::DailyCheckinOut;
@@ -179,6 +180,22 @@ impl SignService {
         }
 
         tx.commit().await?;
+
+        // 5.5 推 group_diamond_change 通知给全组 —— commit 之后再发,
+        //   即使推送失败也不影响签到结果; 失败/离线静默丢弃由函数内部处理
+        let reason = if full_team_bonus_amt > 0 {
+            "full_team_bonus"
+        } else {
+            "sign_in"
+        };
+        push_group_diamond_change_notice(
+            db,
+            group_id,
+            user_id,
+            reason,
+            consecutive_days,
+        )
+        .await;
 
         // 6. 拿最终组钻石用于返回
         let total_diamonds: i32 = sqlx::query_scalar(
