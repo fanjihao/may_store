@@ -227,21 +227,28 @@ async fn insert_upload_record(
     db: &sqlx::Pool<sqlx::Postgres>,
     user_id: i64,
     file_key: &str,
+    original_filename: &str,
     content_type: &str,
     size: i64,
     business_ref_type: &str,
 ) -> Result<(), CustomError> {
+    // SQL 占位符与 bind 顺序必须一一对应:
+    //   $1 user_id, $2 file_key, $3 original_filename, $4 content_type,
+    //   $5 size, $6 business_ref_type
+    // 旧实现把 original_filename 写成 $2 (跟 file_key 重复), bind 也少一个,
+    // 会触发 sqlx 的 "bind mismatch" 错误, 接口返回 500 "数据库操作失败"。
     sqlx::query(
         r#"
         INSERT INTO upload_files
             (user_id, file_key, original_filename, content_type, size,
              business_ref_type, content_check_status, status, created_at, updated_at)
-        VALUES ($1, $2, $2, $3, $4, $5, 'PENDING', 'PENDING', NOW(), NOW())
+        VALUES ($1, $2, $3, $4, $5, $6, 'PENDING', 'PENDING', NOW(), NOW())
         ON CONFLICT (file_key) DO NOTHING
         "#,
     )
     .bind(user_id)
     .bind(file_key)
+    .bind(original_filename)
     .bind(content_type)
     .bind(size)
     .bind(business_ref_type)
@@ -293,6 +300,7 @@ pub async fn get_upload_token(
         &state.db_pool,
         token.user_id,
         &file_key,
+        &input.filename,
         &input.content_type,
         input.size,
         input.business_ref_type.as_str(),
@@ -379,6 +387,7 @@ pub async fn get_upload_tokens(
             &state.db_pool,
             token.user_id,
             &file_key,
+            &file.filename,
             &file.content_type,
             file.size,
             file.business_ref_type.as_str(),
