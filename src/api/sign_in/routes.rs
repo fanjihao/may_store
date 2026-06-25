@@ -32,6 +32,30 @@ pub fn configure(cfg: &mut ServiceConfig) {
     );
 }
 
+/// 算"当前连续签到天数"——前端在没签到今天时也能看到 streak 还在
+///
+/// 规则(按业务诉求"昨天签了算 1 连续"):
+/// - `last_sign_date` 是今天 → 用 `last_consecutive_days`(今天刚签过)
+/// - `last_sign_date` 是昨天 → 用 `last_consecutive_days`(streak 还在,等今天签)
+/// - `last_sign_date` 比昨天更早 OR 从没签过 → 0(streak 已断)
+pub fn compute_current_consecutive_days(
+    today: chrono::NaiveDate,
+    last_sign_date: Option<chrono::NaiveDate>,
+    last_consecutive_days: Option<i32>,
+) -> i32 {
+    match last_sign_date {
+        None => 0,
+        Some(d) => {
+            let yesterday = today.pred_opt().unwrap();
+            if d == today || d == yesterday {
+                last_consecutive_days.unwrap_or(0)
+            } else {
+                0
+            }
+        }
+    }
+}
+
 // ========== 响应结构 ==========
 
 /// 签到信息响应
@@ -215,6 +239,22 @@ pub async fn sign_in_status(
     .fetch_all(db)
     .await?;
 
+    // 额外查一次"当前用户最近一次签到记录" —— 用它算 streak 是否还在
+    // 原因: 原来的 LEFT JOIN 只匹配 sr.sign_date = today, 今天没签就拿不到 streak
+    let last_sign_row: Option<(chrono::NaiveDate, i32)> = sqlx::query_as(
+        "SELECT sign_date, consecutive_days FROM sign_in_records
+         WHERE group_id = $1 AND user_id = $2
+         ORDER BY sign_date DESC LIMIT 1"
+    )
+    .bind(group_id)
+    .bind(token.user_id)
+    .fetch_optional(db)
+    .await?;
+    let (last_sign_date, last_consecutive_days) = match last_sign_row {
+        Some((d, cd)) => (Some(d), Some(cd)),
+        None => (None, None),
+    };
+
     let mut member_statuses = Vec::new();
     let mut all_signed = true;
     for r in members {
@@ -242,7 +282,13 @@ pub async fn sign_in_status(
 
     // 当前用户今日签到状态
     let today_signed = my_member.map(|m| m.signed).unwrap_or(false);
-    let consecutive_days = my_member.map(|m| m.consecutive_days).unwrap_or(0);
+    // 连续天数用 compute_current_consecutive_days 算 —— 关键修复:
+    // 今天没签但昨天签了 → 仍然返回"streak 还在"
+    let consecutive_days = compute_current_consecutive_days(
+        today,
+        last_sign_date,
+        last_consecutive_days,
+    );
 
     // 累计签到天数(从 sign_in_records 查 COUNT)
     let total_sign_days: i64 = sqlx::query_scalar(
@@ -401,5 +447,44 @@ mod tests {
         assert_eq!(json.get("consecutive_days").unwrap().as_i64().unwrap(), 3);
         assert_eq!(json.get("total_sign_days").unwrap().as_i64().unwrap(), 15);
         assert_eq!(json.get("today_diamonds").unwrap().as_i64().unwrap(), 7);
+    }
+
+    #[test]
+    fn compute_current_consecutive_days_today_signed() {
+        let today = chrono::NaiveDate::from_ymd_opt(2026, 6, 25).unwrap();
+        // 今天签了, consecutive_days=3 → 保留 3
+        assert_eq!(
+            compute_current_consecutive_days(today, Some(today), Some(3)),
+            3
+        );
+    }
+
+    #[test]
+    fn compute_current_consecutive_days_yesterday_only() {
+        let today = chrono::NaiveDate::from_ymd_opt(2026, 6, 25).unwrap();
+        let yesterday = chrono::NaiveDate::from_ymd_opt(2026, 6, 24).unwrap();
+        // 昨天签了,今天没签,streak 还在 → 保留 1
+        assert_eq!(
+            compute_current_consecutive_days(today, Some(yesterday), Some(1)),
+            1
+        );
+    }
+
+    #[test]
+    fn compute_current_consecutive_days_broken() {
+        let today = chrono::NaiveDate::from_ymd_opt(2026, 6, 25).unwrap();
+        let three_days_ago = chrono::NaiveDate::from_ymd_opt(2026, 6, 22).unwrap();
+        // 3 天前签的,streak 断了 → 0
+        assert_eq!(
+            compute_current_consecutive_days(today, Some(three_days_ago), Some(5)),
+            0
+        );
+    }
+
+    #[test]
+    fn compute_current_consecutive_days_never_signed() {
+        let today = chrono::NaiveDate::from_ymd_opt(2026, 6, 25).unwrap();
+        // 从没签过 → 0
+        assert_eq!(compute_current_consecutive_days(today, None, None), 0);
     }
 }
