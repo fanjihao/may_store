@@ -112,6 +112,11 @@ pub fn configure(cfg: &mut ServiceConfig) {
             .route(web::get().to(get_group_point_config))
             .route(web::patch().to(update_group_point_config)),
     );
+    cfg.service(
+        web::resource("/api/groups/{group_id}/name")
+            .guard(group_id_is_numeric())
+            .route(web::patch().to(update_group_name)),
+    );
     // 注:/api/groups/{group_id}/wishes 由 wishes 模块负责(POST + GET 都有)
 }
 
@@ -1788,6 +1793,119 @@ async fn push_group_member_change_notice(
     }
 }
 
+// ============== Group Name (改组名) HTTP 路由 ==============
+
+/// 改组名请求体
+#[derive(Debug, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateGroupNameRequest {
+    pub name: String,
+}
+
+/// 校验组名: 1-10 位中英文 / 数字 / 下划线
+///
+/// 跟前端 group-name 组件的正则保持一致:
+/// `/^[一-龥a-zA-Z0-9_]{1,10}$/`
+pub fn validate_group_name(name: &str) -> Result<(), CustomError> {
+    if name.is_empty() {
+        return Err(CustomError::BadRequest("组名不能为空".into()));
+    }
+    if name.chars().count() > 10 {
+        return Err(CustomError::BadRequest("组名不能超过 10 个字符".into()));
+    }
+    let mut ok = true;
+    for c in name.chars() {
+        let is_chinese = '\u{4e00}' <= c && c <= '\u{9fa5}';
+        let is_ascii_alnum = c.is_ascii_alphanumeric();
+        let is_underscore = c == '_';
+        if !(is_chinese || is_ascii_alnum || is_underscore) {
+            ok = false;
+            break;
+        }
+    }
+    if !ok {
+        return Err(CustomError::BadRequest(
+            "组名只能包含中英文、数字、下划线".into(),
+        ));
+    }
+    Ok(())
+}
+
+/// 更新组名响应体
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateGroupNameResponse {
+    pub group_id: i64,
+    pub group_name: String,
+}
+
+/// 更新组名
+/// PATCH /api/groups/{group_id}/name
+///
+/// 鉴权: 当前用户必须是该 group 的 ACTIVE 成员(任意一方都能改)
+/// 业务上不广播 ws(改组名是低频动作, 对方下次进厨房页下拉刷新即可)
+/// 返回: 仅 { group_id, group_name },前端拿到后再单独调 get_group 拉完整信息
+#[utoipa::path(
+    patch,
+    path = "/api/groups/{group_id}/name",
+    tag = "双人组",
+    params(("group_id" = i64, Path, description = "组ID")),
+    request_body = UpdateGroupNameRequest,
+    responses(
+        (status = 200, description = "更新成功", body = UpdateGroupNameResponse),
+        (status = 400, description = "组名格式错误"),
+        (status = 401, description = "未登录"),
+        (status = 403, description = "非组成员"),
+        (status = 404, description = "组不存在")
+    ),
+    security(("bearer_auth" = []))
+)]
+pub async fn update_group_name(
+    state: State<Arc<AppState>>,
+    token: UserToken,
+    path: Path<i64>,
+    body: Json<UpdateGroupNameRequest>,
+) -> Result<impl Responder, CustomError> {
+    let group_id = path.into_inner();
+    let input = body.into_inner();
+    let db = &state.db_pool;
+
+    // 校验组名
+    validate_group_name(&input.name)?;
+
+    // 鉴权: 必须是该组 ACTIVE 成员
+    let is_member: Option<(i64,)> = sqlx::query_as(
+        "SELECT user_id FROM association_group_members
+         WHERE group_id = $1 AND user_id = $2 AND member_status = 'ACTIVE'"
+    )
+    .bind(group_id)
+    .bind(token.user_id)
+    .fetch_optional(db)
+    .await?;
+    if is_member.is_none() {
+        return Err(CustomError::Forbidden("不是该组成员".into()));
+    }
+
+    // 更新 group_name
+    let affected: u64 = sqlx::query(
+        "UPDATE association_groups SET group_name = $1, updated_at = NOW()
+         WHERE group_id = $2",
+    )
+    .bind(&input.name)
+    .bind(group_id)
+    .execute(db)
+    .await?
+    .rows_affected();
+    if affected == 0 {
+        return Err(CustomError::NotFound("组不存在".into()));
+    }
+
+    Ok(ApiResponse::success(UpdateGroupNameResponse {
+        group_id,
+        group_name: input.name,
+    }))
+}
+
 // ============== Group Point Config HTTP 路由 ==============
 
 /// 获取群组积分配置
@@ -1926,4 +2044,44 @@ pub async fn update_group_point_config(
     .await?;
 
     Ok(ApiResponse::success(serde_json::json!({ "status": "ok" })))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn validate_group_name_ok_chinese() {
+        assert!(validate_group_name("开心厨房").is_ok());
+    }
+
+    #[test]
+    fn validate_group_name_ok_english_underscore() {
+        assert!(validate_group_name("My_Kit_1").is_ok());
+    }
+
+    #[test]
+    fn validate_group_name_ok_max_len() {
+        assert!(validate_group_name("一二三四五六七八九十").is_ok());
+    }
+
+    #[test]
+    fn validate_group_name_empty() {
+        assert!(validate_group_name("").is_err());
+    }
+
+    #[test]
+    fn validate_group_name_too_long() {
+        assert!(validate_group_name("一二三四五六七八九十X").is_err());
+    }
+
+    #[test]
+    fn validate_group_name_special_char() {
+        assert!(validate_group_name("hi@you").is_err());
+    }
+
+    #[test]
+    fn validate_group_name_space() {
+        assert!(validate_group_name("hi you").is_err());
+    }
 }
