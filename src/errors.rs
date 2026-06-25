@@ -663,7 +663,7 @@ impl From<sqlx::Error> for CustomError {
                 Some(cow) if cow == "23503" => Self::invalid_parameter(format!("关联数据不存在: {message}")),
                 Some(cow) if cow == "23502" => Self::invalid_parameter(format!("必填字段不能为空: {message}")),
                 _ => {
-                    log::debug!("Unhandled database error: {code:?} - {message}");
+                    log::error!("Unhandled database error: code={code:?} message={message}");
                     Self::internal_error("数据库操作失败")
                 }
             }
@@ -673,7 +673,7 @@ impl From<sqlx::Error> for CustomError {
                 sqlx::Error::ColumnNotFound(col) => Self::invalid_parameter(format!("查询字段不存在: {col}")),
                 sqlx::Error::Decode(err) => Self::invalid_parameter(format!("数据解码失败: {err}")),
                 _ => {
-                    log::debug!("Unhandled sqlx error: {e:?}");
+                    log::error!("Unhandled sqlx error: {e:?}");
                     Self::internal_error("数据库操作失败")
                 }
             }
