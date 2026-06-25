@@ -237,12 +237,18 @@ async fn insert_upload_record(
     //   $5 size, $6 business_ref_type
     // 旧实现把 original_filename 写成 $2 (跟 file_key 重复), bind 也少一个,
     // 会触发 sqlx 的 "bind mismatch" 错误, 接口返回 500 "数据库操作失败"。
+    //
+    // 注意: business_ref_type 列类型是 upload_business_ref_enum,
+    // sqlx::query 绑定的是 &str (text), PostgreSQL 不允许 text 隐式转 enum,
+    // 会报 42804 datatype_mismatch。必须在 SQL 里显式 ::upload_business_ref_enum
+    // 强转 (sqlx 没有从外部引入 PgEnum derive 时只能用这个办法)。
     sqlx::query(
         r#"
         INSERT INTO upload_files
             (user_id, file_key, original_filename, content_type, size,
              business_ref_type, content_check_status, status, created_at, updated_at)
-        VALUES ($1, $2, $3, $4, $5, $6, 'PENDING', 'PENDING', NOW(), NOW())
+        VALUES ($1, $2, $3, $4, $5, $6::upload_business_ref_enum,
+                'PENDING', 'PENDING', NOW(), NOW())
         ON CONFLICT (file_key) DO NOTHING
         "#,
     )
