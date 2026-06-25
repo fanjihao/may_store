@@ -5,7 +5,7 @@ use chrono::Utc;
 use ntex::web::{
     self,
     types::{Json, Path, State},
-    HttpResponse, ServiceConfig,
+    HttpResponse, Responder, ServiceConfig,
 };
 use ntex::web::guard;
 use serde::{Deserialize, Serialize};
@@ -106,6 +106,11 @@ pub fn configure(cfg: &mut ServiceConfig) {
     cfg.service(
         web::resource("/api/groups/{group_id}/orders")
             .route(web::post().to(create_group_order)),
+    );
+    cfg.service(
+        web::resource("/api/groups/{group_id}/point-config")
+            .route(web::get().to(get_group_point_config))
+            .route(web::patch().to(update_group_point_config)),
     );
     // 注:/api/groups/{group_id}/wishes 由 wishes 模块负责(POST + GET 都有)
 }
@@ -1450,6 +1455,37 @@ pub struct JoinGroupInput {
     pub group_id: Option<i64>,
 }
 
+// ============== Group Point Config (FSD §16.2 组积分奖惩配置) ==============
+
+/// 群组积分配置响应（不含每日签到奖励 — 那是全局配置, 在 sign_in 模块）
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct GroupPointConfigResponse {
+    pub group_id: i64,
+    pub breeder_closed_points: i32,
+    pub confirmed_finished_points: i32,
+    pub confirmed_unfinished_points: i32,
+    pub timeout_points: i32,
+    pub overdue_unfinished_points: i32,
+    pub unlock_card_diamond_cost: i32,
+    pub default_footprint_capacity: i32,
+    pub order_point_percent: i32,
+}
+
+/// 群组积分配置更新请求 — 所有字段 Option, 仅非空字段局部更新
+#[derive(Debug, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct GroupPointConfigUpdateRequest {
+    pub breeder_closed_points: Option<i32>,
+    pub confirmed_finished_points: Option<i32>,
+    pub confirmed_unfinished_points: Option<i32>,
+    pub timeout_points: Option<i32>,
+    pub overdue_unfinished_points: Option<i32>,
+    pub unlock_card_diamond_cost: Option<i32>,
+    pub default_footprint_capacity: Option<i32>,
+    pub order_point_percent: Option<i32>,
+}
+
 // ============== Swap Role Check (FSD 2026-06-15 设计稿 §4) ==============
 
 /// 组成员信息
@@ -1750,4 +1786,144 @@ async fn push_group_member_change_notice(
             );
         }
     }
+}
+
+// ============== Group Point Config HTTP 路由 ==============
+
+/// 获取群组积分配置
+/// GET /api/groups/{group_id}/point-config
+/// 鉴权: 当前用户必须是该 group 的 ACTIVE 成员
+#[utoipa::path(
+    get,
+    path = "/api/groups/{group_id}/point-config",
+    tag = "双人组",
+    params(("group_id" = i64, Path, description = "组ID")),
+    responses(
+        (status = 200, description = "获取成功", body = GroupPointConfigResponse),
+        (status = 401, description = "未登录"),
+        (status = 403, description = "非组成员"),
+        (status = 404, description = "组不存在")
+    ),
+    security(("bearer_auth" = []))
+)]
+pub async fn get_group_point_config(
+    state: State<Arc<AppState>>,
+    token: UserToken,
+    path: Path<i64>,
+) -> Result<impl Responder, CustomError> {
+    let group_id = path.into_inner();
+    let db = &state.db_pool;
+
+    // 鉴权: 必须是该组的 ACTIVE 成员
+    let is_member: Option<(i64,)> = sqlx::query_as(
+        "SELECT user_id FROM association_group_members
+         WHERE group_id = $1 AND user_id = $2 AND member_status = 'ACTIVE'"
+    )
+    .bind(group_id)
+    .bind(token.user_id)
+    .fetch_optional(db)
+    .await?;
+    if is_member.is_none() {
+        return Err(CustomError::Forbidden("不是该组成员".into()));
+    }
+
+    let row: Option<(
+        i64, i32, i32, i32, i32, i32, i32, i32, i32,
+    )> = sqlx::query_as(
+        "SELECT group_id, breeder_closed_points, confirmed_finished_points,
+                confirmed_unfinished_points, timeout_points, overdue_unfinished_points,
+                unlock_card_diamond_cost, default_footprint_capacity, order_point_percent
+         FROM group_point_configs WHERE group_id = $1"
+    )
+    .bind(group_id)
+    .fetch_optional(db)
+    .await?;
+
+    let cfg = row.ok_or_else(|| CustomError::NotFound("组积分配置不存在".into()))?;
+
+    Ok(ApiResponse::success(GroupPointConfigResponse {
+        group_id: cfg.0,
+        breeder_closed_points: cfg.1,
+        confirmed_finished_points: cfg.2,
+        confirmed_unfinished_points: cfg.3,
+        timeout_points: cfg.4,
+        overdue_unfinished_points: cfg.5,
+        unlock_card_diamond_cost: cfg.6,
+        default_footprint_capacity: cfg.7,
+        order_point_percent: cfg.8,
+    }))
+}
+
+/// 更新群组积分配置
+/// PATCH /api/groups/{group_id}/point-config
+/// 鉴权: 当前用户在 group 中必须是 Ordering (买家/吃货, 即 association_groups.buyer_user_id)
+/// 所有字段都是 Option, 局部更新 (None 跳过)
+#[utoipa::path(
+    patch,
+    path = "/api/groups/{group_id}/point-config",
+    tag = "双人组",
+    params(("group_id" = i64, Path, description = "组ID")),
+    request_body = GroupPointConfigUpdateRequest,
+    responses(
+        (status = 200, description = "更新成功"),
+        (status = 400, description = "参数错误"),
+        (status = 401, description = "未登录"),
+        (status = 403, description = "仅 Ordering 角色可修改")
+    ),
+    security(("bearer_auth" = []))
+)]
+pub async fn update_group_point_config(
+    state: State<Arc<AppState>>,
+    token: UserToken,
+    path: Path<i64>,
+    body: Json<GroupPointConfigUpdateRequest>,
+) -> Result<impl Responder, CustomError> {
+    let group_id = path.into_inner();
+    let input = body.into_inner();
+    let db = &state.db_pool;
+
+    // 鉴权: 当前用户在 group 中角色必须是 Ordering (买家)
+    let buyer_id: Option<Option<i64>> = sqlx::query_scalar(
+        "SELECT buyer_user_id FROM association_groups WHERE group_id = $1"
+    )
+    .bind(group_id)
+    .fetch_optional(db)
+    .await?;
+    let buyer_id = buyer_id.flatten();
+    match buyer_id {
+        Some(bid) if bid == token.user_id => {} // 通过
+        _ => {
+            return Err(CustomError::Forbidden(
+                "仅 Ordering 角色可修改组积分配置".into(),
+            ))
+        }
+    }
+
+    // 一次性更新, 用 COALESCE 让 None 跳过
+    sqlx::query(
+        "UPDATE group_point_configs SET
+            breeder_closed_points = COALESCE($2, breeder_closed_points),
+            confirmed_finished_points = COALESCE($3, confirmed_finished_points),
+            confirmed_unfinished_points = COALESCE($4, confirmed_unfinished_points),
+            timeout_points = COALESCE($5, timeout_points),
+            overdue_unfinished_points = COALESCE($6, overdue_unfinished_points),
+            unlock_card_diamond_cost = COALESCE($7, unlock_card_diamond_cost),
+            default_footprint_capacity = COALESCE($8, default_footprint_capacity),
+            order_point_percent = COALESCE($9, order_point_percent),
+            updated_at = NOW()
+         WHERE group_id = $1"
+    )
+    .bind(group_id)
+    .bind(input.breeder_closed_points)
+    .bind(input.confirmed_finished_points)
+    .bind(input.confirmed_unfinished_points)
+    .bind(input.timeout_points)
+    .bind(input.overdue_unfinished_points)
+    .bind(input.unlock_card_diamond_cost)
+    .bind(input.default_footprint_capacity)
+    .bind(input.order_point_percent)
+    .execute(db)
+    .await?;
+
+    Ok(ApiResponse::success(serde_json::json!({ "status": "ok" })))
 }
