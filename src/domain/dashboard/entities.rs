@@ -30,6 +30,8 @@ pub struct GroupActivityEventOut {
     pub ref_goal_time: Option<DateTime<Utc>>,
     /// 关联实体的"显示名" (心愿的 wish_name, 菜品的 name 等)
     pub ref_name: Option<String>,
+    /// 订单包含的菜品名列表 (仅 order 事件有值, 从 order_items + foods 聚合)
+    pub ref_food_names: Option<Vec<String>>,
 }
 
 /// 活动列表响应 (CursorPage 风格, 跟其他列表接口对齐)

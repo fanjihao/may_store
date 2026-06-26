@@ -37,6 +37,7 @@ impl DashboardService {
 
         // 拉 limit+1 行用于判断 has_more
         // 用 subquery 把 order/wish 的展示字段带出来, 避免 N+1
+        // ref_food_names: 订单事件时, 从 order_items + foods 聚合菜品名 (json_agg)
         let rows = if let Some(c) = cursor {
             sqlx::query(
                 "SELECT el.id, el.event_type, el.payload, el.user_id, el.created_at, \
@@ -46,7 +47,13 @@ impl DashboardService {
                              ELSE NULL END AS ref_goal_time, \
                         CASE WHEN el.ref_type = 'wish' \
                              THEN (SELECT w.wish_name FROM wishes w WHERE w.wish_id = el.ref_id) \
-                             ELSE NULL END AS ref_name \
+                             ELSE NULL END AS ref_name, \
+                        CASE WHEN el.ref_type = 'order' \
+                             THEN (SELECT COALESCE(json_agg(f.food_name ORDER BY oi.id), '[]'::jsonb) \
+                                   FROM order_items oi \
+                                   JOIN foods f ON oi.food_id = f.food_id \
+                                   WHERE oi.order_id = el.ref_id) \
+                             ELSE NULL END AS ref_food_names \
                  FROM event_log el \
                  WHERE el.group_id = $1 AND (el.created_at, el.id) < ($2, $3) \
                  ORDER BY el.created_at DESC, el.id DESC \
@@ -67,7 +74,13 @@ impl DashboardService {
                              ELSE NULL END AS ref_goal_time, \
                         CASE WHEN el.ref_type = 'wish' \
                              THEN (SELECT w.wish_name FROM wishes w WHERE w.wish_id = el.ref_id) \
-                             ELSE NULL END AS ref_name \
+                             ELSE NULL END AS ref_name, \
+                        CASE WHEN el.ref_type = 'order' \
+                             THEN (SELECT COALESCE(json_agg(f.food_name ORDER BY oi.id), '[]'::jsonb) \
+                                   FROM order_items oi \
+                                   JOIN foods f ON oi.food_id = f.food_id \
+                                   WHERE oi.order_id = el.ref_id) \
+                             ELSE NULL END AS ref_food_names \
                  FROM event_log el \
                  WHERE el.group_id = $1 \
                  ORDER BY el.created_at DESC, el.id DESC \
@@ -108,6 +121,12 @@ impl DashboardService {
                 ref_id: r.try_get("ref_id").ok().flatten(),
                 ref_goal_time: r.try_get("ref_goal_time").ok().flatten(),
                 ref_name: r.try_get("ref_name").ok().flatten(),
+                // ref_food_names 是 jsonb 数组, sqlx 读出来是 serde_json::Value
+                ref_food_names: r
+                    .try_get::<Option<serde_json::Value>, _>("ref_food_names")
+                    .ok()
+                    .flatten()
+                    .and_then(|v| serde_json::from_value::<Vec<String>>(v).ok()),
             })
             .collect();
 
