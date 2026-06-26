@@ -12,6 +12,7 @@ use std::sync::Arc;
 use utoipa::ToSchema;
 
 use crate::api::admin::auth;
+use crate::api::admin::group_levels;
 use crate::api::admin::groups;
 use crate::api::admin::users;
 use crate::config::AppState;
@@ -86,6 +87,8 @@ pub fn validate_config(
 pub fn configure(cfg: &mut ServiceConfig) {
     // auth 子模块在独立 scope /api/admin/auth/login —— 不冲突,先注册
     auth::configure(cfg);
+    // 组等级配置 (独立的 scope, 跟 /groups 平行)
+    group_levels::configure(cfg);
 
     // 所有路由放主 scope /api/admin 下,避免 sub-scope shadow 父 scope 的 bare GET
     // (T2/T6 教训:把 PATCH /users/{user_id} 放独立 sub-scope 会让 GET /users 返 404)

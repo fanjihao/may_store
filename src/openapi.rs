@@ -160,6 +160,8 @@ impl Modify for SecurityAddon {
         crate::api::admin::routes::compensate_diamonds,
         crate::api::admin::routes::list_pending_food_audits,
         crate::api::admin::routes::audit_food,
+        crate::api::admin::group_levels::list_group_levels,
+        crate::api::admin::group_levels::update_group_level,
         // ==================== Dashboard (数据看板) ====================
         crate::api::dashboard::routes::get_group_dashboard,
         crate::api::dashboard::routes::get_group_activities,
@@ -265,6 +267,9 @@ impl Modify for SecurityAddon {
             crate::api::upload::routes::DeleteFileResponse,
             crate::api::upload::routes::ErrorBody,
             // -- Admin --
+            crate::api::admin::group_levels::GroupLevelListOut,
+            crate::api::admin::group_levels::GroupLevelUpdateOut,
+            crate::api::admin::group_levels::UpdateGroupLevelInput,
             crate::api::admin::routes::StatsResponse,
             crate::api::admin::routes::GroupListItem,
             crate::api::admin::routes::UserListItem,
