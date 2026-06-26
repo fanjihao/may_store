@@ -22,6 +22,14 @@ pub struct GroupActivityEventOut {
     pub event_data: serde_json::Value,
     pub actor_user_id: Option<i64>,
     pub created_at: DateTime<Utc>,
+    /// 事件关联的实体类型 (order / wish / food / sign)
+    pub ref_type: Option<String>,
+    /// 事件关联的实体 ID (order_id / wish_id / food_id / sign_id)
+    pub ref_id: Option<i64>,
+    /// 订单的目标时间 (仅 order 事件有值, 来自 orders.goal_time)
+    pub ref_goal_time: Option<DateTime<Utc>>,
+    /// 关联实体的"显示名" (心愿的 wish_name, 菜品的 name 等)
+    pub ref_name: Option<String>,
 }
 
 /// 活动列表响应 (CursorPage 风格, 跟其他列表接口对齐)

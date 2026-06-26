@@ -36,11 +36,20 @@ impl DashboardService {
             .and_then(decode_cursor::<ActivityCursor>);
 
         // 拉 limit+1 行用于判断 has_more
+        // 用 subquery 把 order/wish 的展示字段带出来, 避免 N+1
         let rows = if let Some(c) = cursor {
             sqlx::query(
-                "SELECT id, event_type, payload, user_id, created_at FROM event_log \
-                 WHERE group_id = $1 AND (created_at, id) < ($2, $3) \
-                 ORDER BY created_at DESC, id DESC \
+                "SELECT el.id, el.event_type, el.payload, el.user_id, el.created_at, \
+                        el.ref_type, el.ref_id, \
+                        CASE WHEN el.ref_type = 'order' \
+                             THEN (SELECT o.goal_time FROM orders o WHERE o.order_id = el.ref_id) \
+                             ELSE NULL END AS ref_goal_time, \
+                        CASE WHEN el.ref_type = 'wish' \
+                             THEN (SELECT w.wish_name FROM wishes w WHERE w.wish_id = el.ref_id) \
+                             ELSE NULL END AS ref_name \
+                 FROM event_log el \
+                 WHERE el.group_id = $1 AND (el.created_at, el.id) < ($2, $3) \
+                 ORDER BY el.created_at DESC, el.id DESC \
                  LIMIT $4",
             )
             .bind(group_id)
@@ -51,9 +60,17 @@ impl DashboardService {
             .await?
         } else {
             sqlx::query(
-                "SELECT id, event_type, payload, user_id, created_at FROM event_log \
-                 WHERE group_id = $1 \
-                 ORDER BY created_at DESC, id DESC \
+                "SELECT el.id, el.event_type, el.payload, el.user_id, el.created_at, \
+                        el.ref_type, el.ref_id, \
+                        CASE WHEN el.ref_type = 'order' \
+                             THEN (SELECT o.goal_time FROM orders o WHERE o.order_id = el.ref_id) \
+                             ELSE NULL END AS ref_goal_time, \
+                        CASE WHEN el.ref_type = 'wish' \
+                             THEN (SELECT w.wish_name FROM wishes w WHERE w.wish_id = el.ref_id) \
+                             ELSE NULL END AS ref_name \
+                 FROM event_log el \
+                 WHERE el.group_id = $1 \
+                 ORDER BY el.created_at DESC, el.id DESC \
                  LIMIT $2",
             )
             .bind(group_id)
@@ -87,6 +104,10 @@ impl DashboardService {
                 event_data: r.get("payload"),
                 actor_user_id: r.try_get("user_id").ok().flatten(),
                 created_at: r.get("created_at"),
+                ref_type: r.try_get("ref_type").ok().flatten(),
+                ref_id: r.try_get("ref_id").ok().flatten(),
+                ref_goal_time: r.try_get("ref_goal_time").ok().flatten(),
+                ref_name: r.try_get("ref_name").ok().flatten(),
             })
             .collect();
 
