@@ -206,7 +206,7 @@ impl OrderService {
         let limit = query.limit.unwrap_or(50).clamp(1, 200);
 
         let mut qb = sqlx::QueryBuilder::<sqlx::Postgres>::new(
-            "SELECT o.order_id, o.user_id, o.guest_user_id, o.group_id, o.status, o.goal_time, o.remark, o.points_reward, o.cancel_reason, o.reject_reason, o.last_status_change_at, o.created_at, o.updated_at, \
+            "SELECT o.order_id, o.user_id, o.guest_user_id AS guest_id, o.group_id, o.status, o.goal_time, o.remark, o.points_reward, o.cancel_reason, o.reject_reason, o.last_status_change_at, o.created_at, o.updated_at, \
             (o.group_id IS NOT NULL AND m.user_id IS NULL) AS is_guest, \
             g.group_name, \
             ug.nick_name AS db_guest_nick_name, ug.avatar AS db_guest_avatar, \
@@ -445,7 +445,7 @@ impl OrderService {
             .with_timezone(&Utc);
 
         let mut qb = sqlx::QueryBuilder::<sqlx::Postgres>::new(
-            "SELECT o.order_id, o.user_id, o.guest_user_id, o.group_id, o.status, o.goal_time, o.remark, o.points_reward, o.cancel_reason, o.reject_reason, o.last_status_change_at, o.created_at, o.updated_at, \
+            "SELECT o.order_id, o.user_id, o.guest_user_id AS guest_id, o.group_id, o.status, o.goal_time, o.remark, o.points_reward, o.cancel_reason, o.reject_reason, o.last_status_change_at, o.created_at, o.updated_at, \
             (o.group_id IS NOT NULL AND m.user_id IS NULL) AS is_guest, \
             g.group_name, \
             ug.nick_name AS db_guest_nick_name, ug.avatar AS db_guest_avatar, \
@@ -587,7 +587,7 @@ impl OrderService {
         order_id: i64,
     ) -> Result<Option<OrderOutNew>, CustomError> {
         let row = sqlx::query(
-            "SELECT o.order_id, o.user_id, o.guest_user_id, o.group_id, o.status, o.goal_time, o.remark, o.points_reward, o.cancel_reason, o.reject_reason, o.last_status_change_at, o.created_at, o.updated_at, \
+            "SELECT o.order_id, o.user_id, o.guest_user_id AS guest_id, o.group_id, o.status, o.goal_time, o.remark, o.points_reward, o.cancel_reason, o.reject_reason, o.last_status_change_at, o.created_at, o.updated_at, \
             (o.group_id IS NOT NULL AND m.user_id IS NULL) AS is_guest, \
             g.group_name, \
             ur.nick_name AS db_receiver_nick_name, ur.avatar AS db_receiver_avatar, \
@@ -759,7 +759,7 @@ impl OrderService {
         let mut tx = db.begin().await?;
 
         let current: Option<OrderRecord> = sqlx::query_as::<_, OrderRecord>(
-            "SELECT order_id, user_id, is_guest, guest_id, group_id, status, goal_time, remark, points_reward, cancel_reason, reject_reason, last_status_change_at, created_at, updated_at FROM orders WHERE order_id=$1 FOR UPDATE"
+            "SELECT order_id, user_id, is_guest, guest_user_id AS guest_id, group_id, status, goal_time, remark, points_reward, cancel_reason, reject_reason, last_status_change_at, created_at, updated_at FROM orders WHERE order_id=$1 FOR UPDATE"
         )
         .bind(input.order_id)
         .fetch_optional(&mut *tx)
@@ -1114,7 +1114,7 @@ impl OrderService {
         user_id: i64,
         order_id: i64,
     ) -> Result<Option<OrderRatingOut>, CustomError> {
-        let order_row = sqlx::query("SELECT user_id, guest_id FROM orders WHERE order_id=$1")
+        let order_row = sqlx::query("SELECT user_id, guest_user_id AS guest_id FROM orders WHERE order_id=$1")
             .bind(order_id)
             .fetch_optional(db)
             .await?;
@@ -1122,7 +1122,7 @@ impl OrderService {
             return Err(CustomError::BadRequest("订单不存在".into()));
         };
         let ouid: i64 = or.get("user_id");
-        let rid_opt: Option<i64> = or.try_get("guest_id").ok();
+        let rid_opt: Option<i64> = or.try_get("guest_id").ok(); // SQL 里有 AS 别名, 这里用别名读
         if ouid != user_id && rid_opt != Some(user_id) {
             return Err(CustomError::BadRequest("无权查看该订单评分".into()));
         }
