@@ -49,7 +49,7 @@ impl DashboardService {
                              THEN (SELECT w.wish_name FROM wishes w WHERE w.wish_id = el.ref_id) \
                              ELSE NULL END AS ref_name, \
                         CASE WHEN el.ref_type = 'order' \
-                             THEN (SELECT COALESCE(json_agg(f.food_name ORDER BY oi.id), '[]'::jsonb) \
+                             THEN (SELECT COALESCE(jsonb_agg(f.food_name ORDER BY oi.id), '[]'::jsonb) \
                                    FROM order_items oi \
                                    JOIN foods f ON oi.food_id = f.food_id \
                                    WHERE oi.order_id = el.ref_id) \
@@ -76,7 +76,7 @@ impl DashboardService {
                              THEN (SELECT w.wish_name FROM wishes w WHERE w.wish_id = el.ref_id) \
                              ELSE NULL END AS ref_name, \
                         CASE WHEN el.ref_type = 'order' \
-                             THEN (SELECT COALESCE(json_agg(f.food_name ORDER BY oi.id), '[]'::jsonb) \
+                             THEN (SELECT COALESCE(jsonb_agg(f.food_name ORDER BY oi.id), '[]'::jsonb) \
                                    FROM order_items oi \
                                    JOIN foods f ON oi.food_id = f.food_id \
                                    WHERE oi.order_id = el.ref_id) \
