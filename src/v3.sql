@@ -452,7 +452,9 @@ CREATE INDEX idx_gm_group_status ON association_group_members(group_id, member_s
 -- 跟 association_groups.level 字段同步 —— 任何给 group.exp 加值的地方都要重新算 level
 CREATE TABLE group_level_configs (
     level INT PRIMARY KEY,                -- Lv 1, Lv 2, ...
-    required_exp BIGINT NOT NULL UNIQUE,  -- 升到这一级需要的累计 exp (Lv 1 = 0)
+    required_exp BIGINT NOT NULL,         -- 升到这一级需要的累计 exp (Lv 1 = 0)
+    -- 注: required_exp 不加 UNIQUE, 允许 admin 把多级设成同一 exp (跳级/合并级设计)
+    -- level 本身是主键已经够唯一了
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 COMMENT ON TABLE group_level_configs IS '组升级阶梯表: 升到 Lv N 需要的累计 exp';
