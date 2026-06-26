@@ -122,7 +122,7 @@ impl OrderService {
 
         // 获取订单项
         let items_out: Vec<OrderItemOut> = sqlx::query(
-            "SELECT oi.id, oi.food_id, oi.quantity, oi.price, f.food_name, f.food_photo \
+            "SELECT oi.id, oi.food_id, oi.quantity, oi.price, f.food_name, COALESCE(f.food_photo, f.images->0->>'url') AS food_photo \
              FROM order_items oi LEFT JOIN foods f ON f.food_id = oi.food_id WHERE oi.order_id=$1",
         )
         .bind(rec.order_id)
@@ -333,7 +333,7 @@ impl OrderService {
             let creator_avatar: Option<String> = row.try_get("creator_avatar").ok();
 
             let order_items: Vec<OrderItemOut> = sqlx::query(
-                "SELECT oi.id, oi.food_id, oi.quantity, oi.price, f.food_name, f.food_photo \
+                "SELECT oi.id, oi.food_id, oi.quantity, oi.price, f.food_name, COALESCE(f.food_photo, f.images->0->>'url') AS food_photo \
                  FROM order_items oi LEFT JOIN foods f ON f.food_id = oi.food_id WHERE oi.order_id=$1",
             )
             .bind(order.order_id)
@@ -518,7 +518,7 @@ impl OrderService {
             let creator_avatar: Option<String> = row.try_get("creator_avatar").ok();
 
             let order_items: Vec<OrderItemOut> = sqlx::query(
-                "SELECT oi.id, oi.food_id, oi.quantity, oi.price, f.food_name, f.food_photo \
+                "SELECT oi.id, oi.food_id, oi.quantity, oi.price, f.food_name, COALESCE(f.food_photo, f.images->0->>'url') AS food_photo \
                  FROM order_items oi LEFT JOIN foods f ON f.food_id = oi.food_id WHERE oi.order_id=$1",
             )
             .bind(order.order_id)
@@ -658,7 +658,7 @@ impl OrderService {
         };
 
         let item_rows = sqlx::query(
-            "SELECT oi.id, oi.order_id, oi.food_id, oi.quantity, oi.price, oi.snapshot_json, oi.created_at, f.food_name, f.food_photo \
+            "SELECT oi.id, oi.order_id, oi.food_id, oi.quantity, oi.price, oi.snapshot_json, oi.created_at, f.food_name, COALESCE(f.food_photo, f.images->0->>'url') AS food_photo \
              FROM order_items oi LEFT JOIN foods f ON f.food_id = oi.food_id WHERE oi.order_id=$1"
         )
         .bind(order.order_id)
