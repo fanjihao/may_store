@@ -62,6 +62,9 @@ impl Modify for SecurityAddon {
         crate::api::groups::routes::exit_group,
         crate::api::groups::routes::get_group_members,
         crate::api::groups::routes::create_group_order,
+        crate::api::groups::routes::update_group_name,
+        crate::api::groups::routes::get_group_point_config,
+        crate::api::groups::routes::update_group_point_config,
         // ==================== Foods CRUD (菜品 §5) ====================
         crate::api::foods::routes::create_food,
         crate::api::foods::routes::list_foods,
@@ -209,6 +212,10 @@ impl Modify for SecurityAddon {
             // -- Groups --
             crate::api::groups::routes::CreateGroupResponse,
             crate::api::groups::routes::SwapRoleCheckResponse,
+            crate::api::groups::routes::UpdateGroupNameRequest,
+            crate::api::groups::routes::UpdateGroupNameResponse,
+            crate::api::groups::routes::GroupPointConfigResponse,
+            crate::api::groups::routes::GroupPointConfigUpdateRequest,
             // -- Foods --
             crate::api::foods::routes::FoodImage,
             crate::api::foods::routes::FoodIngredient,
