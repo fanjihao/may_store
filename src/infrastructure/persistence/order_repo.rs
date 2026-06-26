@@ -21,7 +21,7 @@ impl PostgresOrderRepository {
 impl OrderRepository for PostgresOrderRepository {
     async fn find_by_id(&self, order_id: i64) -> Result<Option<OrderRecord>, CustomError> {
         let rec = sqlx::query_as::<_, OrderRecord>(
-            r#"SELECT order_id, user_id, guest_id, group_id, status, goal_time, remark, points_reward, cancel_reason, reject_reason, last_status_change_at, created_at, updated_at, is_guest
+            r#"SELECT order_id, user_id, guest_user_id AS guest_id, group_id, status, goal_time, remark, points_reward, cancel_reason, reject_reason, last_status_change_at, created_at, updated_at, is_guest
                FROM orders WHERE order_id = $1"#
         )
         .bind(order_id)
@@ -32,7 +32,7 @@ impl OrderRepository for PostgresOrderRepository {
 
     async fn find_by_user_id(&self, user_id: i64, limit: i64) -> Result<Vec<OrderRecord>, CustomError> {
         let recs = sqlx::query_as::<_, OrderRecord>(
-            r#"SELECT order_id, user_id, guest_id, group_id, status, goal_time, remark, points_reward, cancel_reason, reject_reason, last_status_change_at, created_at, updated_at, is_guest
+            r#"SELECT order_id, user_id, guest_user_id AS guest_id, group_id, status, goal_time, remark, points_reward, cancel_reason, reject_reason, last_status_change_at, created_at, updated_at, is_guest
                FROM orders WHERE user_id = $1 ORDER BY created_at DESC LIMIT $2"#
         )
         .bind(user_id)
@@ -44,7 +44,7 @@ impl OrderRepository for PostgresOrderRepository {
 
     async fn find_by_group_id(&self, group_id: i64, limit: i64) -> Result<Vec<OrderRecord>, CustomError> {
         let recs = sqlx::query_as::<_, OrderRecord>(
-            r#"SELECT order_id, user_id, guest_id, group_id, status, goal_time, remark, points_reward, cancel_reason, reject_reason, last_status_change_at, created_at, updated_at, is_guest
+            r#"SELECT order_id, user_id, guest_user_id AS guest_id, group_id, status, goal_time, remark, points_reward, cancel_reason, reject_reason, last_status_change_at, created_at, updated_at, is_guest
                FROM orders WHERE group_id = $1 ORDER BY created_at DESC LIMIT $2"#
         )
         .bind(group_id)
