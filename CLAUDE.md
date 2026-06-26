@@ -89,3 +89,9 @@
   - 如果发现代码里要用的表 / 列在 v3.sql 里没有，**先补 v3.sql，再写代码**，不允许出现"代码已经查某列但 v3.sql 里没定义"的情况。
 - 代码里出现 `CREATE TABLE`、`ALTER TABLE`、`CREATE TYPE`、`CREATE INDEX` 这种 DDL 语句时，需要确认：这条 DDL 在 v3.sql 里有没有对应？没有就补上，不能让 DDL 只活在代码注释或迁移脚本里。
 - 接手 / 复盘时：对一遍"代码里所有 FROM / JOIN / INSERT / UPDATE 用到的表和列" vs "v3.sql 实际定义的表和列"，有差异就要修复 v3.sql。
+
+## 7. 相关项目位置
+
+- **前端项目 `wx-store`**：与本仓（`may_store`）同级，路径 `../wx-store`（绝对路径 `/home/peter/project/wx-store`）。
+- 当用户提到"前端" / "页面" / "UI" / "stash 页 / 餐厅 / 厨房信息展示"等视觉/交互相关需求时，**优先想到去 `../wx-store` 改前端代码**；本仓（`may_store`）只负责接口与数据。
+- 改前端时不要顺手改本仓的 API；改本仓 API 时不要顺手改前端。两边需要同步时，先跟用户确认是哪一边。
