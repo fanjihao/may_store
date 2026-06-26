@@ -162,6 +162,7 @@ impl Modify for SecurityAddon {
         crate::api::admin::routes::audit_food,
         // ==================== Dashboard (数据看板) ====================
         crate::api::dashboard::routes::get_group_dashboard,
+        crate::api::dashboard::routes::get_group_activities,
         crate::api::dashboard::routes::get_admin_dashboard,
         crate::api::dashboard::routes::get_dashboard_trends,
         // ==================== Footprints (足迹) ====================

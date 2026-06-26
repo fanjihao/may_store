@@ -25,6 +25,11 @@ pub fn configure(cfg: &mut ServiceConfig) {
         web::resource("/api/groups/{group_id}/dashboard")
             .route(web::get().to(get_group_dashboard)),
     );
+    // 组活动流 (过往足迹) — bindDetail 页面用
+    cfg.service(
+        web::resource("/api/groups/{group_id}/activities")
+            .route(web::get().to(get_group_activities)),
+    );
     // 管理员看板(运营 + 趋势)
     cfg.service(
         web::resource("/api/admin/dashboard")
@@ -678,4 +683,59 @@ pub async fn get_dashboard_trends(
         granularity: granularity.to_string(),
         data_points,
     }))
+}
+
+/// 获取组活动流 (过往足迹, bindDetail 页面用)
+/// GET /api/groups/{group_id}/activities?cursor=...&limit=...
+/// 鉴权: 必须是该组的 ACTIVE 成员
+#[utoipa::path(
+    get,
+    path = "/api/groups/{group_id}/activities",
+    tag = "数据看板",
+    params(
+        ("group_id" = i64, Path, description = "组ID"),
+        ("cursor" = Option<String>, Query, description = "上一页最后一条的 cursor, 第一页不传"),
+        ("limit" = Option<i64>, Query, description = "每页条数, 默认 20, 最大 100"),
+    ),
+    responses(
+        (status = 200, description = "获取成功", body = crate::domain::dashboard::GroupActivityListResponse),
+        (status = 401, description = "未登录"),
+        (status = 403, description = "非组成员")
+    ),
+    security(("bearer_auth" = []))
+)]
+pub async fn get_group_activities(
+    state: State<Arc<AppState>>,
+    token: UserToken,
+    path: Path<i64>,
+    query: Query<crate::domain::dashboard::GroupActivityQuery>,
+) -> Result<impl Responder, CustomError> {
+    use crate::application::dashboard_service::DashboardService;
+    let group_id = path.into_inner();
+    let q = query.into_inner();
+    let db = &state.db_pool;
+
+    // 鉴权: 必须是该组 ACTIVE 成员
+    let is_member: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM association_group_members \
+         WHERE group_id=$1 AND user_id=$2 AND member_status='ACTIVE')",
+    )
+    .bind(group_id)
+    .bind(token.user_id)
+    .fetch_one(db)
+    .await?;
+    if !is_member {
+        return Err(CustomError::Forbidden("非组成员".into()));
+    }
+
+    let (events, next_cursor, has_more) =
+        DashboardService::get_group_activities(db, group_id, &q).await?;
+
+    Ok(ApiResponse::success(
+        crate::domain::dashboard::GroupActivityListResponse {
+            events,
+            next_cursor,
+            has_more,
+        },
+    ))
 }

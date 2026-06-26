@@ -2,46 +2,95 @@
 
 use crate::domain::dashboard::*;
 use crate::errors::CustomError;
-use chrono::{Duration, Local, NaiveDate};
+use crate::models::pagination::{decode_cursor, encode_cursor};
+use chrono::{DateTime, Duration, Local, NaiveDate, Utc};
+use serde::{Deserialize, Serialize};
 use sqlx::{PgPool, Row};
 
 pub struct DashboardService;
 
+/// 活动 cursor 结构: 按 created_at DESC + id DESC 翻页
+#[derive(Debug, Serialize, Deserialize)]
+struct ActivityCursor {
+    created_at: DateTime<Utc>,
+    id: i64,
+}
+
 impl DashboardService {
-    /// 获取组活动
+    /// 获取组活动 (cursor 翻页, 跟其他 list 接口风格一致)
+    /// 入参: cursor=上一页最后一条的 "created_at,id" (base64), 第一页不传
+    /// 出参: (events, next_cursor, has_more)
     pub async fn get_group_activities(
         db: &PgPool,
         group_id: i64,
         query: &GroupActivityQuery,
-    ) -> Result<Vec<GroupActivityEventOut>, CustomError> {
-        let start_date = query
-            .start_date
-            .unwrap_or_else(|| Local::now().date_naive() - Duration::days(7));
-        let end_date = query.end_date.unwrap_or_else(|| Local::now().date_naive());
-        let limit = query.limit.unwrap_or(50).min(100);
+    ) -> Result<(Vec<GroupActivityEventOut>, Option<String>, bool), CustomError> {
+        let limit = query.limit.unwrap_or(20).clamp(1, 100);
 
-        let rows = sqlx::query(
-            "SELECT event_type, payload, created_at FROM event_log \
-             WHERE group_id = $1 AND created_at >= $2 AND created_at <= $3 \
-             ORDER BY created_at DESC LIMIT $4",
-        )
-        .bind(group_id)
-        .bind(start_date)
-        .bind(end_date)
-        .bind(limit)
-        .fetch_all(db)
-        .await?;
+        // 解码 cursor -> 上一页最后一条的 (created_at, id)
+        // cursor 格式: base64({created_at, id})
+        // 翻页条件: (created_at, id) < (cursor.created_at, cursor.id)
+        let cursor = query
+            .cursor
+            .as_deref()
+            .and_then(decode_cursor::<ActivityCursor>);
+
+        // 拉 limit+1 行用于判断 has_more
+        let rows = if let Some(c) = cursor {
+            sqlx::query(
+                "SELECT id, event_type, payload, user_id, created_at FROM event_log \
+                 WHERE group_id = $1 AND (created_at, id) < ($2, $3) \
+                 ORDER BY created_at DESC, id DESC \
+                 LIMIT $4",
+            )
+            .bind(group_id)
+            .bind(c.created_at)
+            .bind(c.id)
+            .bind(limit + 1)
+            .fetch_all(db)
+            .await?
+        } else {
+            sqlx::query(
+                "SELECT id, event_type, payload, user_id, created_at FROM event_log \
+                 WHERE group_id = $1 \
+                 ORDER BY created_at DESC, id DESC \
+                 LIMIT $2",
+            )
+            .bind(group_id)
+            .bind(limit + 1)
+            .fetch_all(db)
+            .await?
+        };
+
+        let has_more = rows.len() as i64 > limit;
+        let mut rows = rows;
+        if has_more {
+            rows.pop();
+        }
+
+        let last_row = rows.last();
+        let next_cursor = if has_more {
+            last_row.map(|r| {
+                encode_cursor(&ActivityCursor {
+                    created_at: r.get("created_at"),
+                    id: r.get("id"),
+                })
+            })
+        } else {
+            None
+        };
 
         let events: Vec<GroupActivityEventOut> = rows
             .into_iter()
             .map(|r| GroupActivityEventOut {
                 event_type: r.get("event_type"),
                 event_data: r.get("payload"),
+                actor_user_id: r.try_get("user_id").ok().flatten(),
                 created_at: r.get("created_at"),
             })
             .collect();
 
-        Ok(events)
+        Ok((events, next_cursor, has_more))
     }
 
     /// 获取热门菜品排名
