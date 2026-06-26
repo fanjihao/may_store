@@ -7,6 +7,7 @@ pub mod economy_service; // 经济系统服务 - FSD v2
 pub mod event_handlers;
 pub mod food_service; // 菜品服务
 pub mod footprint_service; // 足迹服务
+pub mod group_level_service; // 组等级服务
 pub mod notification_service; // 通知服务
 pub mod order_service; // 订单服务
 pub mod sign_in_service; // 签到服务

@@ -81,6 +81,55 @@ pub struct GroupDetailInfo {
     pub diamond: i64,
     pub footprint_capacity: i32,
     pub footprint_count: i32,
+    /// 组升级进度 (按 group_level_configs 算, 每次 get_group 实时算)
+    /// 前端用这个画经验条: expInCurrentLevel / (nextLevelRequiredExp - currentLevelRequiredExp)
+    pub level_progress: Option<GroupLevelProgress>,
+}
+
+/// 组升级进度 (用于画经验条)
+#[allow(dead_code)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct GroupLevelProgress {
+    /// 当前等级
+    pub current_level: i32,
+    /// 当前等级需要的累计 exp (升到这一级的门槛)
+    pub current_level_required_exp: i64,
+    /// 下一级 (若已满级, 跟 currentLevel 相同)
+    pub next_level: i32,
+    /// 下一级需要的累计 exp
+    pub next_level_required_exp: i64,
+    /// 当前等级内的进度 (group.exp - current_level_required_exp)
+    pub exp_in_current_level: i64,
+    /// 距离下一级还差多少 (next_level_required_exp - group.exp)
+    pub exp_to_next_level: i64,
+    /// 是否已满级 (没更高等级了)
+    pub is_max_level: bool,
+}
+
+/// 组等级阶梯配置 (admin 后台维护)
+#[allow(dead_code)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct GroupLevelConfig {
+    pub level: i32,
+    pub required_exp: i64,
+}
+
+/// 更新单个等级配置请求
+#[allow(dead_code)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateGroupLevelRequest {
+    pub required_exp: i64,
+}
+
+/// 组等级配置列表响应
+#[allow(dead_code)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct GroupLevelListResponse {
+    pub levels: Vec<GroupLevelConfig>,
 }
 
 /// 履约统计信息

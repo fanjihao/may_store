@@ -283,6 +283,14 @@ async fn get_group(
         diamond: row.get::<i32, _>("diamond") as i64,
         footprint_capacity: row.get("footprint_capacity"),
         footprint_count: row.get("footprint_count"),
+        // 等级进度实时算 (不依赖 association_groups.level 字段)
+        level_progress: Some(
+            crate::application::group_level_service::GroupLevelService::compute_progress(
+                db,
+                row.get::<Option<i64>, _>("exp").unwrap_or(0),
+            )
+            .await?,
+        ),
     };
 
     Ok(ApiResponse::success(detail))

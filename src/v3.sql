@@ -68,6 +68,7 @@ DROP TABLE IF EXISTS guest_invitations CASCADE;
 DROP TABLE IF EXISTS association_group_requests CASCADE;
 DROP TABLE IF EXISTS user_group_points CASCADE;
 DROP TABLE IF EXISTS association_group_members CASCADE;
+DROP TABLE IF EXISTS group_level_configs CASCADE;
 DROP TABLE IF EXISTS association_groups CASCADE;
 DROP TABLE IF EXISTS users CASCADE;
 
@@ -443,6 +444,34 @@ COMMENT ON COLUMN association_group_members.is_primary IS '是否主成员标记
 COMMENT ON COLUMN association_group_members.joined_at IS '添加时间';
 CREATE INDEX idx_gm_user_status ON association_group_members(user_id, member_status);
 CREATE INDEX idx_gm_group_status ON association_group_members(group_id, member_status);
+
+-- ================= GROUP LEVEL CONFIGS =================
+-- 组升级的"阶梯表": level 升到这一级需要的累计 exp。
+-- 算法: level = MAX(level WHERE required_exp <= group.exp)
+--      如果 group.exp 小于最低等级的 required_exp, 默认为 Lv 1
+-- 跟 association_groups.level 字段同步 —— 任何给 group.exp 加值的地方都要重新算 level
+CREATE TABLE group_level_configs (
+    level INT PRIMARY KEY,                -- Lv 1, Lv 2, ...
+    required_exp BIGINT NOT NULL UNIQUE,  -- 升到这一级需要的累计 exp (Lv 1 = 0)
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+COMMENT ON TABLE group_level_configs IS '组升级阶梯表: 升到 Lv N 需要的累计 exp';
+COMMENT ON COLUMN group_level_configs.level IS '等级 (主键)';
+COMMENT ON COLUMN group_level_configs.required_exp IS '升到这一级需要的累计 exp';
+
+-- 默认 seed 数据: 指数增长曲线 (Lv 1=0, Lv 2=100, Lv 3=250, ... Lv 10=30000)
+-- 玩家体验: 前期快, 后期有挑战, 但永远有"再攒 1 级"的盼头
+INSERT INTO group_level_configs (level, required_exp) VALUES
+    (1, 0),
+    (2, 100),
+    (3, 250),
+    (4, 500),
+    (5, 1000),
+    (6, 2000),
+    (7, 4000),
+    (8, 8000),
+    (9, 15000),
+    (10, 30000);
 
 -- ================= USER GROUP POINTS =================
 CREATE TABLE user_group_points (
