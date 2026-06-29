@@ -72,6 +72,10 @@ DROP TABLE IF EXISTS group_level_configs CASCADE;
 DROP TABLE IF EXISTS association_groups CASCADE;
 DROP TABLE IF EXISTS users CASCADE;
 
+-- Drop legacy compatibility tables (reset together with v3 tables)
+DROP TABLE IF EXISTS point_flow CASCADE;
+DROP TABLE IF EXISTS group_invitations CASCADE;
+
 -- Drop enum types
 DROP TYPE IF EXISTS login_method_enum CASCADE;
 DROP TYPE IF EXISTS gender_enum CASCADE;
@@ -1651,7 +1655,7 @@ VALUES (
 -- ================= LEGACY POINT FLOW (dashboard_service 引用) =================
 -- 旧版代码用 point_flow 表存积分流水,新版本拆为 love_point_transactions。
 -- 此处保留以兼容 application/dashboard_service.rs 的 point_journey 查询。
-CREATE TABLE IF NOT EXISTS point_flow (
+CREATE TABLE point_flow (
     id BIGSERIAL PRIMARY KEY,
     user_id BIGINT NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
     group_id BIGINT REFERENCES association_groups(group_id) ON DELETE CASCADE,
@@ -1670,7 +1674,7 @@ CREATE INDEX idx_pf_user ON point_flow(user_id, created_at DESC);
 -- ================= LEGACY GROUP INVITATIONS (kitchens 路由引用) =================
 -- 旧版 application 用 group_invitations 表存做客邀请;v3 用 guest_invitations。
 -- 此处保留以兼容 api/kitchens/routes.rs 的查询。
-CREATE TABLE IF NOT EXISTS group_invitations (
+CREATE TABLE group_invitations (
     id BIGSERIAL PRIMARY KEY,
     group_id BIGINT NOT NULL REFERENCES association_groups(group_id) ON DELETE CASCADE,
     invite_code VARCHAR(32) NOT NULL UNIQUE,
