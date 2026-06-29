@@ -4,7 +4,7 @@
 use ntex::web::{
     self,
     types::{Json, Path, Query, State},
-    HttpResponse, Responder, ServiceConfig,
+    Responder, ServiceConfig,
 };
 use serde::{Deserialize, Serialize};
 use sqlx::Row;
@@ -13,15 +13,12 @@ use utoipa::ToSchema;
 
 use crate::application::wish_service::WishService;
 use crate::domain::wish::{
-    WishCreateInput, WishDeadlineInput, WishFeedbackInput, WishOut,
-    WishQuoteInput, WishRejectInput,
+    WishCreateInput, WishDeadlineInput, WishFeedbackInput, WishOut, WishQuoteInput, WishRejectInput,
+    WishStatus,
 };
 use crate::{
-    config::AppState,
-    errors::CustomError,
-    middlewares::auth::UserToken,
-    middlewares::require_group::RequireGroup,
-    utils::response::ApiResponse,
+    config::AppState, errors::CustomError, middlewares::auth::UserToken,
+    middlewares::require_group::RequireGroup, utils::response::ApiResponse,
 };
 
 /// 配置心愿路由
@@ -30,53 +27,43 @@ pub fn configure(cfg: &mut ServiceConfig) {
     // 组内心愿
     cfg.service(
         web::resource("/api/groups/{group_id}/wishes")
-            .route(web::post().to(create_group_wish))  // FSD v2 7.1 创建心愿
-            .route(web::get().to(list_group_wishes)),  // FSD v2 7.2 获取心愿列表
+            .route(web::post().to(create_group_wish)) // FSD v2 7.1 创建心愿
+            .route(web::get().to(list_group_wishes)), // FSD v2 7.2 获取心愿列表
     );
     // 全局心愿详情/操作
     cfg.service(
-        web::resource("/api/wishes/pending-fulfillment")
-            .route(web::get().to(pending_fulfillment)),
+        web::resource("/api/wishes/pending-fulfillment").route(web::get().to(pending_fulfillment)),
     );
     cfg.service(
-        web::resource("/api/wishes/{wish_id}")
-            .route(web::get().to(get_wish)),  // FSD v2 7.3 获取心愿详情
+        web::resource("/api/wishes/{wish_id}").route(web::get().to(get_wish)), // FSD v2 7.3 获取心愿详情
     );
     cfg.service(
-        web::resource("/api/wishes/{wish_id}/quote")
-            .route(web::post().to(wish_quote)),  // FSD v2 7.4 协商报价
+        web::resource("/api/wishes/{wish_id}/quote").route(web::post().to(wish_quote)), // FSD v2 7.4 协商报价
     );
     cfg.service(
-        web::resource("/api/wishes/{wish_id}/deadline")
-            .route(web::post().to(wish_deadline)),  // FSD v2 7.5 协商履约期限
+        web::resource("/api/wishes/{wish_id}/deadline").route(web::post().to(wish_deadline)), // FSD v2 7.5 协商履约期限
     );
     cfg.service(
         web::resource("/api/wishes/{wish_id}/confirm-agreement")
-            .route(web::post().to(wish_confirm_agreement)),  // FSD v2 7.6 双方确认
+            .route(web::post().to(wish_confirm_agreement)), // FSD v2 7.6 双方确认
     );
     cfg.service(
-        web::resource("/api/wishes/{wish_id}/reject")
-            .route(web::post().to(wish_reject)),  // FSD v2 7.7 拒绝/关闭
+        web::resource("/api/wishes/{wish_id}/reject").route(web::post().to(wish_reject)), // FSD v2 7.7 拒绝/关闭
     );
     cfg.service(
-        web::resource("/api/wishes/{wish_id}/select")
-            .route(web::post().to(wish_select)),  // FSD v2 7.8 选择心愿
+        web::resource("/api/wishes/{wish_id}/select").route(web::post().to(wish_select)), // FSD v2 7.8 选择心愿
     );
     cfg.service(
-        web::resource("/api/wishes/{wish_id}/feedback")
-            .route(web::post().to(submit_feedback)),  // FSD v2 7.9 提交打卡反馈
+        web::resource("/api/wishes/{wish_id}/feedback").route(web::post().to(submit_feedback)), // FSD v2 7.9 提交打卡反馈
     );
     cfg.service(
-        web::resource("/api/wishes/{wish_id}/expire")
-            .route(web::post().to(wish_expire)),  // FSD v2 7.10 逾期处理
+        web::resource("/api/wishes/{wish_id}/expire").route(web::post().to(wish_expire)), // FSD v2 7.10 逾期处理
     );
     cfg.service(
-        web::resource("/api/wishes/{wish_id}/close")
-            .route(web::post().to(wish_close)),  // FSD v2 7.11 关闭心愿
+        web::resource("/api/wishes/{wish_id}/close").route(web::post().to(wish_close)), // FSD v2 7.11 关闭心愿
     );
     cfg.service(
-        web::resource("/api/wishes/{wish_id}/checkins")
-            .route(web::get().to(get_wish_checkins)),  // FSD v2 7.12 获取打卡记录
+        web::resource("/api/wishes/{wish_id}/checkins").route(web::get().to(get_wish_checkins)), // FSD v2 7.12 获取打卡记录
     );
 }
 
@@ -90,6 +77,9 @@ pub struct WishListQuery {
     pub limit: Option<i32>,
     pub status: Option<String>,
     pub role: Option<String>,
+    /// "mine" = 只返回当前用户创建或被指定为履约人的心愿；其他值或缺失 = 全组
+    #[serde(default)]
+    pub scope: Option<String>,
 }
 
 /// 待履约心愿查询参数
@@ -150,6 +140,21 @@ pub async fn create_group_wish(
         return Err(CustomError::Forbidden("非组成员".into()));
     }
 
+    // 校验: 组内至少 2 人才能创建心愿
+    let member_count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM association_group_members \
+         WHERE group_id = $1 AND member_status = 'ACTIVE'",
+    )
+    .bind(gid)
+    .fetch_one(db)
+    .await?;
+
+    if member_count < 2 {
+        return Err(CustomError::BadRequest(
+            "组内需要至少 2 人才能创建心愿".into(),
+        ));
+    }
+
     let rec = WishService::create_wish(db, user_token.user_id, &data.into_inner()).await?;
     Ok(ApiResponse::success(WishOut::from_record(rec, None)))
 }
@@ -166,7 +171,7 @@ pub async fn create_group_wish(
         WishListQuery
     ),
     responses(
-        (status = 200, description = "获取成功"),
+        (status = 200, description = "获取成功", body = crate::domain::wish::entities::CursorPageWishList),
         (status = 401, description = "未登录"),
         (status = 403, description = "非组成员"),
         (status = 500, description = "服务器错误")
@@ -199,9 +204,14 @@ pub async fn list_group_wishes(
 
     // 参数化查询:状态/角色/游标全部使用占位符 + 枚举白名单
     let status_filter: Option<&str> = match query.status.as_deref() {
-        Some(s) if matches!(s,
-            "DRAFT" | "NEGOTIATING" | "CREATED" | "CLAIMED"
-            | "FINISHED" | "EXPIRED" | "CLOSED") => Some(s),
+        Some(s)
+            if matches!(
+                s,
+                "DRAFT" | "NEGOTIATING" | "CREATED" | "CLAIMED" | "FINISHED" | "EXPIRED" | "CLOSED"
+            ) =>
+        {
+            Some(s)
+        }
         Some(_) => return Err(CustomError::BadRequest("status 非法".into())),
         None => None,
     };
@@ -210,6 +220,13 @@ pub async fn list_group_wishes(
     let role_filter: Option<&str> = match query.role.as_deref() {
         Some("REQUESTER") | Some("FULFILLER") => query.role.as_deref(),
         Some(_) => return Err(CustomError::BadRequest("role 非法".into())),
+        None => None,
+    };
+
+    // scope 校验:只接受 "mine"(只看当前用户相关);其他值或缺失 = 全组
+    let scope_filter: Option<&str> = match query.scope.as_deref() {
+        Some("mine") => Some("mine"),
+        Some(_) => return Err(CustomError::BadRequest("scope 非法".into())),
         None => None,
     };
 
@@ -223,12 +240,17 @@ pub async fn list_group_wishes(
         None => None,
     };
 
-    // 组合 8 种查询分支(2 状态 × 2 角色 × 2 游标),全部用参数化
-    let rows = match (status_filter, role_filter, cursor_ts) {
-        (Some(s), Some(r), Some(c)) => {
-            let col = if r == "REQUESTER" { "requester_id" } else { "fulfiller_id" };
+    // 组合 16 种查询分支(2 scope × 2 状态 × 2 角色 × 2 游标),全部用参数化
+    // scope=mine 时附加 AND (created_by=$? OR fulfiller_id=$?) 过滤
+    let rows = match (scope_filter, status_filter, role_filter, cursor_ts) {
+        (Some(_sc), Some(s), Some(r), Some(c)) => {
+            let col = if r == "REQUESTER" {
+                "requester_id"
+            } else {
+                "fulfiller_id"
+            };
             let sql = format!(
-                r#"SELECT w.wish_id, w.wish_name, w.description, w.final_cost, w.fulfillment_deadline_hours,
+                r#"SELECT w.wish_id, w.wish_name, w.final_cost, w.fulfillment_deadline_hours,
                           w.status, w.requester_id, w.fulfiller_id, w.selected_by, w.selected_at,
                           w.fulfillment_due_at, w.created_at,
                           u1.nick_name as requester_nickname,
@@ -236,17 +258,107 @@ pub async fn list_group_wishes(
                    FROM wishes w
                    JOIN users u1 ON u1.user_id = w.requester_id
                    JOIN users u2 ON u2.user_id = w.fulfiller_id
-                   WHERE w.group_id = $1 AND w.status = $2 AND w.{} = $3 AND w.created_at < $4
+                   WHERE w.group_id = $1 AND w.status = $2::wish_status_enum AND w.{} = $3
+                     AND (w.created_by = $4 OR w.fulfiller_id = $4)
+                     AND w.created_at < $5
+                   ORDER BY w.created_at DESC
+                   LIMIT $6"#,
+                col
+            );
+            sqlx::query(&sql)
+                .bind(gid)
+                .bind(s)
+                .bind(user_token.user_id)
+                .bind(user_token.user_id)
+                .bind(c)
+                .bind(limit + 1)
+                .fetch_all(db)
+                .await?
+        }
+        (Some(_sc), Some(s), Some(r), None) => {
+            let col = if r == "REQUESTER" {
+                "requester_id"
+            } else {
+                "fulfiller_id"
+            };
+            let sql = format!(
+                r#"SELECT w.wish_id, w.wish_name, w.final_cost, w.fulfillment_deadline_hours,
+                          w.status, w.requester_id, w.fulfiller_id, w.selected_by, w.selected_at,
+                          w.fulfillment_due_at, w.created_at,
+                          u1.nick_name as requester_nickname,
+                          u2.nick_name as fulfiller_nickname
+                   FROM wishes w
+                   JOIN users u1 ON u1.user_id = w.requester_id
+                   JOIN users u2 ON u2.user_id = w.fulfiller_id
+                   WHERE w.group_id = $1 AND w.status = $2::wish_status_enum AND w.{} = $3
+                     AND (w.created_by = $4 OR w.fulfiller_id = $4)
                    ORDER BY w.created_at DESC
                    LIMIT $5"#,
                 col
             );
-            sqlx::query(&sql).bind(gid).bind(s).bind(user_token.user_id).bind(c).bind(limit + 1).fetch_all(db).await?
+            sqlx::query(&sql)
+                .bind(gid)
+                .bind(s)
+                .bind(user_token.user_id)
+                .bind(user_token.user_id)
+                .bind(limit + 1)
+                .fetch_all(db)
+                .await?
         }
-        (Some(s), Some(r), None) => {
-            let col = if r == "REQUESTER" { "requester_id" } else { "fulfiller_id" };
+        (Some(_sc), Some(s), None, Some(c)) => {
+            sqlx::query(
+                r#"SELECT w.wish_id, w.wish_name, w.final_cost, w.fulfillment_deadline_hours,
+                      w.status, w.requester_id, w.fulfiller_id, w.selected_by, w.selected_at,
+                      w.fulfillment_due_at, w.created_at,
+                      u1.nick_name as requester_nickname,
+                      u2.nick_name as fulfiller_nickname
+               FROM wishes w
+               JOIN users u1 ON u1.user_id = w.requester_id
+               JOIN users u2 ON u2.user_id = w.fulfiller_id
+               WHERE w.group_id = $1 AND w.status = $2::wish_status_enum
+                 AND (w.created_by = $3 OR w.fulfiller_id = $3)
+                 AND w.created_at < $4
+               ORDER BY w.created_at DESC
+               LIMIT $5"#,
+            )
+            .bind(gid)
+            .bind(s)
+            .bind(user_token.user_id)
+            .bind(c)
+            .bind(limit + 1)
+            .fetch_all(db)
+            .await?
+        }
+        (Some(_sc), Some(s), None, None) => {
+            sqlx::query(
+                r#"SELECT w.wish_id, w.wish_name, w.final_cost, w.fulfillment_deadline_hours,
+                      w.status, w.requester_id, w.fulfiller_id, w.selected_by, w.selected_at,
+                      w.fulfillment_due_at, w.created_at,
+                      u1.nick_name as requester_nickname,
+                      u2.nick_name as fulfiller_nickname
+               FROM wishes w
+               JOIN users u1 ON u1.user_id = w.requester_id
+               JOIN users u2 ON u2.user_id = w.fulfiller_id
+               WHERE w.group_id = $1 AND w.status = $2::wish_status_enum
+                 AND (w.created_by = $3 OR w.fulfiller_id = $3)
+               ORDER BY w.created_at DESC
+               LIMIT $4"#,
+            )
+            .bind(gid)
+            .bind(s)
+            .bind(user_token.user_id)
+            .bind(limit + 1)
+            .fetch_all(db)
+            .await?
+        }
+        (Some(_sc), None, Some(r), Some(c)) => {
+            let col = if r == "REQUESTER" {
+                "requester_id"
+            } else {
+                "fulfiller_id"
+            };
             let sql = format!(
-                r#"SELECT w.wish_id, w.wish_name, w.description, w.final_cost, w.fulfillment_deadline_hours,
+                r#"SELECT w.wish_id, w.wish_name, w.final_cost, w.fulfillment_deadline_hours,
                           w.status, w.requester_id, w.fulfiller_id, w.selected_by, w.selected_at,
                           w.fulfillment_due_at, w.created_at,
                           u1.nick_name as requester_nickname,
@@ -254,15 +366,54 @@ pub async fn list_group_wishes(
                    FROM wishes w
                    JOIN users u1 ON u1.user_id = w.requester_id
                    JOIN users u2 ON u2.user_id = w.fulfiller_id
-                   WHERE w.group_id = $1 AND w.status = $2 AND w.{} = $3
+                   WHERE w.group_id = $1 AND w.{} = $2
+                     AND (w.created_by = $3 OR w.fulfiller_id = $3)
+                     AND w.created_at < $4
+                   ORDER BY w.created_at DESC
+                   LIMIT $5"#,
+                col
+            );
+            sqlx::query(&sql)
+                .bind(gid)
+                .bind(user_token.user_id)
+                .bind(user_token.user_id)
+                .bind(c)
+                .bind(limit + 1)
+                .fetch_all(db)
+                .await?
+        }
+        (Some(_sc), None, Some(r), None) => {
+            let col = if r == "REQUESTER" {
+                "requester_id"
+            } else {
+                "fulfiller_id"
+            };
+            let sql = format!(
+                r#"SELECT w.wish_id, w.wish_name, w.final_cost, w.fulfillment_deadline_hours,
+                          w.status, w.requester_id, w.fulfiller_id, w.selected_by, w.selected_at,
+                          w.fulfillment_due_at, w.created_at,
+                          u1.nick_name as requester_nickname,
+                          u2.nick_name as fulfiller_nickname
+                   FROM wishes w
+                   JOIN users u1 ON u1.user_id = w.requester_id
+                   JOIN users u2 ON u2.user_id = w.fulfiller_id
+                   WHERE w.group_id = $1 AND w.{} = $2
+                     AND (w.created_by = $3 OR w.fulfiller_id = $3)
                    ORDER BY w.created_at DESC
                    LIMIT $4"#,
                 col
             );
-            sqlx::query(&sql).bind(gid).bind(s).bind(user_token.user_id).bind(limit + 1).fetch_all(db).await?
+            sqlx::query(&sql)
+                .bind(gid)
+                .bind(user_token.user_id)
+                .bind(user_token.user_id)
+                .bind(limit + 1)
+                .fetch_all(db)
+                .await?
         }
-        (Some(s), None, Some(c)) => sqlx::query(
-            r#"SELECT w.wish_id, w.wish_name, w.description, w.final_cost, w.fulfillment_deadline_hours,
+        (Some(_sc), None, None, Some(c)) => {
+            sqlx::query(
+                r#"SELECT w.wish_id, w.wish_name, w.final_cost, w.fulfillment_deadline_hours,
                       w.status, w.requester_id, w.fulfiller_id, w.selected_by, w.selected_at,
                       w.fulfillment_due_at, w.created_at,
                       u1.nick_name as requester_nickname,
@@ -270,13 +421,22 @@ pub async fn list_group_wishes(
                FROM wishes w
                JOIN users u1 ON u1.user_id = w.requester_id
                JOIN users u2 ON u2.user_id = w.fulfiller_id
-               WHERE w.group_id = $1 AND w.status = $2 AND w.created_at < $3
+               WHERE w.group_id = $1
+                 AND (w.created_by = $2 OR w.fulfiller_id = $2)
+                 AND w.created_at < $3
                ORDER BY w.created_at DESC
                LIMIT $4"#,
-        )
-        .bind(gid).bind(s).bind(c).bind(limit + 1).fetch_all(db).await?,
-        (Some(s), None, None) => sqlx::query(
-            r#"SELECT w.wish_id, w.wish_name, w.description, w.final_cost, w.fulfillment_deadline_hours,
+            )
+            .bind(gid)
+            .bind(user_token.user_id)
+            .bind(c)
+            .bind(limit + 1)
+            .fetch_all(db)
+            .await?
+        }
+        (Some(_sc), None, None, None) => {
+            sqlx::query(
+                r#"SELECT w.wish_id, w.wish_name, w.final_cost, w.fulfillment_deadline_hours,
                       w.status, w.requester_id, w.fulfiller_id, w.selected_by, w.selected_at,
                       w.fulfillment_due_at, w.created_at,
                       u1.nick_name as requester_nickname,
@@ -284,15 +444,124 @@ pub async fn list_group_wishes(
                FROM wishes w
                JOIN users u1 ON u1.user_id = w.requester_id
                JOIN users u2 ON u2.user_id = w.fulfiller_id
-               WHERE w.group_id = $1 AND w.status = $2
+               WHERE w.group_id = $1
+                 AND (w.created_by = $2 OR w.fulfiller_id = $2)
                ORDER BY w.created_at DESC
                LIMIT $3"#,
-        )
-        .bind(gid).bind(s).bind(limit + 1).fetch_all(db).await?,
-        (None, Some(r), Some(c)) => {
-            let col = if r == "REQUESTER" { "requester_id" } else { "fulfiller_id" };
+            )
+            .bind(gid)
+            .bind(user_token.user_id)
+            .bind(limit + 1)
+            .fetch_all(db)
+            .await?
+        }
+        // ========== scope 为空(全组)的原 8 个分支 ==========
+        (None, Some(s), Some(r), Some(c)) => {
+            let col = if r == "REQUESTER" {
+                "requester_id"
+            } else {
+                "fulfiller_id"
+            };
             let sql = format!(
-                r#"SELECT w.wish_id, w.wish_name, w.description, w.final_cost, w.fulfillment_deadline_hours,
+                r#"SELECT w.wish_id, w.wish_name, w.final_cost, w.fulfillment_deadline_hours,
+                          w.status, w.requester_id, w.fulfiller_id, w.selected_by, w.selected_at,
+                          w.fulfillment_due_at, w.created_at,
+                          u1.nick_name as requester_nickname,
+                          u2.nick_name as fulfiller_nickname
+                   FROM wishes w
+                   JOIN users u1 ON u1.user_id = w.requester_id
+                   JOIN users u2 ON u2.user_id = w.fulfiller_id
+                   WHERE w.group_id = $1 AND w.status = $2::wish_status_enum AND w.{} = $3 AND w.created_at < $4
+                   ORDER BY w.created_at DESC
+                   LIMIT $5"#,
+                col
+            );
+            sqlx::query(&sql)
+                .bind(gid)
+                .bind(s)
+                .bind(user_token.user_id)
+                .bind(c)
+                .bind(limit + 1)
+                .fetch_all(db)
+                .await?
+        }
+        (None, Some(s), Some(r), None) => {
+            let col = if r == "REQUESTER" {
+                "requester_id"
+            } else {
+                "fulfiller_id"
+            };
+            let sql = format!(
+                r#"SELECT w.wish_id, w.wish_name, w.final_cost, w.fulfillment_deadline_hours,
+                          w.status, w.requester_id, w.fulfiller_id, w.selected_by, w.selected_at,
+                          w.fulfillment_due_at, w.created_at,
+                          u1.nick_name as requester_nickname,
+                          u2.nick_name as fulfiller_nickname
+                   FROM wishes w
+                   JOIN users u1 ON u1.user_id = w.requester_id
+                   JOIN users u2 ON u2.user_id = w.fulfiller_id
+                   WHERE w.group_id = $1 AND w.status = $2::wish_status_enum AND w.{} = $3
+                   ORDER BY w.created_at DESC
+                   LIMIT $4"#,
+                col
+            );
+            sqlx::query(&sql)
+                .bind(gid)
+                .bind(s)
+                .bind(user_token.user_id)
+                .bind(limit + 1)
+                .fetch_all(db)
+                .await?
+        }
+        (None, Some(s), None, Some(c)) => {
+            sqlx::query(
+                r#"SELECT w.wish_id, w.wish_name, w.final_cost, w.fulfillment_deadline_hours,
+                      w.status, w.requester_id, w.fulfiller_id, w.selected_by, w.selected_at,
+                      w.fulfillment_due_at, w.created_at,
+                      u1.nick_name as requester_nickname,
+                      u2.nick_name as fulfiller_nickname
+               FROM wishes w
+               JOIN users u1 ON u1.user_id = w.requester_id
+               JOIN users u2 ON u2.user_id = w.fulfiller_id
+               WHERE w.group_id = $1 AND w.status = $2::wish_status_enum AND w.created_at < $3
+               ORDER BY w.created_at DESC
+               LIMIT $4"#,
+            )
+            .bind(gid)
+            .bind(s)
+            .bind(c)
+            .bind(limit + 1)
+            .fetch_all(db)
+            .await?
+        }
+        (None, Some(s), None, None) => {
+            sqlx::query(
+                r#"SELECT w.wish_id, w.wish_name, w.final_cost, w.fulfillment_deadline_hours,
+                      w.status, w.requester_id, w.fulfiller_id, w.selected_by, w.selected_at,
+                      w.fulfillment_due_at, w.created_at,
+                      u1.nick_name as requester_nickname,
+                      u2.nick_name as fulfiller_nickname
+               FROM wishes w
+               JOIN users u1 ON u1.user_id = w.requester_id
+               JOIN users u2 ON u2.user_id = w.fulfiller_id
+               WHERE w.group_id = $1 AND w.status = $2::wish_status_enum
+               ORDER BY w.created_at DESC
+               LIMIT $3"#,
+            )
+            .bind(gid)
+            .bind(s)
+            .bind(limit + 1)
+            .fetch_all(db)
+            .await?
+        }
+        (None, None, Some(r), Some(c)) => {
+            let col = if r == "REQUESTER" {
+                "requester_id"
+            } else {
+                "fulfiller_id"
+            };
+            let sql = format!(
+                r#"SELECT w.wish_id, w.wish_name, w.final_cost, w.fulfillment_deadline_hours,
                           w.status, w.requester_id, w.fulfiller_id, w.selected_by, w.selected_at,
                           w.fulfillment_due_at, w.created_at,
                           u1.nick_name as requester_nickname,
@@ -305,28 +574,44 @@ pub async fn list_group_wishes(
                    LIMIT $4"#,
                 col
             );
-            sqlx::query(&sql).bind(gid).bind(user_token.user_id).bind(c).bind(limit + 1).fetch_all(db).await?
+            sqlx::query(&sql)
+                .bind(gid)
+                .bind(user_token.user_id)
+                .bind(c)
+                .bind(limit + 1)
+                .fetch_all(db)
+                .await?
         }
-        (None, Some(r), None) => {
-            let col = if r == "REQUESTER" { "requester_id" } else { "fulfiller_id" };
+        (None, None, Some(r), None) => {
+            let col = if r == "REQUESTER" {
+                "requester_id"
+            } else {
+                "fulfiller_id"
+            };
             let sql = format!(
-                r#"SELECT w.wish_id, w.wish_name, w.description, w.final_cost, w.fulfillment_deadline_hours,
+                r#"SELECT w.wish_id, w.wish_name, w.final_cost, w.fulfillment_deadline_hours,
                           w.status, w.requester_id, w.fulfiller_id, w.selected_by, w.selected_at,
                           w.fulfillment_due_at, w.created_at,
                           u1.nick_name as requester_nickname,
                           u2.nick_name as fulfiller_nickname
                    FROM wishes w
-                   JOIN users u1 ON u1.user_id = w.requester_id
+               JOIN users u1 ON u1.user_id = w.requester_id
                    JOIN users u2 ON u2.user_id = w.fulfiller_id
                    WHERE w.group_id = $1 AND w.{} = $2
                    ORDER BY w.created_at DESC
                    LIMIT $3"#,
                 col
             );
-            sqlx::query(&sql).bind(gid).bind(user_token.user_id).bind(limit + 1).fetch_all(db).await?
+            sqlx::query(&sql)
+                .bind(gid)
+                .bind(user_token.user_id)
+                .bind(limit + 1)
+                .fetch_all(db)
+                .await?
         }
-        (None, None, Some(c)) => sqlx::query(
-            r#"SELECT w.wish_id, w.wish_name, w.description, w.final_cost, w.fulfillment_deadline_hours,
+        (None, None, None, Some(c)) => {
+            sqlx::query(
+                r#"SELECT w.wish_id, w.wish_name, w.final_cost, w.fulfillment_deadline_hours,
                       w.status, w.requester_id, w.fulfiller_id, w.selected_by, w.selected_at,
                       w.fulfillment_due_at, w.created_at,
                       u1.nick_name as requester_nickname,
@@ -337,10 +622,16 @@ pub async fn list_group_wishes(
                WHERE w.group_id = $1 AND w.created_at < $2
                ORDER BY w.created_at DESC
                LIMIT $3"#,
-        )
-        .bind(gid).bind(c).bind(limit + 1).fetch_all(db).await?,
-        (None, None, None) => sqlx::query(
-            r#"SELECT w.wish_id, w.wish_name, w.description, w.final_cost, w.fulfillment_deadline_hours,
+            )
+            .bind(gid)
+            .bind(c)
+            .bind(limit + 1)
+            .fetch_all(db)
+            .await?
+        }
+        (None, None, None, None) => {
+            sqlx::query(
+                r#"SELECT w.wish_id, w.wish_name, w.final_cost, w.fulfillment_deadline_hours,
                       w.status, w.requester_id, w.fulfiller_id, w.selected_by, w.selected_at,
                       w.fulfillment_due_at, w.created_at,
                       u1.nick_name as requester_nickname,
@@ -351,32 +642,49 @@ pub async fn list_group_wishes(
                WHERE w.group_id = $1
                ORDER BY w.created_at DESC
                LIMIT $2"#,
-        )
-        .bind(gid).bind(limit + 1).fetch_all(db).await?,
+            )
+            .bind(gid)
+            .bind(limit + 1)
+            .fetch_all(db)
+            .await?
+        }
     };
 
     let has_more = rows.len() > limit as usize;
 
-    let wishes: Vec<serde_json::Value> = rows
+    let wishes_list: Vec<crate::domain::wish::entities::WishOut> = rows
         .iter()
         .take(limit as usize)
         .map(|r| {
-            serde_json::json!({
-                "wish_id": r.get::<i64, _>("wish_id"),
-                "name": r.get::<String, _>("wish_name"),
-                "description": r.get::<Option<String>, _>("description"),
-                "final_cost": r.get::<Option<i32>, _>("final_cost"),
-                "fulfillment_deadline_hours": r.get::<Option<i32>, _>("fulfillment_deadline_hours"),
-                "status": r.get::<String, _>("status"),
-                "requester_id": r.get::<i64, _>("requester_id"),
-                "requester_nickname": r.get::<Option<String>, _>("requester_nickname"),
-                "fulfiller_id": r.get::<i64, _>("fulfiller_id"),
-                "fulfiller_nickname": r.get::<Option<String>, _>("fulfiller_nickname"),
-                "selected_by": r.get::<Option<i64>, _>("selected_by"),
-                "selected_at": r.get::<Option<chrono::DateTime<chrono::Utc>>, _>("selected_at"),
-                "fulfillment_due_at": r.get::<Option<chrono::DateTime<chrono::Utc>>, _>("fulfillment_due_at"),
-                "created_at": r.get::<chrono::DateTime<chrono::Utc>, _>("created_at")
-            })
+            // SQL 返回的 final_cost 兼容 wish_cost（前者是 FSD v2，后者是旧字段名）
+            let final_cost: Option<i32> = r.get::<Option<i32>, _>("final_cost");
+            let wish_cost = final_cost.unwrap_or(0);
+            let status_str: String = r.get::<String, _>("status");
+            let status = match status_str.as_str() {
+                "DRAFT" => WishStatus::Draft,
+                "NEGOTIATING" => WishStatus::Negotiating,
+                "CREATED" => WishStatus::Created,
+                "CLAIMED" => WishStatus::Claimed,
+                "FINISHED" => WishStatus::Finished,
+                "EXPIRED" => WishStatus::Expired,
+                "CLOSED" => WishStatus::Closed,
+                _ => WishStatus::Created,
+            };
+            let created_at: chrono::DateTime<chrono::Utc> = r.get("created_at");
+            crate::domain::wish::entities::WishOut {
+                wish_id: r.get::<i64, _>("wish_id"),
+                wish_name: r.get::<String, _>("wish_name"),
+                wish_cost,
+                status,
+                created_by: r.get::<i64, _>("requester_id"),
+                group_id: gid,
+                claimed_by: None,
+                claimed_at: None,
+                claim_cost: None,
+                created_at,
+                updated_at: created_at,
+                feedback: None,
+            }
         })
         .collect();
 
@@ -389,11 +697,13 @@ pub async fn list_group_wishes(
         None
     };
 
-    Ok(ApiResponse::success(serde_json::json!({
-        "wishes": wishes,
-        "next_cursor": next_cursor,
-        "has_more": has_more
-    })))
+    Ok(ApiResponse::success(
+        crate::domain::wish::entities::CursorPageWishList {
+            wishes: wishes_list,
+            next_cursor,
+            has_more,
+        },
+    ))
 }
 
 /// 获取心愿详情
@@ -405,7 +715,7 @@ pub async fn list_group_wishes(
     tag = "心愿",
     params(("wish_id" = i64, Path, description = "心愿ID")),
     responses(
-        (status = 200, description = "获取成功", body = WishOut),
+        (status = 200, description = "获取成功", body = crate::domain::wish::entities::WishOutWithNegotiations),
         (status = 404, description = "心愿不存在")
     ),
     security(("bearer_auth" = []))
@@ -416,8 +726,14 @@ pub async fn get_wish(
     state: State<Arc<AppState>>,
     id: Path<i64>,
 ) -> Result<impl Responder, CustomError> {
-    let (rec, feedback) = WishService::get_wish(&state.db_pool, *id).await?;
-    Ok(ApiResponse::success(WishOut::from_record(rec, feedback)))
+    let (rec, negotiations) = WishService::get_wish(&state.db_pool, *id).await?;
+    let wish_out = WishOut::from_record(rec, None);
+    Ok(ApiResponse::success(
+        crate::domain::wish::entities::WishOutWithNegotiations {
+            wish: wish_out,
+            negotiations,
+        },
+    ))
 }
 
 /// 协商报价
@@ -474,7 +790,8 @@ pub async fn wish_deadline(
 ) -> Result<impl Responder, CustomError> {
     let wish_id = *id;
     let input = body.into_inner();
-    let out = WishService::set_deadline(&state.db_pool, user_token.user_id, wish_id, &input).await?;
+    let out =
+        WishService::set_deadline(&state.db_pool, user_token.user_id, wish_id, &input).await?;
     Ok(ApiResponse::success(out))
 }
 
@@ -617,7 +934,9 @@ pub async fn wish_close(
         &state.db_pool,
         user_token.user_id,
         wish_id,
-        &WishRejectInput { reason: input.reason },
+        &WishRejectInput {
+            reason: input.reason,
+        },
     )
     .await?;
     Ok(ApiResponse::success(out))
@@ -648,13 +967,12 @@ pub async fn wish_expire(
     let db = &state.db_pool;
 
     // 检查心愿状态
-    let row = sqlx::query(
-        "SELECT status::text, requester_id, group_id FROM wishes WHERE wish_id = $1"
-    )
-    .bind(wish_id)
-    .fetch_optional(db)
-    .await?
-    .ok_or_else(|| CustomError::NotFound("心愿不存在".into()))?;
+    let row =
+        sqlx::query("SELECT status::text, requester_id, group_id FROM wishes WHERE wish_id = $1")
+            .bind(wish_id)
+            .fetch_optional(db)
+            .await?
+            .ok_or_else(|| CustomError::NotFound("心愿不存在".into()))?;
 
     let status: String = row.get("status");
     let requester_id: i64 = row.get("requester_id");
@@ -702,10 +1020,12 @@ pub async fn wish_expire(
     }
 
     // 更新心愿状态为 EXPIRED
-    sqlx::query("UPDATE wishes SET status='EXPIRED', expired_at=NOW(), updated_at=NOW() WHERE wish_id=$1")
-        .bind(wish_id)
-        .execute(db)
-        .await?;
+    sqlx::query(
+        "UPDATE wishes SET status='EXPIRED', expired_at=NOW(), updated_at=NOW() WHERE wish_id=$1",
+    )
+    .bind(wish_id)
+    .execute(db)
+    .await?;
 
     Ok(ApiResponse::success(serde_json::json!({
         "wishId": wish_id,
@@ -757,7 +1077,9 @@ pub async fn get_wish_checkins(
             })
         })
         .collect();
-    Ok(ApiResponse::success(serde_json::json!({ "checkins": items })))
+    Ok(ApiResponse::success(
+        serde_json::json!({ "checkins": items }),
+    ))
 }
 
 /// 获取我作为履约人的待履约心愿
@@ -783,8 +1105,9 @@ pub async fn pending_fulfillment(
 ) -> Result<impl Responder, CustomError> {
     let db = &state.db_pool;
     let rows = match query.group_id {
-        Some(gid) => sqlx::query(
-            r#"
+        Some(gid) => {
+            sqlx::query(
+                r#"
             SELECT w.wish_id, w.wish_name, w.final_cost, w.fulfillment_due_at, w.status, w.group_id,
                    u.nick_name as requester_nickname,
                    CASE WHEN w.fulfillment_due_at < NOW() THEN true ELSE false END as is_overdue
@@ -793,13 +1116,15 @@ pub async fn pending_fulfillment(
             WHERE w.fulfiller_id = $1 AND w.status = 'CLAIMED' AND w.group_id = $2
             ORDER BY w.fulfillment_due_at ASC
             "#,
-        )
-        .bind(user_token.user_id)
-        .bind(gid)
-        .fetch_all(db)
-        .await?,
-        None => sqlx::query(
-            r#"
+            )
+            .bind(user_token.user_id)
+            .bind(gid)
+            .fetch_all(db)
+            .await?
+        }
+        None => {
+            sqlx::query(
+                r#"
             SELECT w.wish_id, w.wish_name, w.final_cost, w.fulfillment_due_at, w.status, w.group_id,
                    u.nick_name as requester_nickname,
                    CASE WHEN w.fulfillment_due_at < NOW() THEN true ELSE false END as is_overdue
@@ -808,10 +1133,11 @@ pub async fn pending_fulfillment(
             WHERE w.fulfiller_id = $1 AND w.status = 'CLAIMED'
             ORDER BY w.fulfillment_due_at ASC
             "#,
-        )
-        .bind(user_token.user_id)
-        .fetch_all(db)
-        .await?,
+            )
+            .bind(user_token.user_id)
+            .fetch_all(db)
+            .await?
+        }
     };
     let items: Vec<serde_json::Value> = rows
         .iter()

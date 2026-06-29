@@ -91,35 +91,6 @@ pub struct SignRecordItem {
     pub diamond_reward: i32,
 }
 
-/// 组积分奖惩配置(已迁移到 global_configs,此结构体保留供前端类型生成)
-/// 字段语义:
-/// - 积分字段:正数加分,负数扣分
-/// - 容量字段:默认值
-/// - 7 天签到奖励:数组下标 1~7 对应连续第 N 天的奖励钻石
-///
-/// 序列化时字段名转 camelCase,这样 OpenAPI 输出的字段名跟前端
-/// 现有代码 (signIn.vue / configs.vue) 保持一致,前端不需要改访问方式
-#[derive(Debug, Serialize, Deserialize, ToSchema, Clone)]
-#[serde(rename_all = "camelCase")]
-pub struct GroupPointConfig {
-    /// 清单确认完成加分
-    pub confirmed_finished_points: i32,
-    /// 清单逾期未完成扣分
-    pub overdue_unfinished_points: i32,
-    /// 清单确认未完成扣分
-    pub confirmed_unfinished_points: i32,
-    /// 特殊情况关闭清单扣分
-    pub breeder_closed_points: i32,
-    /// 清单超时未接受扣分
-    pub timeout_points: i32,
-    /// 足迹卡片默认数量
-    pub default_footprint_capacity: i32,
-    /// 解锁足迹卡片消耗钻石
-    pub unlock_card_diamond_cost: i32,
-    /// 7 天签到奖励(数组下标 1~7)
-    pub daily_checkin_rewards: Vec<i32>,
-}
-
 /// 组内双方签到状态响应
 #[derive(Debug, Serialize, ToSchema)]
 pub struct SignInStatusResponse {

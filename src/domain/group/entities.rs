@@ -76,6 +76,8 @@ pub struct GroupDetailInfo {
     pub seller_nick_name: Option<String>,
     pub buyer_avatar: Option<String>,
     pub seller_avatar: Option<String>,
+    /// 组公共头像（NULL 时前端回退到成员头像）
+    pub group_avatar: Option<String>,
     pub level: i32,
     pub exp: i64,
     pub diamond: i64,

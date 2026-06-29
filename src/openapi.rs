@@ -44,6 +44,10 @@ impl Modify for SecurityAddon {
         crate::api::auth::routes::wechat_login,
         crate::api::auth::routes::refresh_token,
         crate::api::auth::routes::logout,
+        // ==================== Admin Auth (后台管理认证) ====================
+        crate::api::admin::auth::admin_login,
+        // ==================== Admin Users (后台管理 - 用户) ====================
+        crate::api::admin::users::update_user,
         // ==================== Users (用户中心) ====================
         crate::api::users::get_current_info,
         crate::api::users::update_info,
@@ -63,6 +67,7 @@ impl Modify for SecurityAddon {
         crate::api::groups::routes::get_group_members,
         crate::api::groups::routes::create_group_order,
         crate::api::groups::routes::update_group_name,
+        crate::api::groups::routes::update_group,
         crate::api::groups::routes::get_group_point_config,
         crate::api::groups::routes::update_group_point_config,
         // ==================== Foods CRUD (菜品 §5) ====================
@@ -162,6 +167,8 @@ impl Modify for SecurityAddon {
         crate::api::admin::routes::audit_food,
         crate::api::admin::group_levels::list_group_levels,
         crate::api::admin::group_levels::update_group_level,
+        crate::api::admin::groups::update_group,
+        crate::api::admin::groups::get_group_members,
         // ==================== Dashboard (数据看板) ====================
         crate::api::dashboard::routes::get_group_dashboard,
         crate::api::dashboard::routes::get_group_activities,
@@ -202,6 +209,12 @@ impl Modify for SecurityAddon {
             crate::api::auth::routes::RefreshTokenInput,
             crate::api::auth::routes::RefreshTokenResponse,
             crate::api::auth::routes::LogoutInput,
+            // -- Admin Auth --
+            crate::api::admin::auth::AdminLoginInput,
+            crate::api::admin::auth::AdminLoginResponse,
+            // -- Admin Users --
+            crate::api::admin::users::UserUpdateInput,
+            crate::api::admin::users::UserOut,
             // -- User --
             crate::domain::user::UserPublic,
             crate::api::users::UpdateInfoInput,
@@ -214,11 +227,25 @@ impl Modify for SecurityAddon {
             crate::api::users::today_todos::TodayTodosResponse,
             // -- Groups --
             crate::api::groups::routes::CreateGroupResponse,
+            crate::api::groups::routes::SwapRoleResponse,
+            crate::api::groups::routes::FulfillmentStatsListResponse,
+            crate::api::groups::routes::CreateInviteResponse,
+            crate::api::groups::routes::CreateGroupOrderResponse,
+            crate::api::groups::routes::CreateGroupWishResponse,
+            crate::api::groups::routes::GroupOrderInput,
+            crate::api::groups::routes::GroupWishInput,
+            crate::api::groups::routes::JoinGroupInput,
+            crate::api::groups::routes::GroupMemberOut,
             crate::api::groups::routes::SwapRoleCheckResponse,
             crate::api::groups::routes::UpdateGroupNameRequest,
             crate::api::groups::routes::UpdateGroupNameResponse,
+            crate::api::groups::routes::UpdateGroupRequest,
+            crate::api::groups::routes::UpdateGroupResponse,
             crate::api::groups::routes::GroupPointConfigResponse,
             crate::api::groups::routes::GroupPointConfigUpdateRequest,
+            // -- Domain Group --
+            crate::domain::group::entities::GroupDetailInfo,
+            crate::domain::group::entities::SettlementCheckResult,
             // -- Foods --
             crate::api::foods::routes::FoodImage,
             crate::api::foods::routes::FoodIngredient,
@@ -229,8 +256,13 @@ impl Modify for SecurityAddon {
             crate::api::foods::routes::FoodDetail,
             crate::api::foods::routes::FoodSummary,
             crate::api::foods::routes::FoodListResponse,
+            // -- Food Marks (菜品标记 §24.6) --
+            crate::api::food_marks::routes::MarkFoodInput,
+            crate::api::food_marks::routes::FoodMarkOut,
             // -- Tags (菜品标签 §24.4) --
             crate::api::tags::routes::TagOut,
+            crate::api::tags::routes::CreateTagInput,
+            crate::api::tags::routes::UpdateTagInput,
             // -- Ingredients (食材 §24.5) --
             crate::domain::foods::ingredient::IngredientOut,
             crate::domain::foods::ingredient::IngredientCreateInput,
@@ -241,6 +273,7 @@ impl Modify for SecurityAddon {
             // -- Food Marks (菜品标记 §24.6) --
             // -- Support Tickets (客服工单 §15.3) --
             crate::api::support_tickets::routes::TicketOut,
+            crate::api::support_tickets::routes::CreateTicketInput,
             // -- Admin 菜品审核 (§24.7) --
             crate::api::admin::routes::PendingFoodOut,
             // -- Orders --
@@ -252,6 +285,9 @@ impl Modify for SecurityAddon {
             crate::api::notifications::routes::NotificationItem,
             crate::api::notifications::routes::NotificationsResponse,
             crate::api::notifications::routes::UnreadCountResponse,
+            crate::api::notifications::routes::MarkReadResponse,
+            crate::api::notifications::routes::MarkAllReadResponse,
+            crate::api::notifications::routes::DeleteNotificationResponse,
             crate::api::notifications::routes::BatchMarkReadRequest,
             // -- Upload --
             crate::api::upload::routes::UploadTokenRequest,
@@ -285,10 +321,15 @@ impl Modify for SecurityAddon {
             crate::api::admin::routes::PendingReviewQuery,
             crate::api::admin::routes::ReviewOrderInput,
             crate::api::admin::routes::AuditLogQuery,
+            crate::api::admin::routes::FoodAuditInput,
+            crate::api::admin::routes::FoodAuditResult,
+            // -- Admin Groups --
+            crate::api::admin::groups::GroupUpdateInput,
+            crate::api::admin::groups::GroupOut,
+            crate::api::admin::groups::GroupMember,
             // -- Sign-in --
             crate::api::sign_in::routes::SignInStatusResponse,
             crate::api::sign_in::routes::DailyCheckinResponse,
-            crate::api::sign_in::routes::GroupPointConfig,
             // -- Memorial Days (纪念日) --
             // 之前只暴露了 input 类型,MemorialDayOut 没注册,前端自动生成时返回类型变 void
             // 这里补上 schema 让前端的 MemorialDay 类型能正确生成
@@ -299,10 +340,47 @@ impl Modify for SecurityAddon {
             crate::api::memorial_days::routes::UnpinResponse,
             // -- Footprints --
             crate::api::footprints::routes::CreateFootprintRequest,
+            crate::api::footprints::routes::CreateFootprintResponse,
             crate::api::footprints::routes::FootprintItem,
             crate::api::footprints::routes::FootprintsListResponse,
             crate::api::footprints::routes::ExpandCapacityRequest,
             crate::api::footprints::routes::ExpandCapacityResponse,
+            // -- Kitchens (做客厨房) --
+            crate::api::kitchens::routes::AccessKitchenResponse,
+            crate::api::kitchens::routes::KitchenFoodItem,
+            crate::api::kitchens::routes::CreateGuestOrderResponse,
+            crate::api::kitchens::routes::GuestOrderInput,
+            // -- Dashboard (数据看板) --
+            crate::api::dashboard::routes::GroupDashboardResponse,
+            crate::api::dashboard::routes::AdminDashboardResponse,
+            crate::api::dashboard::routes::TrendsResponse,
+            crate::domain::dashboard::entities::GroupActivityListResponse,
+            // -- Economy (经济查询) --
+            crate::api::economy::routes::PointsBalanceResponse,
+            crate::api::economy::routes::PointsTransactionsResponse,
+            crate::api::economy::routes::DiamondsBalanceResponse,
+            crate::api::economy::routes::DiamondsTransactionsResponse,
+            crate::api::economy::routes::GroupExpResponse,
+            crate::api::economy::routes::ExpTransactionsResponse,
+            // -- Orders (full schemas) --
+            crate::domain::order::entities::OrderOutNew,
+            crate::domain::order::entities::OrderCreateInput,
+            crate::domain::order::entities::OrderRatingCreateInput,
+            crate::domain::order::entities::OrderRatingOut,
+            // -- Wish (心愿) --
+            crate::domain::wish::entities::WishOut,
+            crate::domain::wish::entities::WishCreateInput,
+            crate::domain::wish::entities::WishQuoteInput,
+            crate::domain::wish::entities::WishDeadlineInput,
+            crate::domain::wish::entities::WishRejectInput,
+            crate::domain::wish::entities::WishFeedbackInput,
+            crate::api::wishes::routes::WishCloseInput,
+            // -- Errors --
+            crate::errors::CustomError,
+            // -- Wish Negotiation (心愿协商) --
+            crate::domain::wish::entities::WishNegotiationRecord,
+            crate::domain::wish::entities::WishOutWithNegotiations,
+            crate::domain::wish::entities::CursorPageWishList,
         )
     ),
     tags(
@@ -316,6 +394,7 @@ impl Modify for SecurityAddon {
         (name = "纪念日 (§24.9)", description = "组内纪念日管理"),
         (name = "足迹分组 (§24.10)", description = "足迹分组管理"),
         (name = "客服工单", description = "用户提交客服工单"),
+        (name = "客服工单 (§15.3)", description = "用户提交客服工单"),
         (name = "做客厨房", description = "做客系统"),
         (name = "订单", description = "订单创建与状态管理"),
         (name = "评分", description = "订单评分"),
@@ -327,6 +406,10 @@ impl Modify for SecurityAddon {
         (name = "通知", description = "系统通知"),
         (name = "文件上传（七牛直传）", description = "对象存储上传"),
         (name = "后台管理", description = "管理员功能"),
+        (name = "后台管理 - 双人组", description = "管理员修改双人组配置"),
+        (name = "后台管理 - 用户", description = "管理员修改用户资料"),
+        (name = "后台管理认证", description = "管理员登录"),
+        (name = "菜品审核 (§24.7)", description = "管理员菜品审核"),
         (name = "数据看板", description = "运营数据看板"),
         (name = "WebSocket", description = "实时通知")
     ),

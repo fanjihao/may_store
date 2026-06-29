@@ -44,6 +44,8 @@ pub enum BusinessRefType {
     Footprint,
     Checkin,
     Avatar,
+    /// 组/厨房公共头像（双人组的 avatar）
+    GroupAvatar,
 }
 
 impl BusinessRefType {
@@ -53,6 +55,7 @@ impl BusinessRefType {
             Self::Footprint => "footprint",
             Self::Checkin => "checkin",
             Self::Avatar => "avatar",
+            Self::GroupAvatar => "group_avatar",
         }
     }
 }

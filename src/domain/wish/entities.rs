@@ -66,7 +66,8 @@ pub struct WishRecord {
 
 /// 心愿协商记录
 #[allow(dead_code)]
-#[derive(Debug, Clone, FromRow)]
+#[derive(Debug, Clone, FromRow, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
 pub struct WishNegotiationRecord {
     pub id: i64,
     pub wish_id: i64,
@@ -231,4 +232,24 @@ pub struct WishQuery {
 pub struct WishCursor {
     pub created_at: DateTime<Utc>,
     pub wish_id: i64,
+}
+
+/// 心愿详情 + 协商历史（合并响应）
+#[allow(dead_code)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct WishOutWithNegotiations {
+    #[serde(flatten)]
+    pub wish: WishOut,
+    pub negotiations: Vec<WishNegotiationRecord>,
+}
+
+/// 心愿分页列表响应
+#[allow(dead_code)]
+#[derive(Debug, Clone, Serialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub struct CursorPageWishList {
+    pub wishes: Vec<WishOut>,
+    pub next_cursor: Option<String>,
+    pub has_more: bool,
 }

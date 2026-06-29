@@ -12,7 +12,7 @@ use sqlx::Type;
 ///                                           → EXPIRED
 ///   任意非终态 → 双方协商一致关闭 → CLOSED
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, ToSchema, Type, PartialEq, Eq)]
-#[sqlx(type_name = "wish_status_enum_v2", rename_all = "SCREAMING_SNAKE_CASE")]
+#[sqlx(type_name = "wish_status_enum", rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum WishStatus {
     /// 草稿 - 发起人创建草稿
     #[serde(rename = "DRAFT")]

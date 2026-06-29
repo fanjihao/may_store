@@ -399,6 +399,7 @@ CREATE TABLE association_groups (
     level INT NOT NULL DEFAULT 1,
     exp BIGINT NOT NULL DEFAULT 0,
     settings JSONB DEFAULT '{}',
+    group_avatar VARCHAR(512) DEFAULT 'https://store.impeter.fun/store_v2_icon/default-group-avatar.jpg',
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
@@ -417,6 +418,7 @@ COMMENT ON COLUMN association_groups.seller_user_id IS '当前Seller用户ID';
 COMMENT ON COLUMN association_groups.level IS '组等级';
 COMMENT ON COLUMN association_groups.exp IS '当前等级内经验';
 COMMENT ON COLUMN association_groups.settings IS '组配置JSON';
+COMMENT ON COLUMN association_groups.group_avatar IS '组头像 URL（NULL 则前端回退到占位图；新组自动使用默认头像 URL）';
 COMMENT ON COLUMN association_groups.created_at IS '创建时间';
 COMMENT ON COLUMN association_groups.updated_at IS '更新时间';
 CREATE INDEX idx_groups_buyer ON association_groups(buyer_user_id);

@@ -68,7 +68,8 @@ pub fn configure(cfg: &mut ServiceConfig) {
         web::resource("/api/groups/{group_id}")
             .guard(group_id_is_numeric())
             .route(web::get().to(get_group))
-            .route(web::post().to(swap_role)),
+            .route(web::post().to(swap_role))
+            .route(web::patch().to(update_group)),
     );
     // 重要: utoipa::path 标注是 /api/groups/{group_id}/swap-role
     // (前端 openapi 自动生成的代码按这个调),但历史上 swap_role 实际挂在
@@ -193,6 +194,14 @@ async fn create_group(
     .execute(&mut *tx)
     .await?;
 
+    // 同步更新 users.role 为 ORDERING, 保证前端 userInfo.role 立即反映
+    sqlx::query(
+        "UPDATE users SET role='ORDERING', last_role_switch_at=NOW() WHERE user_id=$1"
+    )
+    .bind(token.user_id)
+    .execute(&mut *tx)
+    .await?;
+
     tx.commit().await?;
 
     // 关键: 失效该用户的 UserPublic Redis 缓存,否则下一次请求 RequireGroup
@@ -252,7 +261,7 @@ async fn get_group(
     let group_row = sqlx::query(
         r#"SELECT g.group_id, g.group_name, g.group_type, g.status, g.invite_code, g.diamond,
                   g.footprint_capacity, g.footprint_count, g.created_at, g.updated_at,
-                  g.buyer_user_id, g.seller_user_id, g.level, g.exp, g.settings,
+                  g.buyer_user_id, g.seller_user_id, g.level, g.exp, g.settings, g.group_avatar,
                   buyer.nick_name as buyer_nick_name, buyer.avatar as buyer_avatar,
                   seller.nick_name as seller_nick_name, seller.avatar as seller_avatar
            FROM association_groups g
@@ -278,6 +287,7 @@ async fn get_group(
         seller_nick_name: row.get("seller_nick_name"),
         buyer_avatar: row.get("buyer_avatar"),
         seller_avatar: row.get("seller_avatar"),
+        group_avatar: row.get("group_avatar"),
         level: row.get::<Option<i32>, _>("level").unwrap_or(1),
         exp: row.get::<Option<i64>, _>("exp").unwrap_or(0),
         diamond: row.get::<i32, _>("diamond") as i64,
@@ -1140,6 +1150,14 @@ async fn join_group(
     .execute(&mut *tx)
     .await?;
 
+    // 同步更新 users.role 为 RECEIVING, 保证前端 userInfo.role 立即反映
+    sqlx::query(
+        "UPDATE users SET role='RECEIVING', last_role_switch_at=NOW() WHERE user_id=$1"
+    )
+    .bind(token.user_id)
+    .execute(&mut *tx)
+    .await?;
+
     tx.commit().await?;
     // DEBUG: 诊断日志
     log::info!("[join_group] SUCCESS user_id={} joined group_id={}", token.user_id, group_id);
@@ -1839,6 +1857,23 @@ pub fn validate_group_name(name: &str) -> Result<(), CustomError> {
     Ok(())
 }
 
+/// 校验组头像 URL：必须是 https:// 开头、非空、最长 512 字符
+///
+/// 与前端 upload-custom 上传组件返回的 Qiniu key 拼 BASE_URL 后的格式保持一致：
+/// `${BASE_URL}${key}`，BASE_URL 是 https:// 开头。
+pub fn validate_group_avatar_url(url: &str) -> Result<(), CustomError> {
+    if url.is_empty() {
+        return Err(CustomError::BadRequest("头像 URL 不能为空".into()));
+    }
+    if url.len() > 512 {
+        return Err(CustomError::BadRequest("头像 URL 过长（>512 字符）".into()));
+    }
+    if !url.starts_with("https://") {
+        return Err(CustomError::BadRequest("头像 URL 必须以 https:// 开头".into()));
+    }
+    Ok(())
+}
+
 /// 更新组名响应体
 #[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
@@ -1911,6 +1946,110 @@ pub async fn update_group_name(
     Ok(ApiResponse::success(UpdateGroupNameResponse {
         group_id,
         group_name: input.name,
+    }))
+}
+
+// ============== Group Generic Update (name + avatar_url) ==============
+
+/// 通用更新组信息请求：所有字段可选，None 跳过（局部更新）
+#[derive(Debug, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateGroupRequest {
+    /// 新组名（可选，1-10 位中英文/数字/下划线）
+    pub name: Option<String>,
+    /// 新头像 URL（可选，https:// 开头、最长 512 字符）
+    pub avatar_url: Option<String>,
+}
+
+/// 通用更新组信息响应：返回最新 group_name + group_avatar
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateGroupResponse {
+    pub group_id: i64,
+    pub group_name: Option<String>,
+    pub group_avatar: Option<String>,
+}
+
+/// 通用更新组信息
+/// PATCH /api/groups/{group_id}
+///
+/// 鉴权：当前用户必须是该 group 的 ACTIVE 成员
+/// 行为：所有字段都是 Option；至少传一个；None 跳过；只 UPDATE 提供的字段
+#[utoipa::path(
+    patch,
+    path = "/api/groups/{group_id}",
+    tag = "双人组",
+    params(("group_id" = i64, Path, description = "组ID")),
+    request_body = UpdateGroupRequest,
+    responses(
+        (status = 200, description = "更新成功", body = UpdateGroupResponse),
+        (status = 400, description = "参数错误或未提供任何字段"),
+        (status = 401, description = "未登录"),
+        (status = 403, description = "非组成员"),
+        (status = 404, description = "组不存在")
+    ),
+    security(("bearer_auth" = []))
+)]
+pub async fn update_group(
+    state: State<Arc<AppState>>,
+    token: UserToken,
+    path: Path<i64>,
+    body: Json<UpdateGroupRequest>,
+) -> Result<impl Responder, CustomError> {
+    let group_id = path.into_inner();
+    let input = body.into_inner();
+    let db = &state.db_pool;
+
+    // 至少提供一个字段
+    if input.name.is_none() && input.avatar_url.is_none() {
+        return Err(CustomError::BadRequest("至少需要修改一个字段".into()));
+    }
+
+    // 校验（如果提供了）
+    if let Some(ref n) = input.name {
+        validate_group_name(n)?;
+    }
+    if let Some(ref url) = input.avatar_url {
+        validate_group_avatar_url(url)?;
+    }
+
+    // 鉴权：必须是该组 ACTIVE 成员
+    let is_member: Option<(i64,)> = sqlx::query_as(
+        "SELECT user_id FROM association_group_members
+         WHERE group_id = $1 AND user_id = $2 AND member_status = 'ACTIVE'",
+    )
+    .bind(group_id)
+    .bind(token.user_id)
+    .fetch_optional(db)
+    .await?;
+    if is_member.is_none() {
+        return Err(CustomError::Forbidden("不是该组成员".into()));
+    }
+
+    // 局部更新：用 COALESCE 让 None 跳过
+    let updated: Option<(Option<String>, Option<String>)> = sqlx::query_as(
+        r#"UPDATE association_groups
+           SET group_name   = COALESCE($2, group_name),
+               group_avatar = COALESCE($3, group_avatar),
+               updated_at   = NOW()
+           WHERE group_id = $1
+           RETURNING group_name, group_avatar"#,
+    )
+    .bind(group_id)
+    .bind(&input.name)
+    .bind(&input.avatar_url)
+    .fetch_optional(db)
+    .await?;
+
+    let (new_name, new_avatar) = match updated {
+        Some(row) => row,
+        None => return Err(CustomError::NotFound("组不存在".into())),
+    };
+
+    Ok(ApiResponse::success(UpdateGroupResponse {
+        group_id,
+        group_name: new_name,
+        group_avatar: new_avatar,
     }))
 }
 
@@ -2091,5 +2230,31 @@ mod tests {
     #[test]
     fn validate_group_name_space() {
         assert!(validate_group_name("hi you").is_err());
+    }
+
+    #[test]
+    fn validate_group_avatar_url_ok() {
+        assert!(validate_group_avatar_url("https://cdn.example.com/group/abc.jpg").is_ok());
+    }
+
+    #[test]
+    fn validate_group_avatar_url_empty() {
+        assert!(validate_group_avatar_url("").is_err());
+    }
+
+    #[test]
+    fn validate_group_avatar_url_http() {
+        assert!(validate_group_avatar_url("http://insecure.example.com/x.jpg").is_err());
+    }
+
+    #[test]
+    fn validate_group_avatar_url_too_long() {
+        let long = format!("https://x.example.com/{}", "a".repeat(600));
+        assert!(validate_group_avatar_url(&long).is_err());
+    }
+
+    #[test]
+    fn validate_group_avatar_url_relative() {
+        assert!(validate_group_avatar_url("/local/path/img.jpg").is_err());
     }
 }

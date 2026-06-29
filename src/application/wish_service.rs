@@ -10,8 +10,9 @@ use crate::domain::event::{
     EventType, WishAgreementConfirmedPayload, WishFulfilledPayload, WishSelectedPayload,
 };
 use crate::domain::wish::{
-    WishCreateInput, WishDeadlineInput, WishFeedbackInput, WishFeedbackRecord, WishQuoteInput,
-    WishRecord, WishRejectInput, WishStatus, WishUpdateInput,
+    WishCreateInput, WishDeadlineInput, WishFeedbackInput, WishFeedbackRecord,
+    WishNegotiationRecord, WishQuoteInput, WishRecord, WishRejectInput, WishStatus,
+    WishUpdateInput,
 };
 use crate::errors::CustomError;
 use crate::infrastructure::event::publisher::EventPublisher;
@@ -26,9 +27,10 @@ impl WishService {
         user_id: i64,
         input: &WishCreateInput,
     ) -> Result<WishRecord, CustomError> {
+        // FSD v2 心愿商城: 创建即进入 NEGOTIATING，跳过 DRAFT，省去"邀请协商"步骤
         let rec = sqlx::query_as::<_, WishRecord>(
-            "INSERT INTO wishes (wish_name, wish_cost, created_by, group_id) \
-             VALUES ($1, $2, $3, $4) \
+            "INSERT INTO wishes (wish_name, wish_cost, status, created_by, group_id) \
+             VALUES ($1, $2, 'NEGOTIATING', $3, $4) \
              RETURNING wish_id, wish_name, wish_cost, status, created_by, group_id, claimed_by, claimed_at, claim_cost, created_at, updated_at"
         )
         .bind(&input.wish_name)
@@ -80,13 +82,14 @@ impl WishService {
         Ok((rows, total))
     }
 
-    /// 获取心愿详情
+    /// 获取心愿详情（包含协商历史）
     pub async fn get_wish(
         db: &PgPool,
         wish_id: i64,
-    ) -> Result<(WishRecord, Option<WishFeedbackRecord>), CustomError> {
+    ) -> Result<(WishRecord, Vec<WishNegotiationRecord>), CustomError> {
         let rec = sqlx::query_as::<_, WishRecord>(
-            "SELECT wish_id, wish_name, wish_cost, status, created_by, group_id, claimed_by, claimed_at, claim_cost, created_at, updated_at \
+            "SELECT wish_id, wish_name, wish_cost, status, created_by, group_id, \
+             claimed_by, claimed_at, claim_cost, created_at, updated_at \
              FROM wishes WHERE wish_id = $1"
         )
         .bind(wish_id)
@@ -94,15 +97,15 @@ impl WishService {
         .await?
         .ok_or_else(|| CustomError::NotFound("心愿不存在".into()))?;
 
-        let feedback = sqlx::query_as::<_, WishFeedbackRecord>(
-            "SELECT feedback_id, wish_id, user_id, content, images, created_at, updated_at \
-             FROM wish_feedbacks WHERE wish_id = $1",
+        let negotiations = sqlx::query_as::<_, WishNegotiationRecord>(
+            "SELECT id, wish_id, group_id, operator_id, operator_role_snapshot, action::text AS action, cost, deadline_hours, remark, created_at \
+             FROM wish_negotiations WHERE wish_id = $1 ORDER BY created_at ASC"
         )
         .bind(wish_id)
-        .fetch_optional(db)
+        .fetch_all(db)
         .await?;
 
-        Ok((rec, feedback))
+        Ok((rec, negotiations))
     }
 
     /// 更新心愿

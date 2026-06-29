@@ -122,6 +122,7 @@ pub struct ExpandCapacityRequest {
 
 /// 足迹列表查询参数 (FSD v2 10.2)
 #[derive(Debug, Deserialize, utoipa::IntoParams)]
+#[into_params(parameter_in = Query)]
 pub struct FootprintsQuery {
     pub cursor: Option<String>,
     pub limit: Option<i32>,
