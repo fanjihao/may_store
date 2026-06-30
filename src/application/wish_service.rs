@@ -523,6 +523,7 @@ impl WishService {
             .or(existing.initial_cost)
             .unwrap_or(existing.wish_cost);
 
+        // 1) 记录本次 ACCEPT —— 单边点同意永远 OK,只插一条 ACCEPT 流水
         sqlx::query(
             "INSERT INTO wish_negotiations (wish_id, group_id, operator_id, action, cost) VALUES ($1, $2, $3, 'ACCEPT', $4)"
         )
@@ -533,7 +534,7 @@ impl WishService {
         .execute(db)
         .await?;
 
-        // FSD §7.6：双方必须都确认才能进入 CREATED
+        // 2) 取「双方都 ACCEPT」的最新状态
         let requester_id = existing.requester_id.unwrap_or(existing.created_by);
         let fulfiller_id = existing.fulfiller_id.unwrap_or(0);
 
@@ -547,11 +548,23 @@ impl WishService {
         for r in confirmed_rows {
             confirmed_set.insert(r.get::<i64, _>("operator_id"));
         }
+
+        // 3) 只有双方都 ACCEPT 才把 wish 推进到 CREATED;
+        //    单边 ACCEPT 时 wish 留在 NEGOTIATING 等对方,不报错。
         if !confirmed_set.contains(&requester_id) || !confirmed_set.contains(&fulfiller_id) {
-            return Err(CustomError::agreement_not_mutual(
-                "需双方均确认后才能进入心愿池",
-            ));
+            // 把当前 wish 记录返回,让前端可以刷新「我的同意/对方是否同意」状态
+            let rec = sqlx::query_as::<_, WishRecord>(
+                "SELECT wish_id, wish_name, wish_cost, status, created_by, group_id, claimed_by, claimed_at, claim_cost, created_at, updated_at, \
+                 requester_id, fulfiller_id, initial_cost, final_cost, fulfillment_deadline_hours \
+                 FROM wishes WHERE wish_id = $1"
+            )
+            .bind(wish_id)
+            .fetch_one(db)
+            .await?;
+            return Ok(rec);
         }
+
+        // 4) 双方都 ACCEPT → 进 CREATED,wish_cost 同步为 final_cost
 
         let rec = sqlx::query_as::<_, WishRecord>(
             "UPDATE wishes SET status = 'CREATED', wish_cost = $2, updated_at = NOW() WHERE wish_id = $1 \
