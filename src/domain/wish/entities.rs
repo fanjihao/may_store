@@ -195,6 +195,12 @@ pub struct WishOut {
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
     pub feedback: Option<WishFeedbackOut>,
+    /// 协商双方:创建人(也是请求人/出积分的人)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub requester_id: Option<i64>,
+    /// 协商双方:履约人
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fulfiller_id: Option<i64>,
 }
 
 impl WishOut {
@@ -212,6 +218,8 @@ impl WishOut {
             created_at: r.created_at,
             updated_at: r.updated_at,
             feedback: f.map(WishFeedbackOut::from),
+            requester_id: r.requester_id,
+            fulfiller_id: r.fulfiller_id,
         }
     }
 }
