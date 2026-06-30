@@ -250,7 +250,7 @@ pub async fn list_group_wishes(
                 "fulfiller_id"
             };
             let sql = format!(
-                r#"SELECT w.wish_id, w.wish_name, w.final_cost, w.fulfillment_deadline_hours,
+                r#"SELECT w.wish_id, w.wish_name, w.wish_cost, w.fulfillment_deadline_hours,
                           w.status::text AS status, w.requester_id, w.fulfiller_id, w.selected_by, w.selected_at,
                           w.fulfillment_due_at, w.created_at,
                           u1.nick_name as requester_nickname,
@@ -282,7 +282,7 @@ pub async fn list_group_wishes(
                 "fulfiller_id"
             };
             let sql = format!(
-                r#"SELECT w.wish_id, w.wish_name, w.final_cost, w.fulfillment_deadline_hours,
+                r#"SELECT w.wish_id, w.wish_name, w.wish_cost, w.fulfillment_deadline_hours,
                           w.status::text AS status, w.requester_id, w.fulfiller_id, w.selected_by, w.selected_at,
                           w.fulfillment_due_at, w.created_at,
                           u1.nick_name as requester_nickname,
@@ -307,7 +307,7 @@ pub async fn list_group_wishes(
         }
         (Some(_sc), Some(s), None, Some(c)) => {
             sqlx::query(
-                r#"SELECT w.wish_id, w.wish_name, w.final_cost, w.fulfillment_deadline_hours,
+                r#"SELECT w.wish_id, w.wish_name, w.wish_cost, w.fulfillment_deadline_hours,
                       w.status::text AS status, w.requester_id, w.fulfiller_id, w.selected_by, w.selected_at,
                       w.fulfillment_due_at, w.created_at,
                       u1.nick_name as requester_nickname,
@@ -331,7 +331,7 @@ pub async fn list_group_wishes(
         }
         (Some(_sc), Some(s), None, None) => {
             sqlx::query(
-                r#"SELECT w.wish_id, w.wish_name, w.final_cost, w.fulfillment_deadline_hours,
+                r#"SELECT w.wish_id, w.wish_name, w.wish_cost, w.fulfillment_deadline_hours,
                       w.status::text AS status, w.requester_id, w.fulfiller_id, w.selected_by, w.selected_at,
                       w.fulfillment_due_at, w.created_at,
                       u1.nick_name as requester_nickname,
@@ -358,7 +358,7 @@ pub async fn list_group_wishes(
                 "fulfiller_id"
             };
             let sql = format!(
-                r#"SELECT w.wish_id, w.wish_name, w.final_cost, w.fulfillment_deadline_hours,
+                r#"SELECT w.wish_id, w.wish_name, w.wish_cost, w.fulfillment_deadline_hours,
                           w.status::text AS status, w.requester_id, w.fulfiller_id, w.selected_by, w.selected_at,
                           w.fulfillment_due_at, w.created_at,
                           u1.nick_name as requester_nickname,
@@ -389,7 +389,7 @@ pub async fn list_group_wishes(
                 "fulfiller_id"
             };
             let sql = format!(
-                r#"SELECT w.wish_id, w.wish_name, w.final_cost, w.fulfillment_deadline_hours,
+                r#"SELECT w.wish_id, w.wish_name, w.wish_cost, w.fulfillment_deadline_hours,
                           w.status::text AS status, w.requester_id, w.fulfiller_id, w.selected_by, w.selected_at,
                           w.fulfillment_due_at, w.created_at,
                           u1.nick_name as requester_nickname,
@@ -413,7 +413,7 @@ pub async fn list_group_wishes(
         }
         (Some(_sc), None, None, Some(c)) => {
             sqlx::query(
-                r#"SELECT w.wish_id, w.wish_name, w.final_cost, w.fulfillment_deadline_hours,
+                r#"SELECT w.wish_id, w.wish_name, w.wish_cost, w.fulfillment_deadline_hours,
                       w.status::text AS status, w.requester_id, w.fulfiller_id, w.selected_by, w.selected_at,
                       w.fulfillment_due_at, w.created_at,
                       u1.nick_name as requester_nickname,
@@ -436,7 +436,7 @@ pub async fn list_group_wishes(
         }
         (Some(_sc), None, None, None) => {
             sqlx::query(
-                r#"SELECT w.wish_id, w.wish_name, w.final_cost, w.fulfillment_deadline_hours,
+                r#"SELECT w.wish_id, w.wish_name, w.wish_cost, w.fulfillment_deadline_hours,
                       w.status::text AS status, w.requester_id, w.fulfiller_id, w.selected_by, w.selected_at,
                       w.fulfillment_due_at, w.created_at,
                       u1.nick_name as requester_nickname,
@@ -463,7 +463,7 @@ pub async fn list_group_wishes(
                 "fulfiller_id"
             };
             let sql = format!(
-                r#"SELECT w.wish_id, w.wish_name, w.final_cost, w.fulfillment_deadline_hours,
+                r#"SELECT w.wish_id, w.wish_name, w.wish_cost, w.fulfillment_deadline_hours,
                           w.status::text AS status, w.requester_id, w.fulfiller_id, w.selected_by, w.selected_at,
                           w.fulfillment_due_at, w.created_at,
                           u1.nick_name as requester_nickname,
@@ -492,7 +492,7 @@ pub async fn list_group_wishes(
                 "fulfiller_id"
             };
             let sql = format!(
-                r#"SELECT w.wish_id, w.wish_name, w.final_cost, w.fulfillment_deadline_hours,
+                r#"SELECT w.wish_id, w.wish_name, w.wish_cost, w.fulfillment_deadline_hours,
                           w.status::text AS status, w.requester_id, w.fulfiller_id, w.selected_by, w.selected_at,
                           w.fulfillment_due_at, w.created_at,
                           u1.nick_name as requester_nickname,
@@ -515,7 +515,7 @@ pub async fn list_group_wishes(
         }
         (None, Some(s), None, Some(c)) => {
             sqlx::query(
-                r#"SELECT w.wish_id, w.wish_name, w.final_cost, w.fulfillment_deadline_hours,
+                r#"SELECT w.wish_id, w.wish_name, w.wish_cost, w.fulfillment_deadline_hours,
                       w.status::text AS status, w.requester_id, w.fulfiller_id, w.selected_by, w.selected_at,
                       w.fulfillment_due_at, w.created_at,
                       u1.nick_name as requester_nickname,
@@ -536,7 +536,7 @@ pub async fn list_group_wishes(
         }
         (None, Some(s), None, None) => {
             sqlx::query(
-                r#"SELECT w.wish_id, w.wish_name, w.final_cost, w.fulfillment_deadline_hours,
+                r#"SELECT w.wish_id, w.wish_name, w.wish_cost, w.fulfillment_deadline_hours,
                       w.status::text AS status, w.requester_id, w.fulfiller_id, w.selected_by, w.selected_at,
                       w.fulfillment_due_at, w.created_at,
                       u1.nick_name as requester_nickname,
@@ -561,7 +561,7 @@ pub async fn list_group_wishes(
                 "fulfiller_id"
             };
             let sql = format!(
-                r#"SELECT w.wish_id, w.wish_name, w.final_cost, w.fulfillment_deadline_hours,
+                r#"SELECT w.wish_id, w.wish_name, w.wish_cost, w.fulfillment_deadline_hours,
                           w.status::text AS status, w.requester_id, w.fulfiller_id, w.selected_by, w.selected_at,
                           w.fulfillment_due_at, w.created_at,
                           u1.nick_name as requester_nickname,
@@ -589,7 +589,7 @@ pub async fn list_group_wishes(
                 "fulfiller_id"
             };
             let sql = format!(
-                r#"SELECT w.wish_id, w.wish_name, w.final_cost, w.fulfillment_deadline_hours,
+                r#"SELECT w.wish_id, w.wish_name, w.wish_cost, w.fulfillment_deadline_hours,
                           w.status::text AS status, w.requester_id, w.fulfiller_id, w.selected_by, w.selected_at,
                           w.fulfillment_due_at, w.created_at,
                           u1.nick_name as requester_nickname,
@@ -611,7 +611,7 @@ pub async fn list_group_wishes(
         }
         (None, None, None, Some(c)) => {
             sqlx::query(
-                r#"SELECT w.wish_id, w.wish_name, w.final_cost, w.fulfillment_deadline_hours,
+                r#"SELECT w.wish_id, w.wish_name, w.wish_cost, w.fulfillment_deadline_hours,
                       w.status::text AS status, w.requester_id, w.fulfiller_id, w.selected_by, w.selected_at,
                       w.fulfillment_due_at, w.created_at,
                       u1.nick_name as requester_nickname,
@@ -631,7 +631,7 @@ pub async fn list_group_wishes(
         }
         (None, None, None, None) => {
             sqlx::query(
-                r#"SELECT w.wish_id, w.wish_name, w.final_cost, w.fulfillment_deadline_hours,
+                r#"SELECT w.wish_id, w.wish_name, w.wish_cost, w.fulfillment_deadline_hours,
                       w.status::text AS status, w.requester_id, w.fulfiller_id, w.selected_by, w.selected_at,
                       w.fulfillment_due_at, w.created_at,
                       u1.nick_name as requester_nickname,
@@ -656,9 +656,8 @@ pub async fn list_group_wishes(
         .iter()
         .take(limit as usize)
         .map(|r| {
-            // SQL 返回的 final_cost 兼容 wish_cost（前者是 FSD v2，后者是旧字段名）
-            let final_cost: Option<i32> = r.get::<Option<i32>, _>("final_cost");
-            let wish_cost = final_cost.unwrap_or(0);
+            // wish_cost 始终非 NULL（创建时必填,CREATED 后被 confirm_agreement 同步成 final_cost）
+            let wish_cost: i32 = r.get::<i32, _>("wish_cost");
             let status_str: String = r.get::<String, _>("status");
             let status = match status_str.as_str() {
                 "DRAFT" => WishStatus::Draft,
