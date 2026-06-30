@@ -390,6 +390,23 @@ async fn swap_role(
         return Err(CustomError::role_swap_blocked_by_order("存在未完结订单，禁止互换"));
     }
 
+    // 协商中的心愿(DRAFT/NEGOTIATING)不允许切换 role：
+    //   协商中的双方关系绑定在 (requester_id, fulfiller_id) 上,
+    //   切换 role 会让 buyer/seller 颠倒,导致已有的心愿双方关系错乱。
+    //   强制让用户先把当前协商的心愿处理完(同意/拒绝)再切。
+    let negotiating_wishes: i64 = sqlx::query_scalar::<_, i64>(
+        r#"SELECT COUNT(*) FROM wishes
+           WHERE group_id = $1 AND status IN ('DRAFT', 'NEGOTIATING')"#,
+    )
+    .bind(gid)
+    .fetch_one(&mut *tx)
+    .await?;
+    if negotiating_wishes > 0 {
+        return Err(CustomError::role_swap_blocked_by_wish(
+            "存在协商中的心愿，请先处理（同意或拒绝）后再切换角色",
+        ));
+    }
+
     // 检查操作人是否有 CLAIMED 状态的在途心愿（除非 swap_ignore_ongoing_wish=true）
     if !swap_ignore_wish {
         let pending_wishes: i64 = sqlx::query_scalar::<_, i64>(
