@@ -14,7 +14,7 @@ mod config;
 mod errors;
 mod middlewares;
 mod models;
-mod openapi;
+pub mod openapi;
 mod utils;
 
 use dotenvy::dotenv;
@@ -30,6 +30,14 @@ use middlewares::logger::init_logger;
 #[ntex::main]
 async fn main() -> Result<(), CustomError> {
     dotenv().ok();
+
+    // EXPORT_OPENAPI=1 模式:打印 OpenAPI JSON 到 stdout 后立即退出
+    // 用于前端 api:sync 流程,避免启动完整 HTTP 服务
+    if std::env::var("EXPORT_OPENAPI").as_deref() == Ok("1") {
+        // openapi 模块在下面才声明,这里通过绝对路径引用
+        println!("{}", crate::openapi::openapi_json());
+        return Ok(());
+    }
 
     // 初始化日志
     init_logger();

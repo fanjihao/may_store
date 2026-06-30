@@ -252,6 +252,22 @@ pub struct WishOutWithNegotiations {
     pub negotiations: Vec<WishNegotiationRecord>,
 }
 
+/// 心愿分状态计数 - 与列表查询过滤条件保持一致
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct WishStatusCounts {
+    /// 协商中:DRAFT + NEGOTIATING
+    pub negotiating: i64,
+    /// 可解锁:CREATED(双方已确认、等待被领取)
+    pub unlocked: i64,
+    /// 履约中:CLAIMED
+    pub claimed: i64,
+    /// 已完成:FINISHED
+    pub finished: i64,
+    /// 已关闭:EXPIRED + CLOSED
+    pub closed: i64,
+}
+
 /// 心愿分页列表响应
 #[allow(dead_code)]
 #[derive(Debug, Clone, Serialize, ToSchema)]
@@ -260,4 +276,8 @@ pub struct CursorPageWishList {
     pub wishes: Vec<WishOut>,
     pub next_cursor: Option<String>,
     pub has_more: bool,
+    /// 符合条件的总数量(不含分页限制)
+    pub total: i64,
+    /// 分状态计数 - 与列表查询过滤条件一致
+    pub counts: WishStatusCounts,
 }
