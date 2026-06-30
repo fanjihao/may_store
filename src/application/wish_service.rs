@@ -533,8 +533,7 @@ impl WishService {
         .execute(db)
         .await?;
 
-        // 心愿商城 1v1 模型:创建方(REQUESTER)创建即隐式同意初始 cost,
-        // 履约方(FULFILLER)显式 ACCEPT 即满足。所以这里只校验履约方 ACCEPT。
+        // FSD §7.6：双方必须都确认才能进入 CREATED
         let requester_id = existing.requester_id.unwrap_or(existing.created_by);
         let fulfiller_id = existing.fulfiller_id.unwrap_or(0);
 
@@ -548,31 +547,10 @@ impl WishService {
         for r in confirmed_rows {
             confirmed_set.insert(r.get::<i64, _>("operator_id"));
         }
-        // 履约方 ACCEPT 即可（创建方 = 隐式 ACCEPT）
-        if !confirmed_set.contains(&fulfiller_id) {
+        if !confirmed_set.contains(&requester_id) || !confirmed_set.contains(&fulfiller_id) {
             return Err(CustomError::agreement_not_mutual(
-                "需要履约方确认后才能进入心愿池",
+                "需双方均确认后才能进入心愿池",
             ));
-        }
-        // 安全: 调 confirm_agreement 的人必须是履约方,不能是创建方乱点
-        if user_id != fulfiller_id {
-            return Err(CustomError::Forbidden(
-                "只有履约方可以确认心愿".into(),
-            ));
-        }
-        // 履约方成功 ACCEPT 后,后端补一条创建方的隐式 ACCEPT 记录,
-        // 让后续 FSD §7.6 的「双方都确认」语义对历史查询/审计仍然可追溯
-        if !confirmed_set.contains(&requester_id) {
-            sqlx::query(
-                "INSERT INTO wish_negotiations (wish_id, group_id, operator_id, action, cost, remark) \
-                 VALUES ($1, $2, $3, 'ACCEPT', $4, 'IMPLICIT_ACCEPT_ON_CREATE')"
-            )
-            .bind(wish_id)
-            .bind(existing.group_id)
-            .bind(requester_id)
-            .bind(existing.wish_cost)
-            .execute(db)
-            .await?;
         }
 
         let rec = sqlx::query_as::<_, WishRecord>(
