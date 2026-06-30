@@ -28,15 +28,52 @@ impl WishService {
         input: &WishCreateInput,
     ) -> Result<WishRecord, CustomError> {
         // FSD v2 心愿商城: 创建即进入 NEGOTIATING，跳过 DRAFT，省去"邀请协商"步骤
+        //
+        // 创建时自动把组内另一成员设为 fulfiller_id(1v1 模型),
+        // 创建人自己 = requester_id。这样后续 confirm_agreement 的
+        // 「双方都确认」校验、select_wish 的「请求人/履约人」语义、
+        // 以及 list_group_wishes JOIN users u1/u2 都不会因 NULL 而漏数据。
+
+        // 1. 找组内另一名 ACTIVE 成员 → 自动设为 fulfiller
+        let other_id: Option<i64> = sqlx::query_scalar(
+            "SELECT user_id FROM association_group_members \
+             WHERE group_id = $1 AND user_id != $2 AND member_status = 'ACTIVE' \
+             LIMIT 1",
+        )
+        .bind(input.group_id)
+        .bind(user_id)
+        .fetch_optional(db)
+        .await?;
+        let fulfiller_id = other_id.ok_or_else(|| {
+            CustomError::BadRequest("组内需要至少 2 名成员才能创建心愿".into())
+        })?;
+
+        // 2. 同组同时只能有 1 条 DRAFT/NEGOTIATING 状态的心愿
+        let existing_count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM wishes \
+             WHERE group_id = $1 AND status IN ('DRAFT', 'NEGOTIATING')",
+        )
+        .bind(input.group_id)
+        .fetch_one(db)
+        .await?;
+        if existing_count > 0 {
+            return Err(CustomError::BadRequest(
+                "本组已存在协商中的心愿，请先处理后再创建".into(),
+            ));
+        }
+
+        // 3. 创建心愿,requester_id = 创建人,fulfiller_id = 另一成员
         let rec = sqlx::query_as::<_, WishRecord>(
-            "INSERT INTO wishes (wish_name, wish_cost, status, created_by, group_id) \
-             VALUES ($1, $2, 'NEGOTIATING', $3, $4) \
-             RETURNING wish_id, wish_name, wish_cost, status, created_by, group_id, claimed_by, claimed_at, claim_cost, created_at, updated_at"
+            "INSERT INTO wishes (wish_name, wish_cost, status, created_by, group_id, requester_id, fulfiller_id) \
+             VALUES ($1, $2, 'NEGOTIATING', $3, $4, $3, $5) \
+             RETURNING wish_id, wish_name, wish_cost, status, created_by, group_id, claimed_by, claimed_at, claim_cost, created_at, updated_at, \
+             requester_id, fulfiller_id, initial_cost, final_cost, fulfillment_deadline_hours"
         )
         .bind(&input.wish_name)
         .bind(input.wish_cost)
         .bind(user_id as i64)
         .bind(input.group_id)
+        .bind(fulfiller_id)
         .fetch_one(db)
         .await?;
 
