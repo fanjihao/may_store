@@ -256,8 +256,8 @@ pub async fn list_group_wishes(
                           u1.nick_name as requester_nickname,
                           u2.nick_name as fulfiller_nickname
                    FROM wishes w
-                   JOIN users u1 ON u1.user_id = w.requester_id
-                   JOIN users u2 ON u2.user_id = w.fulfiller_id
+                   LEFT JOIN users u1 ON u1.user_id = w.requester_id
+                   LEFT JOIN users u2 ON u2.user_id = w.fulfiller_id
                    WHERE w.group_id = $1 AND w.status = $2::wish_status_enum AND w.{} = $3
                      AND (w.created_by = $4 OR w.fulfiller_id = $4)
                      AND w.created_at < $5
@@ -288,8 +288,8 @@ pub async fn list_group_wishes(
                           u1.nick_name as requester_nickname,
                           u2.nick_name as fulfiller_nickname
                    FROM wishes w
-                   JOIN users u1 ON u1.user_id = w.requester_id
-                   JOIN users u2 ON u2.user_id = w.fulfiller_id
+                   LEFT JOIN users u1 ON u1.user_id = w.requester_id
+                   LEFT JOIN users u2 ON u2.user_id = w.fulfiller_id
                    WHERE w.group_id = $1 AND w.status = $2::wish_status_enum AND w.{} = $3
                      AND (w.created_by = $4 OR w.fulfiller_id = $4)
                    ORDER BY w.created_at DESC
@@ -313,8 +313,8 @@ pub async fn list_group_wishes(
                       u1.nick_name as requester_nickname,
                       u2.nick_name as fulfiller_nickname
                FROM wishes w
-               JOIN users u1 ON u1.user_id = w.requester_id
-               JOIN users u2 ON u2.user_id = w.fulfiller_id
+               LEFT JOIN users u1 ON u1.user_id = w.requester_id
+               LEFT JOIN users u2 ON u2.user_id = w.fulfiller_id
                WHERE w.group_id = $1 AND w.status = $2::wish_status_enum
                  AND (w.created_by = $3 OR w.fulfiller_id = $3)
                  AND w.created_at < $4
@@ -337,8 +337,8 @@ pub async fn list_group_wishes(
                       u1.nick_name as requester_nickname,
                       u2.nick_name as fulfiller_nickname
                FROM wishes w
-               JOIN users u1 ON u1.user_id = w.requester_id
-               JOIN users u2 ON u2.user_id = w.fulfiller_id
+               LEFT JOIN users u1 ON u1.user_id = w.requester_id
+               LEFT JOIN users u2 ON u2.user_id = w.fulfiller_id
                WHERE w.group_id = $1 AND w.status = $2::wish_status_enum
                  AND (w.created_by = $3 OR w.fulfiller_id = $3)
                ORDER BY w.created_at DESC
@@ -364,8 +364,8 @@ pub async fn list_group_wishes(
                           u1.nick_name as requester_nickname,
                           u2.nick_name as fulfiller_nickname
                    FROM wishes w
-                   JOIN users u1 ON u1.user_id = w.requester_id
-                   JOIN users u2 ON u2.user_id = w.fulfiller_id
+                   LEFT JOIN users u1 ON u1.user_id = w.requester_id
+                   LEFT JOIN users u2 ON u2.user_id = w.fulfiller_id
                    WHERE w.group_id = $1 AND w.{} = $2
                      AND (w.created_by = $3 OR w.fulfiller_id = $3)
                      AND w.created_at < $4
@@ -395,8 +395,8 @@ pub async fn list_group_wishes(
                           u1.nick_name as requester_nickname,
                           u2.nick_name as fulfiller_nickname
                    FROM wishes w
-                   JOIN users u1 ON u1.user_id = w.requester_id
-                   JOIN users u2 ON u2.user_id = w.fulfiller_id
+                   LEFT JOIN users u1 ON u1.user_id = w.requester_id
+                   LEFT JOIN users u2 ON u2.user_id = w.fulfiller_id
                    WHERE w.group_id = $1 AND w.{} = $2
                      AND (w.created_by = $3 OR w.fulfiller_id = $3)
                    ORDER BY w.created_at DESC
@@ -419,8 +419,8 @@ pub async fn list_group_wishes(
                       u1.nick_name as requester_nickname,
                       u2.nick_name as fulfiller_nickname
                FROM wishes w
-               JOIN users u1 ON u1.user_id = w.requester_id
-               JOIN users u2 ON u2.user_id = w.fulfiller_id
+               LEFT JOIN users u1 ON u1.user_id = w.requester_id
+               LEFT JOIN users u2 ON u2.user_id = w.fulfiller_id
                WHERE w.group_id = $1
                  AND (w.created_by = $2 OR w.fulfiller_id = $2)
                  AND w.created_at < $3
@@ -442,8 +442,8 @@ pub async fn list_group_wishes(
                       u1.nick_name as requester_nickname,
                       u2.nick_name as fulfiller_nickname
                FROM wishes w
-               JOIN users u1 ON u1.user_id = w.requester_id
-               JOIN users u2 ON u2.user_id = w.fulfiller_id
+               LEFT JOIN users u1 ON u1.user_id = w.requester_id
+               LEFT JOIN users u2 ON u2.user_id = w.fulfiller_id
                WHERE w.group_id = $1
                  AND (w.created_by = $2 OR w.fulfiller_id = $2)
                ORDER BY w.created_at DESC
@@ -469,8 +469,8 @@ pub async fn list_group_wishes(
                           u1.nick_name as requester_nickname,
                           u2.nick_name as fulfiller_nickname
                    FROM wishes w
-                   JOIN users u1 ON u1.user_id = w.requester_id
-                   JOIN users u2 ON u2.user_id = w.fulfiller_id
+                   LEFT JOIN users u1 ON u1.user_id = w.requester_id
+                   LEFT JOIN users u2 ON u2.user_id = w.fulfiller_id
                    WHERE w.group_id = $1 AND w.status = $2::wish_status_enum AND w.{} = $3 AND w.created_at < $4
                    ORDER BY w.created_at DESC
                    LIMIT $5"#,
@@ -498,8 +498,8 @@ pub async fn list_group_wishes(
                           u1.nick_name as requester_nickname,
                           u2.nick_name as fulfiller_nickname
                    FROM wishes w
-                   JOIN users u1 ON u1.user_id = w.requester_id
-                   JOIN users u2 ON u2.user_id = w.fulfiller_id
+                   LEFT JOIN users u1 ON u1.user_id = w.requester_id
+                   LEFT JOIN users u2 ON u2.user_id = w.fulfiller_id
                    WHERE w.group_id = $1 AND w.status = $2::wish_status_enum AND w.{} = $3
                    ORDER BY w.created_at DESC
                    LIMIT $4"#,
@@ -521,8 +521,8 @@ pub async fn list_group_wishes(
                       u1.nick_name as requester_nickname,
                       u2.nick_name as fulfiller_nickname
                FROM wishes w
-               JOIN users u1 ON u1.user_id = w.requester_id
-               JOIN users u2 ON u2.user_id = w.fulfiller_id
+               LEFT JOIN users u1 ON u1.user_id = w.requester_id
+               LEFT JOIN users u2 ON u2.user_id = w.fulfiller_id
                WHERE w.group_id = $1 AND w.status = $2::wish_status_enum AND w.created_at < $3
                ORDER BY w.created_at DESC
                LIMIT $4"#,
@@ -542,8 +542,8 @@ pub async fn list_group_wishes(
                       u1.nick_name as requester_nickname,
                       u2.nick_name as fulfiller_nickname
                FROM wishes w
-               JOIN users u1 ON u1.user_id = w.requester_id
-               JOIN users u2 ON u2.user_id = w.fulfiller_id
+               LEFT JOIN users u1 ON u1.user_id = w.requester_id
+               LEFT JOIN users u2 ON u2.user_id = w.fulfiller_id
                WHERE w.group_id = $1 AND w.status = $2::wish_status_enum
                ORDER BY w.created_at DESC
                LIMIT $3"#,
@@ -567,8 +567,8 @@ pub async fn list_group_wishes(
                           u1.nick_name as requester_nickname,
                           u2.nick_name as fulfiller_nickname
                    FROM wishes w
-                   JOIN users u1 ON u1.user_id = w.requester_id
-                   JOIN users u2 ON u2.user_id = w.fulfiller_id
+                   LEFT JOIN users u1 ON u1.user_id = w.requester_id
+                   LEFT JOIN users u2 ON u2.user_id = w.fulfiller_id
                    WHERE w.group_id = $1 AND w.{} = $2 AND w.created_at < $3
                    ORDER BY w.created_at DESC
                    LIMIT $4"#,
@@ -595,8 +595,8 @@ pub async fn list_group_wishes(
                           u1.nick_name as requester_nickname,
                           u2.nick_name as fulfiller_nickname
                    FROM wishes w
-               JOIN users u1 ON u1.user_id = w.requester_id
-                   JOIN users u2 ON u2.user_id = w.fulfiller_id
+               LEFT JOIN users u1 ON u1.user_id = w.requester_id
+                   LEFT JOIN users u2 ON u2.user_id = w.fulfiller_id
                    WHERE w.group_id = $1 AND w.{} = $2
                    ORDER BY w.created_at DESC
                    LIMIT $3"#,
@@ -617,8 +617,8 @@ pub async fn list_group_wishes(
                       u1.nick_name as requester_nickname,
                       u2.nick_name as fulfiller_nickname
                FROM wishes w
-               JOIN users u1 ON u1.user_id = w.requester_id
-               JOIN users u2 ON u2.user_id = w.fulfiller_id
+               LEFT JOIN users u1 ON u1.user_id = w.requester_id
+               LEFT JOIN users u2 ON u2.user_id = w.fulfiller_id
                WHERE w.group_id = $1 AND w.created_at < $2
                ORDER BY w.created_at DESC
                LIMIT $3"#,
@@ -637,8 +637,8 @@ pub async fn list_group_wishes(
                       u1.nick_name as requester_nickname,
                       u2.nick_name as fulfiller_nickname
                FROM wishes w
-               JOIN users u1 ON u1.user_id = w.requester_id
-               JOIN users u2 ON u2.user_id = w.fulfiller_id
+               LEFT JOIN users u1 ON u1.user_id = w.requester_id
+               LEFT JOIN users u2 ON u2.user_id = w.fulfiller_id
                WHERE w.group_id = $1
                ORDER BY w.created_at DESC
                LIMIT $2"#,
