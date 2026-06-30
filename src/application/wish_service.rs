@@ -662,6 +662,15 @@ impl WishService {
             return Err(CustomError::BadRequest("心愿已被选择".into()));
         }
 
+        // 心愿商城模型:心愿的「实现」由履约方线下满足,
+        // 兑换心愿(出积分)的只能是创建方(requester_id),不能是履约方乱兑
+        let requester_id = existing.requester_id.unwrap_or(existing.created_by);
+        if user_id != requester_id {
+            return Err(CustomError::Forbidden(
+                "只有心愿创建方可以兑换".into(),
+            ));
+        }
+
         let points_cost = existing.final_cost.unwrap_or(existing.wish_cost);
 
         // 获取用户可用积分
