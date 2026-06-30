@@ -6,17 +6,14 @@ use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 use sqlx::Type;
 
-/// 心愿状态枚举 - FSD定义7状态
+/// 心愿状态枚举 - 6状态模型(DRAFT 已删除,创建直接进入 NEGOTIATING)
 /// 状态机:
-///   DRAFT → NEGOTIATING → CREATED → CLAIMED → FINISHED
-///                                           → EXPIRED
-///   任意非终态 → 双方协商一致关闭 → CLOSED
+///   NEGOTIATING → CREATED → CLAIMED → FINISHED
+///                                     → EXPIRED
+///   任意非终态 → CLOSED
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, ToSchema, Type, PartialEq, Eq)]
 #[sqlx(type_name = "wish_status_enum", rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum WishStatus {
-    /// 草稿 - 发起人创建草稿
-    #[serde(rename = "DRAFT")]
-    Draft,
     /// 协商中 - 双方协商积分价格和履约期限
     #[serde(rename = "NEGOTIATING")]
     Negotiating,
@@ -79,8 +76,6 @@ impl WishStatus {
     pub fn can_transition(self, to: WishStatus) -> bool {
         use WishStatus::*;
         match (self, to) {
-            // DRAFT: 可进入NEGOTIATING或CLOSED
-            (Draft, Negotiating | Closed) => true,
             // NEGOTIATING: 可进入CREATED(双方确认)或CLOSED
             (Negotiating, Created | Closed) => true,
             // CREATED: 可进入CLAIMED(选择)或CLOSED
@@ -107,6 +102,6 @@ impl WishStatus {
 
     /// 判断是否为可协商状态
     pub fn is_negotiable(self) -> bool {
-        matches!(self, WishStatus::Draft | WishStatus::Negotiating)
+        matches!(self, WishStatus::Negotiating)
     }
 }

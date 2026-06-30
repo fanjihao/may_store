@@ -201,6 +201,23 @@ pub struct WishOut {
     /// 协商双方:履约人
     #[serde(skip_serializing_if = "Option::is_none")]
     pub fulfiller_id: Option<i64>,
+    /// 协商状态(仅 confirm_agreement 单边响应时填充)
+    /// - 我是否已同意
+    /// - 对方是否已同意
+    /// - 等待谁同意(REQUESTER / FULFILLER / null=都已同意)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub negotiation_status: Option<WishNegotiationStatus>,
+}
+
+/// 协商状态 - confirm_agreement 单边响应时使用
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct WishNegotiationStatus {
+    pub i_accepted: bool,
+    pub they_accepted: bool,
+    /// REQUESTER / FULFILLER - 还差谁的同意
+    pub awaiting_party: Option<String>,
+    pub agreed: bool,
 }
 
 impl WishOut {
@@ -220,6 +237,7 @@ impl WishOut {
             feedback: f.map(WishFeedbackOut::from),
             requester_id: r.requester_id,
             fulfiller_id: r.fulfiller_id,
+            negotiation_status: None,
         }
     }
 }

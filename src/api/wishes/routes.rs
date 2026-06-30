@@ -207,7 +207,7 @@ pub async fn list_group_wishes(
         Some(s)
             if matches!(
                 s,
-                "DRAFT" | "NEGOTIATING" | "CREATED" | "CLAIMED" | "FINISHED" | "EXPIRED" | "CLOSED"
+                "NEGOTIATING" | "CREATED" | "CLAIMED" | "FINISHED" | "EXPIRED" | "CLOSED"
             ) =>
         {
             Some(s)
@@ -660,7 +660,6 @@ pub async fn list_group_wishes(
             let wish_cost: i32 = r.get::<i32, _>("wish_cost");
             let status_str: String = r.get::<String, _>("status");
             let status = match status_str.as_str() {
-                "DRAFT" => WishStatus::Draft,
                 "NEGOTIATING" => WishStatus::Negotiating,
                 "CREATED" => WishStatus::Created,
                 "CLAIMED" => WishStatus::Claimed,
@@ -685,6 +684,7 @@ pub async fn list_group_wishes(
                 feedback: None,
                 requester_id: r.get::<Option<i64>, _>("requester_id"),
                 fulfiller_id: r.get::<Option<i64>, _>("fulfiller_id"),
+                negotiation_status: None,
             }
         })
         .collect();
@@ -706,7 +706,7 @@ pub async fn list_group_wishes(
             let sql = format!(
                 r#"SELECT
                       COUNT(*)::BIGINT AS total,
-                      COUNT(*) FILTER (WHERE w.status IN ('DRAFT','NEGOTIATING'))::BIGINT AS negotiating,
+                      COUNT(*) FILTER (WHERE w.status = 'NEGOTIATING')::BIGINT AS negotiating,
                       COUNT(*) FILTER (WHERE w.status = 'CREATED')::BIGINT AS unlocked,
                       COUNT(*) FILTER (WHERE w.status = 'CLAIMED')::BIGINT AS claimed,
                       COUNT(*) FILTER (WHERE w.status = 'FINISHED')::BIGINT AS finished,
@@ -723,7 +723,7 @@ pub async fn list_group_wishes(
         (Some(_sc), Some(s), None) => sqlx::query(
             r#"SELECT
                   COUNT(*)::BIGINT AS total,
-                  COUNT(*) FILTER (WHERE w.status IN ('DRAFT','NEGOTIATING'))::BIGINT AS negotiating,
+                  COUNT(*) FILTER (WHERE w.status = 'NEGOTIATING')::BIGINT AS negotiating,
                   COUNT(*) FILTER (WHERE w.status = 'CREATED')::BIGINT AS unlocked,
                   COUNT(*) FILTER (WHERE w.status = 'CLAIMED')::BIGINT AS claimed,
                   COUNT(*) FILTER (WHERE w.status = 'FINISHED')::BIGINT AS finished,
@@ -739,7 +739,7 @@ pub async fn list_group_wishes(
             let sql = format!(
                 r#"SELECT
                       COUNT(*)::BIGINT AS total,
-                      COUNT(*) FILTER (WHERE w.status IN ('DRAFT','NEGOTIATING'))::BIGINT AS negotiating,
+                      COUNT(*) FILTER (WHERE w.status = 'NEGOTIATING')::BIGINT AS negotiating,
                       COUNT(*) FILTER (WHERE w.status = 'CREATED')::BIGINT AS unlocked,
                       COUNT(*) FILTER (WHERE w.status = 'CLAIMED')::BIGINT AS claimed,
                       COUNT(*) FILTER (WHERE w.status = 'FINISHED')::BIGINT AS finished,
@@ -756,7 +756,7 @@ pub async fn list_group_wishes(
         (Some(_sc), None, None) => sqlx::query(
             r#"SELECT
                   COUNT(*)::BIGINT AS total,
-                  COUNT(*) FILTER (WHERE w.status IN ('DRAFT','NEGOTIATING'))::BIGINT AS negotiating,
+                  COUNT(*) FILTER (WHERE w.status = 'NEGOTIATING')::BIGINT AS negotiating,
                   COUNT(*) FILTER (WHERE w.status = 'CREATED')::BIGINT AS unlocked,
                   COUNT(*) FILTER (WHERE w.status = 'CLAIMED')::BIGINT AS claimed,
                   COUNT(*) FILTER (WHERE w.status = 'FINISHED')::BIGINT AS finished,
@@ -772,7 +772,7 @@ pub async fn list_group_wishes(
             let sql = format!(
                 r#"SELECT
                       COUNT(*)::BIGINT AS total,
-                      COUNT(*) FILTER (WHERE w.status IN ('DRAFT','NEGOTIATING'))::BIGINT AS negotiating,
+                      COUNT(*) FILTER (WHERE w.status = 'NEGOTIATING')::BIGINT AS negotiating,
                       COUNT(*) FILTER (WHERE w.status = 'CREATED')::BIGINT AS unlocked,
                       COUNT(*) FILTER (WHERE w.status = 'CLAIMED')::BIGINT AS claimed,
                       COUNT(*) FILTER (WHERE w.status = 'FINISHED')::BIGINT AS finished,
@@ -788,7 +788,7 @@ pub async fn list_group_wishes(
         (None, Some(s), None) => sqlx::query(
             r#"SELECT
                   COUNT(*)::BIGINT AS total,
-                  COUNT(*) FILTER (WHERE w.status IN ('DRAFT','NEGOTIATING'))::BIGINT AS negotiating,
+                  COUNT(*) FILTER (WHERE w.status = 'NEGOTIATING')::BIGINT AS negotiating,
                   COUNT(*) FILTER (WHERE w.status = 'CREATED')::BIGINT AS unlocked,
                   COUNT(*) FILTER (WHERE w.status = 'CLAIMED')::BIGINT AS claimed,
                   COUNT(*) FILTER (WHERE w.status = 'FINISHED')::BIGINT AS finished,
@@ -803,7 +803,7 @@ pub async fn list_group_wishes(
             let sql = format!(
                 r#"SELECT
                       COUNT(*)::BIGINT AS total,
-                      COUNT(*) FILTER (WHERE w.status IN ('DRAFT','NEGOTIATING'))::BIGINT AS negotiating,
+                      COUNT(*) FILTER (WHERE w.status = 'NEGOTIATING')::BIGINT AS negotiating,
                       COUNT(*) FILTER (WHERE w.status = 'CREATED')::BIGINT AS unlocked,
                       COUNT(*) FILTER (WHERE w.status = 'CLAIMED')::BIGINT AS claimed,
                       COUNT(*) FILTER (WHERE w.status = 'FINISHED')::BIGINT AS finished,
@@ -819,7 +819,7 @@ pub async fn list_group_wishes(
         (None, None, None) => sqlx::query(
             r#"SELECT
                   COUNT(*)::BIGINT AS total,
-                  COUNT(*) FILTER (WHERE w.status IN ('DRAFT','NEGOTIATING'))::BIGINT AS negotiating,
+                  COUNT(*) FILTER (WHERE w.status = 'NEGOTIATING')::BIGINT AS negotiating,
                   COUNT(*) FILTER (WHERE w.status = 'CREATED')::BIGINT AS unlocked,
                   COUNT(*) FILTER (WHERE w.status = 'CLAIMED')::BIGINT AS claimed,
                   COUNT(*) FILTER (WHERE w.status = 'FINISHED')::BIGINT AS finished,
@@ -962,7 +962,7 @@ pub async fn wish_confirm_agreement(
     id: Path<i64>,
 ) -> Result<impl Responder, CustomError> {
     let wish_id = *id;
-    let out = WishService::confirm_agreement(&state.db_pool, user_token.user_id, wish_id).await?;
+    let out: crate::domain::wish::entities::WishOut = WishService::confirm_agreement(&state.db_pool, user_token.user_id, wish_id).await?;
     Ok(ApiResponse::success(out))
 }
 
@@ -991,7 +991,22 @@ pub async fn wish_reject(
 ) -> Result<impl Responder, CustomError> {
     let wish_id = *id;
     let input = body.into_inner();
-    let out = WishService::reject_wish(&state.db_pool, user_token.user_id, wish_id, &input).await?;
+    // P3-1: 入口处先校验调用方是协商双方之一,避免 service 写权限前的无效调用
+    let caller_id = user_token.user_id;
+    let party: Option<(i64, i64)> = sqlx::query_as(
+        "SELECT requester_id, fulfiller_id FROM wishes WHERE wish_id = $1"
+    )
+    .bind(wish_id)
+    .fetch_optional(&state.db_pool)
+    .await?;
+    if let Some((req, ful)) = party {
+        if caller_id != req && caller_id != ful {
+            return Err(CustomError::Forbidden(
+                "只有心愿协商双方可以拒绝".into(),
+            ));
+        }
+    }
+    let out = WishService::reject_wish(&state.db_pool, caller_id, wish_id, &input, "REJECT").await?;
     Ok(ApiResponse::success(out))
 }
 
@@ -1082,6 +1097,7 @@ pub async fn wish_close(
         &WishRejectInput {
             reason: input.reason,
         },
+        "CLOSE",  // P3-4: /close 走 CLOSE 路径,允许任意非终态并自动解冻
     )
     .await?;
     Ok(ApiResponse::success(out))
@@ -1103,7 +1119,7 @@ pub async fn wish_close(
     security(("bearer_auth" = []))
 )]
 pub async fn wish_expire(
-    _user_token: UserToken,
+    user_token: UserToken,
     _require: RequireGroup,
     state: State<Arc<AppState>>,
     id: Path<i64>,
@@ -1111,9 +1127,9 @@ pub async fn wish_expire(
     let wish_id = *id;
     let db = &state.db_pool;
 
-    // 检查心愿状态
+    // P2-2: 加载心愿并校验权限 - 只有 requester/fulfiller 可以触发逾期
     let row =
-        sqlx::query("SELECT status::text, requester_id, group_id FROM wishes WHERE wish_id = $1")
+        sqlx::query("SELECT status::text, requester_id, fulfiller_id, group_id FROM wishes WHERE wish_id = $1")
             .bind(wish_id)
             .fetch_optional(db)
             .await?
@@ -1121,15 +1137,41 @@ pub async fn wish_expire(
 
     let status: String = row.get("status");
     let requester_id: i64 = row.get("requester_id");
+    let fulfiller_id: i64 = row.get("fulfiller_id");
     let group_id: i64 = row.get("group_id");
+
+    let caller_id = user_token.user_id;
+    if caller_id != requester_id && caller_id != fulfiller_id {
+        return Err(CustomError::Forbidden(
+            "只有心愿的发起方或履约方可以处理逾期".into(),
+        ));
+    }
 
     if status != "CLAIMED" {
         return Err(CustomError::BadRequest("心愿状态不允许逾期处理".into()));
     }
 
-    // 获取冻结金额并解冻
+    // P2-3: 用条件 UPDATE 保证幂等,防止 TOCTOU 双重处理
+    let expired_rows = sqlx::query(
+        "UPDATE wishes SET status='EXPIRED', expired_at=NOW(), updated_at=NOW() \
+         WHERE wish_id=$1 AND status='CLAIMED' RETURNING wish_id"
+    )
+    .bind(wish_id)
+    .fetch_optional(db)
+    .await?;
+    if expired_rows.is_none() {
+        // 已经被其他并发请求处理过
+        return Ok(ApiResponse::success(serde_json::json!({
+            "wishId": wish_id,
+            "status": "EXPIRED",
+            "frozenAmountUnfrozen": 0,
+            "alreadyProcessed": true
+        })));
+    }
+
+    // 获取冻结金额并解冻(用 idempotency_key 二次防护)
     let frozen_amount: i64 = sqlx::query_scalar::<_, i64>(
-        r#"SELECT COALESCE(SUM(CASE WHEN type='FREEZE' THEN amount ELSE 0 END)::bigint, 0::bigint) FROM love_point_transactions WHERE user_id=$1 AND group_id=$2 AND biz_id=$3 AND biz_type='WISH'"#
+        r#"SELECT COALESCE(SUM(CASE WHEN type='FREEZE' THEN amount ELSE 0 END)::bigint - SUM(CASE WHEN type='UNFREEZE' THEN amount ELSE 0 END)::bigint, 0::bigint) FROM love_point_transactions WHERE user_id=$1 AND group_id=$2 AND biz_id=$3 AND biz_type = 'wish'"#
     )
     .bind(requester_id)
     .bind(group_id)
@@ -1141,7 +1183,7 @@ pub async fn wish_expire(
     if frozen_amount > 0 {
         let idempotency_key = format!("wish_expire_{}", wish_id);
         let row = sqlx::query_as::<_, (i64, i64)>(
-            "SELECT COALESCE(SUM(CASE WHEN type IN ('EARN') THEN amount ELSE 0 END)::bigint, 0::bigint), COALESCE(SUM(CASE WHEN type='FREEZE' THEN amount ELSE 0 END)::bigint, 0::bigint) FROM love_point_transactions WHERE user_id=$1 AND group_id=$2"
+            "SELECT COALESCE(SUM(CASE WHEN type IN ('EARN') THEN amount ELSE 0 END)::bigint, 0::bigint), COALESCE(SUM(CASE WHEN type='FREEZE' THEN amount ELSE 0 END)::bigint - SUM(CASE WHEN type='UNFREEZE' THEN amount ELSE 0 END)::bigint, 0::bigint) FROM love_point_transactions WHERE user_id=$1 AND group_id=$2"
         )
         .bind(requester_id)
         .bind(group_id)
@@ -1151,7 +1193,7 @@ pub async fn wish_expire(
 
         sqlx::query(
             r#"INSERT INTO love_point_transactions (user_id, group_id, type, amount, available_before, available_after, frozen_before, frozen_after, biz_type, biz_id, idempotency_key, created_at)
-               VALUES ($1, $2, 'UNFREEZE', $3, $4, $4+$3, $5, 0, 'WISH', $6, $7, NOW())"#
+               VALUES ($1, $2, 'UNFREEZE', $3, $4, $4+$3, $5, 0, 'wish', $6, $7, NOW())"#
         )
         .bind(requester_id)
         .bind(group_id)
@@ -1164,13 +1206,31 @@ pub async fn wish_expire(
         .await?;
     }
 
-    // 更新心愿状态为 EXPIRED
-    sqlx::query(
-        "UPDATE wishes SET status='EXPIRED', expired_at=NOW(), updated_at=NOW() WHERE wish_id=$1",
+    // P1-3:发布逾期事件,通知双方
+    use crate::infrastructure::event::publisher::EventPublisher;
+    let _ = EventPublisher::publish(
+        db,
+        crate::domain::event::EventType::WishExpired,
+        crate::domain::event::WishExpiredPayload {
+            wish_id,
+            requester_id,
+            fulfiller_id: sqlx::query_scalar::<_, i64>(
+                "SELECT COALESCE(fulfiller_id, 0) FROM wishes WHERE wish_id = $1"
+            )
+            .bind(wish_id)
+            .fetch_one(db)
+            .await
+            .unwrap_or(0),
+            group_id,
+            unfrozen_amount: frozen_amount as i32,
+            trace_id: None,
+        },
+        None,
+        Some(group_id),
+        Some("wish"),
+        Some(wish_id),
     )
-    .bind(wish_id)
-    .execute(db)
-    .await?;
+    .await;
 
     Ok(ApiResponse::success(serde_json::json!({
         "wishId": wish_id,

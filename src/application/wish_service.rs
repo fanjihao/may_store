@@ -7,7 +7,8 @@ use sqlx::types::Json;
 use sqlx::{PgPool, Row};
 
 use crate::domain::event::{
-    EventType, WishAgreementConfirmedPayload, WishFulfilledPayload, WishSelectedPayload,
+    EventType, WishAgreementConfirmedPayload, WishClosedPayload, WishFulfilledPayload,
+    WishNegotiatingPayload, WishSelectedPayload,
 };
 use crate::domain::wish::{
     WishCreateInput, WishDeadlineInput, WishFeedbackInput, WishFeedbackRecord,
@@ -222,95 +223,6 @@ impl WishService {
         Ok(rec)
     }
 
-    /// 认领心愿（兑换）
-    pub async fn redeem_wish(
-        db: &PgPool,
-        user_id: i64,
-        wish_id: i64,
-    ) -> Result<WishRecord, CustomError> {
-        // 获取心愿
-        let existing = sqlx::query_as::<_, WishRecord>(
-            "SELECT wish_id, wish_name, wish_cost, status, created_by, group_id, claimed_by, claimed_at, claim_cost, created_at, updated_at \
-             FROM wishes WHERE wish_id = $1"
-        )
-        .bind(wish_id)
-        .fetch_optional(db)
-        .await?
-        .ok_or_else(|| CustomError::NotFound("心愿不存在".into()))?;
-
-        // 检查状态
-        if existing.status != WishStatus::Created {
-            return Err(CustomError::BadRequest("心愿当前不可认领".into()));
-        }
-
-        // 检查是否已被人认领
-        if existing.claimed_by.is_some() {
-            return Err(CustomError::BadRequest("心愿已被认领".into()));
-        }
-
-        // 扣除积分
-        let points_spent = existing.wish_cost;
-        let user_points: i32 = sqlx::query("SELECT love_point FROM users WHERE user_id = $1")
-            .bind(user_id as i64)
-            .fetch_one(db)
-            .await?
-            .get(0);
-
-        if user_points < points_spent {
-            return Err(CustomError::BadRequest("积分不足".into()));
-        }
-
-        let new_points = user_points - points_spent;
-        sqlx::query("UPDATE users SET love_point = $2 WHERE user_id = $1")
-            .bind(user_id as i64)
-            .bind(new_points)
-            .execute(db)
-            .await?;
-
-        // 记录积分流水
-        sqlx::query(
-            "INSERT INTO point_flow (user_id, group_id, amount, balance_after, scene, biz_id) VALUES ($1, $2, $3, $4, 'wish', $5)"
-        )
-        .bind(user_id as i64)
-        .bind(existing.group_id)
-        .bind(-points_spent)
-        .bind(new_points)
-        .bind(wish_id)
-        .execute(db)
-        .await?;
-
-        // 更新心愿状态
-        let rec = sqlx::query_as::<_, WishRecord>(
-            "UPDATE wishes SET status = 'CLAIMED', claimed_by = $2, claimed_at = NOW(), claim_cost = $3 WHERE wish_id = $1 \
-             RETURNING wish_id, wish_name, wish_cost, status, created_by, group_id, claimed_by, claimed_at, claim_cost, created_at, updated_at"
-        )
-        .bind(wish_id)
-        .bind(user_id as i64)
-        .bind(points_spent)
-        .fetch_one(db)
-        .await?;
-
-        // 发布心愿兑换事件
-        let payload = WishFulfilledPayload {
-            wish_id,
-            user_id,
-            group_id: existing.group_id,
-            points_spent,
-        };
-        let _ = EventPublisher::publish(
-            db,
-            EventType::WishFulfilled,
-            payload,
-            Some(user_id),
-            Some(existing.group_id),
-            Some("wish"),
-            Some(wish_id),
-        )
-        .await;
-
-        Ok(rec)
-    }
-
     /// 提交心愿反馈
     pub async fn submit_feedback(
         db: &PgPool,
@@ -382,6 +294,7 @@ impl WishService {
     // ============== FSD v2 心愿协商与选择接口 ==============
 
     /// 协商报价 - 发起人或履约人报价或还价
+    /// 注意:DRAFT 状态已删除,创建直接进入 NEGOTIATING;首次报价视为首次报价,记录为 QUOTE;后续还价记 COUNTER
     pub async fn quote_wish(
         db: &PgPool,
         user_id: i64,
@@ -397,47 +310,78 @@ impl WishService {
         .await?
         .ok_or_else(|| CustomError::NotFound("心愿不存在".into()))?;
 
-        // 检查状态：只有 DRAFT 或 NEGOTIATING 可以报价
+        // 检查状态:只有 NEGOTIATING 可以报价
         if !existing.status.is_negotiable() {
             return Err(CustomError::BadRequest("当前状态不允许报价".into()));
         }
 
-        // 记录协商
-        let action = if existing.status == WishStatus::Draft {
-            // DRAFT 首次报价，进入 NEGOTIATING
-            sqlx::query(
-                "INSERT INTO wish_negotiations (wish_id, group_id, operator_id, action, cost) VALUES ($1, $2, $3, 'QUOTE', $4)"
-            )
-            .bind(wish_id)
-            .bind(existing.group_id)
-            .bind(user_id)
-            .bind(input.cost)
-            .execute(db)
-            .await?;
+        // 双方只有 requester/fulfiller 可以报价
+        let requester_id = existing.requester_id.unwrap_or(existing.created_by);
+        let fulfiller_id = existing.fulfiller_id.unwrap_or(0);
+        if user_id != requester_id && user_id != fulfiller_id {
+            return Err(CustomError::Forbidden("只有心愿协商双方可以报价".into()));
+        }
 
-            // 更新状态为 NEGOTIATING，并记录 initial_cost
+        // P1-1:在报价/期限变更前,撤销之前所有 ACCEPT(它们绑定的是旧 final_cost)
+        sqlx::query(
+            "DELETE FROM wish_negotiations WHERE wish_id = $1 AND action = 'ACCEPT'"
+        )
+        .bind(wish_id)
+        .execute(db)
+        .await?;
+
+        // P1-2:并发竞态保护 - 必须等对方先动
+        let last_actor: Option<i64> = sqlx::query_scalar(
+            "SELECT operator_id FROM wish_negotiations WHERE wish_id = $1 ORDER BY created_at DESC LIMIT 1"
+        )
+        .bind(wish_id)
+        .fetch_optional(db)
+        .await?;
+        if let Some(last) = last_actor {
+            if last == user_id {
+                return Err(CustomError::BadRequest(
+                    "请等待对方先回应再报价".into(),
+                ));
+            }
+        }
+
+        // P3-3: 操作者角色快照
+        let role_snapshot = if user_id == requester_id { "REQUESTER" } else { "FULFILLER" };
+
+        // 根据协商历史判断这是首条报价还是还价
+        let has_any_negotiation: bool = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM wish_negotiations WHERE wish_id = $1 AND action IN ('QUOTE', 'COUNTER'))"
+        )
+        .bind(wish_id)
+        .fetch_one(db)
+        .await?;
+        let action_label = if has_any_negotiation { "COUNTER" } else { "QUOTE" };
+
+        sqlx::query(
+            "INSERT INTO wish_negotiations (wish_id, group_id, operator_id, operator_role_snapshot, action, cost) VALUES ($1, $2, $3, $4, $5, $6)"
+        )
+        .bind(wish_id)
+        .bind(existing.group_id)
+        .bind(user_id)
+        .bind(role_snapshot)
+        .bind(action_label)
+        .bind(input.cost)
+        .execute(db)
+        .await?;
+
+        // 首条报价记录 initial_cost;后续报价更新 final_cost
+        let rec = if !has_any_negotiation {
             sqlx::query_as::<_, WishRecord>(
-                "UPDATE wishes SET status = 'NEGOTIATING', initial_cost = $2, updated_at = NOW() WHERE wish_id = $1 \
+                "UPDATE wishes SET initial_cost = $2, final_cost = $3, updated_at = NOW() WHERE wish_id = $1 \
                  RETURNING wish_id, wish_name, wish_cost, status, created_by, group_id, claimed_by, claimed_at, claim_cost, created_at, updated_at, \
                  requester_id, fulfiller_id, initial_cost, final_cost"
             )
             .bind(wish_id)
             .bind(input.cost)
+            .bind(input.cost)
             .fetch_one(db)
             .await
         } else {
-            // NEGOTIATING 阶段报价，记录还价
-            sqlx::query(
-                "INSERT INTO wish_negotiations (wish_id, group_id, operator_id, action, cost) VALUES ($1, $2, $3, 'COUNTER', $4)"
-            )
-            .bind(wish_id)
-            .bind(existing.group_id)
-            .bind(user_id)
-            .bind(input.cost)
-            .execute(db)
-            .await?;
-
-            // 更新 final_cost（最终确认用）
             sqlx::query_as::<_, WishRecord>(
                 "UPDATE wishes SET final_cost = $2, updated_at = NOW() WHERE wish_id = $1 \
                  RETURNING wish_id, wish_name, wish_cost, status, created_by, group_id, claimed_by, claimed_at, claim_cost, created_at, updated_at, \
@@ -447,12 +391,30 @@ impl WishService {
             .bind(input.cost)
             .fetch_one(db)
             .await
-        };
-
-        match action {
-            Ok(rec) => Ok(rec),
-            Err(e) => Err(CustomError::internal(e.to_string())),
         }
+        .map_err(|e| CustomError::internal(e.to_string()))?;
+
+        // P1-3: 发布报价事件通知对方
+        let _ = EventPublisher::publish(
+            db,
+            EventType::WishNegotiating,
+            WishNegotiatingPayload {
+                wish_id,
+                operator_id: user_id,
+                group_id: existing.group_id,
+                action: action_label.into(),
+                cost: Some(input.cost),
+                deadline_hours: None,
+                trace_id: None,
+            },
+            Some(user_id),
+            Some(existing.group_id),
+            Some("wish"),
+            Some(wish_id),
+        )
+        .await;
+
+        Ok(rec)
     }
 
     /// 协商履约期限
@@ -475,12 +437,45 @@ impl WishService {
             return Err(CustomError::BadRequest("当前状态不允许设置期限".into()));
         }
 
+        let requester_id = existing.requester_id.unwrap_or(existing.created_by);
+        let fulfiller_id = existing.fulfiller_id.unwrap_or(0);
+        if user_id != requester_id && user_id != fulfiller_id {
+            return Err(CustomError::Forbidden("只有心愿协商双方可以设置期限".into()));
+        }
+
+        // P1-1:期限变更 → 撤销之前的 ACCEPT(旧 ACCEPT 绑定的是旧 deadline)
         sqlx::query(
-            "INSERT INTO wish_negotiations (wish_id, group_id, operator_id, action, deadline_hours) VALUES ($1, $2, $3, 'SET_DEADLINE', $4)"
+            "DELETE FROM wish_negotiations WHERE wish_id = $1 AND action = 'ACCEPT'"
+        )
+        .bind(wish_id)
+        .execute(db)
+        .await?;
+
+        // P1-2:并发竞态保护 - 必须等对方先动
+        let last_actor: Option<i64> = sqlx::query_scalar(
+            "SELECT operator_id FROM wish_negotiations WHERE wish_id = $1 ORDER BY created_at DESC LIMIT 1"
+        )
+        .bind(wish_id)
+        .fetch_optional(db)
+        .await?;
+        if let Some(last) = last_actor {
+            if last == user_id {
+                return Err(CustomError::BadRequest(
+                    "请等待对方先回应再调整期限".into(),
+                ));
+            }
+        }
+
+        // P3-3: 操作者角色快照
+        let role_snapshot = if user_id == requester_id { "REQUESTER" } else { "FULFILLER" };
+
+        sqlx::query(
+            "INSERT INTO wish_negotiations (wish_id, group_id, operator_id, operator_role_snapshot, action, deadline_hours) VALUES ($1, $2, $3, $4, 'SET_DEADLINE', $5)"
         )
         .bind(wish_id)
         .bind(existing.group_id)
         .bind(user_id)
+        .bind(role_snapshot)
         .bind(input.deadline_hours)
         .execute(db)
         .await?;
@@ -495,6 +490,26 @@ impl WishService {
         .fetch_one(db)
         .await?;
 
+        // P1-3:发布期限变更事件
+        let _ = EventPublisher::publish(
+            db,
+            EventType::WishNegotiating,
+            WishNegotiatingPayload {
+                wish_id,
+                operator_id: user_id,
+                group_id: existing.group_id,
+                action: "SET_DEADLINE".into(),
+                cost: None,
+                deadline_hours: Some(input.deadline_hours),
+                trace_id: None,
+            },
+            Some(user_id),
+            Some(existing.group_id),
+            Some("wish"),
+            Some(wish_id),
+        )
+        .await;
+
         Ok(rec)
     }
 
@@ -503,7 +518,7 @@ impl WishService {
         db: &PgPool,
         user_id: i64,
         wish_id: i64,
-    ) -> Result<WishRecord, CustomError> {
+    ) -> Result<crate::domain::wish::entities::WishOut, CustomError> {
         let existing = sqlx::query_as::<_, WishRecord>(
             "SELECT wish_id, wish_name, wish_cost, status, created_by, group_id, claimed_by, claimed_at, claim_cost, created_at, updated_at, \
              requester_id, fulfiller_id, initial_cost, final_cost, fulfillment_deadline_hours FROM wishes WHERE wish_id = $1"
@@ -517,31 +532,59 @@ impl WishService {
             return Err(CustomError::wish_status_invalid("当前状态不允许确认"));
         }
 
+        let requester_id = existing.requester_id.unwrap_or(existing.created_by);
+        let fulfiller_id = existing.fulfiller_id.unwrap_or(0);
+        if user_id != requester_id && user_id != fulfiller_id {
+            return Err(CustomError::Forbidden("只有心愿协商双方可以确认".into()));
+        }
+
         // 确认后使用 final_cost 作为最终积分
         let final_cost = existing
             .final_cost
             .or(existing.initial_cost)
             .unwrap_or(existing.wish_cost);
 
-        // 1) 记录本次 ACCEPT —— 单边点同意永远 OK,只插一条 ACCEPT 流水
+        // P1-1 修复 + 幂等保护:同一用户多次点击 ACCEPT 只保留一条
         sqlx::query(
-            "INSERT INTO wish_negotiations (wish_id, group_id, operator_id, action, cost) VALUES ($1, $2, $3, 'ACCEPT', $4)"
+            "DELETE FROM wish_negotiations WHERE wish_id = $1 AND operator_id = $2 AND action = 'ACCEPT' AND cost <> $3"
         )
         .bind(wish_id)
-        .bind(existing.group_id)
         .bind(user_id)
         .bind(final_cost)
         .execute(db)
         .await?;
 
-        // 2) 取「双方都 ACCEPT」的最新状态
-        let requester_id = existing.requester_id.unwrap_or(existing.created_by);
-        let fulfiller_id = existing.fulfiller_id.unwrap_or(0);
-
-        let confirmed_rows = sqlx::query(
-            "SELECT DISTINCT operator_id FROM wish_negotiations WHERE wish_id = $1 AND action = 'ACCEPT'"
+        // 幂等:同一 cost 下不重复插入 ACCEPT
+        let exists: bool = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM wish_negotiations WHERE wish_id = $1 AND operator_id = $2 AND action = 'ACCEPT' AND cost = $3)"
         )
         .bind(wish_id)
+        .bind(user_id)
+        .bind(final_cost)
+        .fetch_one(db)
+        .await?;
+
+        if !exists {
+            // P3-3: 操作者角色快照
+            let role_snapshot = if user_id == requester_id { "REQUESTER" } else { "FULFILLER" };
+            sqlx::query(
+                "INSERT INTO wish_negotiations (wish_id, group_id, operator_id, operator_role_snapshot, action, cost) VALUES ($1, $2, $3, $4, 'ACCEPT', $5)"
+            )
+            .bind(wish_id)
+            .bind(existing.group_id)
+            .bind(user_id)
+            .bind(role_snapshot)
+            .bind(final_cost)
+            .execute(db)
+            .await?;
+        }
+
+        // 2) 取「双方都 ACCEPT」的最新状态(P1-1:基于当前 final_cost 的 ACCEPT)
+        let confirmed_rows = sqlx::query(
+            "SELECT DISTINCT operator_id FROM wish_negotiations WHERE wish_id = $1 AND action = 'ACCEPT' AND cost = $2"
+        )
+        .bind(wish_id)
+        .bind(final_cost)
         .fetch_all(db)
         .await?;
         let mut confirmed_set = std::collections::HashSet::new();
@@ -549,10 +592,8 @@ impl WishService {
             confirmed_set.insert(r.get::<i64, _>("operator_id"));
         }
 
-        // 3) 只有双方都 ACCEPT 才把 wish 推进到 CREATED;
-        //    单边 ACCEPT 时 wish 留在 NEGOTIATING 等对方,不报错。
+        // 3) 单边 ACCEPT:返回 WishOut 并附带 negotiation_status,前端无需再调详情
         if !confirmed_set.contains(&requester_id) || !confirmed_set.contains(&fulfiller_id) {
-            // 把当前 wish 记录返回,让前端可以刷新「我的同意/对方是否同意」状态
             let rec = sqlx::query_as::<_, WishRecord>(
                 "SELECT wish_id, wish_name, wish_cost, status, created_by, group_id, claimed_by, claimed_at, claim_cost, created_at, updated_at, \
                  requester_id, fulfiller_id, initial_cost, final_cost, fulfillment_deadline_hours \
@@ -561,11 +602,46 @@ impl WishService {
             .bind(wish_id)
             .fetch_one(db)
             .await?;
-            return Ok(rec);
+
+            let _ = EventPublisher::publish(
+                db,
+                EventType::WishNegotiating,
+                WishNegotiatingPayload {
+                    wish_id,
+                    operator_id: user_id,
+                    group_id: existing.group_id,
+                    action: "ACCEPT".into(),
+                    cost: Some(final_cost),
+                    deadline_hours: None,
+                    trace_id: None,
+                },
+                Some(user_id),
+                Some(existing.group_id),
+                Some("wish"),
+                Some(wish_id),
+            )
+            .await;
+
+            let other_party = if user_id == requester_id { fulfiller_id } else { requester_id };
+            let mut out = crate::domain::wish::entities::WishOut::from_record(rec, None);
+            out.negotiation_status = Some(
+                crate::domain::wish::entities::WishNegotiationStatus {
+                    i_accepted: true,
+                    they_accepted: confirmed_set.contains(&other_party),
+                    awaiting_party: if !confirmed_set.contains(&requester_id) {
+                        Some("REQUESTER".to_string())
+                    } else if !confirmed_set.contains(&fulfiller_id) {
+                        Some("FULFILLER".to_string())
+                    } else {
+                        None
+                    },
+                    agreed: false,
+                }
+            );
+            return Ok(out);
         }
 
         // 4) 双方都 ACCEPT → 进 CREATED,wish_cost 同步为 final_cost
-
         let rec = sqlx::query_as::<_, WishRecord>(
             "UPDATE wishes SET status = 'CREATED', wish_cost = $2, updated_at = NOW() WHERE wish_id = $1 \
              RETURNING wish_id, wish_name, wish_cost, status, created_by, group_id, claimed_by, claimed_at, claim_cost, created_at, updated_at, \
@@ -576,7 +652,6 @@ impl WishService {
         .fetch_one(db)
         .await?;
 
-        // 发布事件
         let _ = EventPublisher::publish(
             db,
             EventType::WishAgreementConfirmed,
@@ -596,18 +671,105 @@ impl WishService {
         )
         .await;
 
-        Ok(rec)
+        // 双方都同意,返回 agreed=true
+        let mut out = crate::domain::wish::entities::WishOut::from_record(rec, None);
+        out.negotiation_status = Some(crate::domain::wish::entities::WishNegotiationStatus {
+            i_accepted: true,
+            they_accepted: true,
+            awaiting_party: None,
+            agreed: true,
+        });
+        Ok(out)
     }
 
     /// 拒绝或关闭心愿
+    /// action: "REJECT"(仅协商阶段使用,语义"我拒绝这个提议") | "CLOSE"(任意非终态使用,语义"主动关闭心愿")
     pub async fn reject_wish(
+        db: &PgPool,
+        user_id: i64,
+        wish_id: i64,
+        input: &WishRejectInput,
+        action: &str,  // P3-4: 区分 REJECT(仅协商中) 和 CLOSE(任意非终态)
+    ) -> Result<WishRecord, CustomError> {
+        // P3-4: REJECT 仅允许在 NEGOTIATING 状态,CLOSE 允许任意非终态
+        let allowed_statuses: &[WishStatus] = if action == "REJECT" {
+            &[WishStatus::Negotiating]
+        } else {
+            // CLOSE: 任意非终态都可以
+            return Self::close_wish_internal(db, user_id, wish_id, input).await;
+        };
+
+        let existing = sqlx::query_as::<_, WishRecord>(
+            "SELECT wish_id, wish_name, wish_cost, status, created_by, group_id, claimed_by, claimed_at, claim_cost, created_at, updated_at, requester_id, fulfiller_id, initial_cost, final_cost, fulfillment_deadline_hours FROM wishes WHERE wish_id = $1"
+        )
+        .bind(wish_id)
+        .fetch_optional(db)
+        .await?
+        .ok_or_else(|| CustomError::NotFound("心愿不存在".into()))?;
+
+        if !allowed_statuses.contains(&existing.status) {
+            return Err(CustomError::BadRequest(
+                "协商拒绝仅在 NEGOTIATING 状态可用,关闭请用 /close 接口".into(),
+            ));
+        }
+
+        // P3-3: 操作者角色快照
+        let role_snapshot_close = if user_id == existing.requester_id.unwrap_or(existing.created_by) {
+            "REQUESTER"
+        } else {
+            "FULFILLER"
+        };
+
+        sqlx::query(
+            "INSERT INTO wish_negotiations (wish_id, group_id, operator_id, operator_role_snapshot, action, remark) VALUES ($1, $2, $3, $4, $5, $6)"
+        )
+        .bind(wish_id)
+        .bind(existing.group_id)
+        .bind(user_id)
+        .bind(role_snapshot_close)
+        .bind(action)
+        .bind(&input.reason)
+        .execute(db)
+        .await?;
+
+        let rec = sqlx::query_as::<_, WishRecord>(
+            "UPDATE wishes SET status = 'CLOSED', closed_at = NOW(), updated_at = NOW() WHERE wish_id = $1 \
+             RETURNING wish_id, wish_name, wish_cost, status, created_by, group_id, claimed_by, claimed_at, claim_cost, created_at, updated_at, requester_id, fulfiller_id, initial_cost, final_cost, fulfillment_deadline_hours"
+        )
+        .bind(wish_id)
+        .fetch_one(db)
+        .await?;
+
+        let _ = EventPublisher::publish(
+            db,
+            EventType::WishClosed,
+            WishClosedPayload {
+                wish_id,
+                operator_id: user_id,
+                group_id: existing.group_id,
+                reason: input.reason.clone(),
+                unfrozen_if_any: false,
+                trace_id: None,
+            },
+            Some(user_id),
+            Some(existing.group_id),
+            Some("wish"),
+            Some(wish_id),
+        )
+        .await;
+
+        Ok(rec)
+    }
+
+    /// /close 接口专用 - 任意非终态都可关闭,CLAIMED 时自动解冻
+    async fn close_wish_internal(
         db: &PgPool,
         user_id: i64,
         wish_id: i64,
         input: &WishRejectInput,
     ) -> Result<WishRecord, CustomError> {
         let existing = sqlx::query_as::<_, WishRecord>(
-            "SELECT wish_id, wish_name, wish_cost, status, created_by, group_id, claimed_by, claimed_at, claim_cost, created_at, updated_at FROM wishes WHERE wish_id = $1"
+            "SELECT wish_id, wish_name, wish_cost, status, created_by, group_id, claimed_by, claimed_at, claim_cost, created_at, updated_at, requester_id, fulfiller_id, initial_cost, final_cost, fulfillment_deadline_hours FROM wishes WHERE wish_id = $1"
         )
         .bind(wish_id)
         .fetch_optional(db)
@@ -618,25 +780,116 @@ impl WishService {
             return Err(CustomError::BadRequest("当前状态不允许关闭".into()));
         }
 
+        // CLAIMED 状态下:积分已被冻结,关闭时必须解冻,否则用户积分流失
+        let was_claimed = existing.status == WishStatus::Claimed;
+        if was_claimed {
+            Self::unfreeze_wish_points(db, wish_id, existing.group_id, existing.requester_id.unwrap_or(existing.created_by), "wish_close").await?;
+        }
+
+        let role_snapshot_close = if user_id == existing.requester_id.unwrap_or(existing.created_by) {
+            "REQUESTER"
+        } else {
+            "FULFILLER"
+        };
+
         sqlx::query(
-            "INSERT INTO wish_negotiations (wish_id, group_id, operator_id, action, remark) VALUES ($1, $2, $3, 'CLOSE', $4)"
+            "INSERT INTO wish_negotiations (wish_id, group_id, operator_id, operator_role_snapshot, action, remark) VALUES ($1, $2, $3, $4, 'CLOSE', $5)"
         )
         .bind(wish_id)
         .bind(existing.group_id)
         .bind(user_id)
+        .bind(role_snapshot_close)
         .bind(&input.reason)
         .execute(db)
         .await?;
 
         let rec = sqlx::query_as::<_, WishRecord>(
             "UPDATE wishes SET status = 'CLOSED', closed_at = NOW(), updated_at = NOW() WHERE wish_id = $1 \
-             RETURNING wish_id, wish_name, wish_cost, status, created_by, group_id, claimed_by, claimed_at, claim_cost, created_at, updated_at"
+             RETURNING wish_id, wish_name, wish_cost, status, created_by, group_id, claimed_by, claimed_at, claim_cost, created_at, updated_at, requester_id, fulfiller_id, initial_cost, final_cost, fulfillment_deadline_hours"
         )
         .bind(wish_id)
         .fetch_one(db)
         .await?;
 
+        let _ = EventPublisher::publish(
+            db,
+            EventType::WishClosed,
+            WishClosedPayload {
+                wish_id,
+                operator_id: user_id,
+                group_id: existing.group_id,
+                reason: input.reason.clone(),
+                unfrozen_if_any: was_claimed,
+                trace_id: None,
+            },
+            Some(user_id),
+            Some(existing.group_id),
+            Some("wish"),
+            Some(wish_id),
+        )
+        .await;
+
         Ok(rec)
+    }
+
+    /// 解冻心愿冻结积分 - 由 wish_expire 和 reject_wish(CLAIMED 时)共用
+    /// 通过 idempotency_key 保证同一心愿只解冻一次
+    pub async fn unfreeze_wish_points(
+        db: &PgPool,
+        wish_id: i64,
+        group_id: i64,
+        requester_id: i64,
+        idempotency_key: &str,
+    ) -> Result<i64, CustomError> {
+        let frozen_amount: i64 = sqlx::query_scalar::<_, i64>(
+            r#"SELECT COALESCE(SUM(CASE WHEN type='FREEZE' THEN amount ELSE 0 END)::bigint - SUM(CASE WHEN type='UNFREEZE' THEN amount ELSE 0 END)::bigint, 0::bigint) FROM love_point_transactions WHERE user_id=$1 AND group_id=$2 AND biz_id=$3 AND biz_type = 'wish'"#
+        )
+        .bind(requester_id)
+        .bind(group_id)
+        .bind(wish_id)
+        .fetch_optional(db)
+        .await?
+        .unwrap_or(0);
+
+        if frozen_amount <= 0 {
+            return Ok(0);
+        }
+
+        // 幂等检查:同一 idempotency_key 已写入则跳过
+        let already: Option<i64> = sqlx::query_scalar(
+            "SELECT id FROM love_point_transactions WHERE idempotency_key = $1 LIMIT 1"
+        )
+        .bind(idempotency_key)
+        .fetch_optional(db)
+        .await?;
+        if already.is_some() {
+            return Ok(0);
+        }
+
+        let row = sqlx::query_as::<_, (i64, i64)>(
+            "SELECT COALESCE(SUM(CASE WHEN type IN ('EARN') THEN amount ELSE 0 END)::bigint, 0::bigint), COALESCE(SUM(CASE WHEN type='FREEZE' THEN amount ELSE 0 END)::bigint - SUM(CASE WHEN type='UNFREEZE' THEN amount ELSE 0 END)::bigint, 0::bigint) FROM love_point_transactions WHERE user_id=$1 AND group_id=$2"
+        )
+        .bind(requester_id)
+        .bind(group_id)
+        .fetch_one(db)
+        .await?;
+        let (available_before, frozen_before) = row;
+
+        sqlx::query(
+            r#"INSERT INTO love_point_transactions (user_id, group_id, type, amount, available_before, available_after, frozen_before, frozen_after, biz_type, biz_id, idempotency_key, created_at)
+               VALUES ($1, $2, 'UNFREEZE', $3, $4, $4+$3, $5, 0, 'wish', $6, $7, NOW())"#
+        )
+        .bind(requester_id)
+        .bind(group_id)
+        .bind(frozen_amount)
+        .bind(available_before)
+        .bind(frozen_before)
+        .bind(wish_id)
+        .bind(idempotency_key)
+        .execute(db)
+        .await?;
+
+        Ok(frozen_amount)
     }
 
     /// 选择心愿并冻结积分（发起人操作）
@@ -673,23 +926,21 @@ impl WishService {
 
         let points_cost = existing.final_cost.unwrap_or(existing.wish_cost);
 
-        // 获取用户可用积分
-        let user_row = sqlx::query_as::<_, (i32, Option<i64>)>(
-            "SELECT love_point, group_id FROM users WHERE user_id = $1",
+        let mut tx = db.begin().await?;
+
+        // SELECT FOR UPDATE 锁住 users 行,确保后续 UPDATE 看到的余额是最新值
+        let current_points: i32 = sqlx::query_scalar(
+            "SELECT love_point FROM users WHERE user_id = $1 FOR UPDATE"
         )
         .bind(user_id)
-        .fetch_one(db)
+        .fetch_one(&mut *tx)
         .await?;
-
-        let (current_points, _user_group_id) = user_row;
 
         if current_points < points_cost {
             return Err(CustomError::BadRequest("爱心积分不足".into()));
         }
 
-        let mut tx = db.begin().await?;
-
-        // 冻结积分：可用减少，冻结增加
+        // 冻结积分：可用减少,冻结增加(冻结字段由事务内计算,不再依赖外部读)
         let frozen_before = 0i32;
         let available_after = current_points - points_cost;
         let frozen_after = points_cost;
@@ -700,10 +951,10 @@ impl WishService {
             .execute(&mut *tx)
             .await?;
 
-        // 写积分流水（冻结）
+        // 写积分流水(冻结) - biz_type 统一为 'wish'
         sqlx::query(
             "INSERT INTO love_point_transactions (user_id, group_id, type, amount, available_before, available_after, frozen_before, frozen_after, biz_type, biz_id, trace_id, created_at) \
-             VALUES ($1, $2, 'FREEZE', $3, $4, $5, $6, $7, 'wish_select', $8, '', NOW())"
+             VALUES ($1, $2, 'FREEZE', $3, $4, $5, $6, $7, 'wish', $8, '', NOW())"
         )
         .bind(user_id)
         .bind(existing.group_id)
@@ -720,17 +971,19 @@ impl WishService {
         let deadline_hours = existing.fulfillment_deadline_hours.unwrap_or(72);
         let fulfillment_due_at = Utc::now() + Duration::hours(deadline_hours as i64);
 
-        // 更新心愿状态为 CLAIMED
+        // 更新心愿状态为 CLAIMED(条件 UPDATE 防止 TOCTOU 重复 select)
         let rec = sqlx::query_as::<_, WishRecord>(
-            "UPDATE wishes SET status = 'CLAIMED', selected_by = $2, selected_at = NOW(), claimed_by = $2, fulfillment_due_at = $3, updated_at = NOW() WHERE wish_id = $1 \
+            "UPDATE wishes SET status = 'CLAIMED', selected_by = $2, selected_at = NOW(), claimed_by = $2, fulfillment_due_at = $3, updated_at = NOW() \
+             WHERE wish_id = $1 AND status = 'CREATED' AND claimed_by IS NULL \
              RETURNING wish_id, wish_name, wish_cost, status, created_by, group_id, claimed_by, claimed_at, claim_cost, created_at, updated_at, \
              requester_id, fulfiller_id, fulfillment_due_at, fulfillment_deadline_hours"
         )
         .bind(wish_id)
         .bind(user_id)
         .bind(fulfillment_due_at)
-        .fetch_one(&mut *tx)
-        .await?;
+        .fetch_optional(&mut *tx)
+        .await?
+        .ok_or_else(|| CustomError::BadRequest("心愿已被选择或状态变更".into()))?;
 
         tx.commit().await?;
 
