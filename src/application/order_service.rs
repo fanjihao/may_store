@@ -72,7 +72,7 @@ impl OrderService {
         let rec: OrderRecord = sqlx::query_as::<_, OrderRecord>(
             "INSERT INTO orders (user_id, guest_user_id, group_id, goal_time, remark, points_reward, is_guest) \
              VALUES ($1,$2,$3,$4,$5,$6,$7) \
-             RETURNING order_id, user_id, guest_user_id, group_id, status, goal_time, remark, points_reward, cancel_reason, reject_reason, last_status_change_at, created_at, updated_at, is_guest"
+             RETURNING order_id, user_id, guest_user_id AS guest_id, group_id, status, goal_time, remark, points_reward, cancel_reason, reject_reason, last_status_change_at, created_at, updated_at, is_guest"
         )
         .bind(user_id)
         .bind::<Option<i64>>(None)
@@ -632,7 +632,7 @@ impl OrderService {
                     creator_role_snapshot: r.try_get("creator_role_snapshot").ok().flatten(),
                     assignee_id: r.try_get("assignee_id").ok().flatten(),
                     assignee_role_snapshot: r.try_get("assignee_role_snapshot").ok().flatten(),
-                    // guest_id 已在 line 618 用 row.get 填充,且通过 #[sqlx(rename)] 映射到 guest_user_id 列
+                    // guest_id 已在 line 618 用 row.get("guest_id") 填充 (SQL 已 AS guest_id)
                     guest_invite_id: r.try_get("guest_invite_id").ok().flatten(),
                     guest_remark: r.try_get("guest_remark").ok().flatten(),
                     guest_mark_tags: r.try_get("guest_mark_tags").ok().flatten(),

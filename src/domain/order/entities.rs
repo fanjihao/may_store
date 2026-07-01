@@ -15,8 +15,7 @@ use super::{OrderStatus, OrderType, PointGrantStatus, ExpGrantStatus, RiskStatus
 pub struct OrderRecord {
     pub order_id: i64,
     pub user_id: i64,
-    /// 兼容 v3 schema 实际列名 `guest_user_id` —— sqlx 映射
-    #[sqlx(rename = "guest_user_id")]
+    /// SQL 已经 `guest_user_id AS guest_id`, 不需要 rename
     pub guest_id: Option<i64>,
     pub group_id: Option<i64>,
     pub status: OrderStatus,

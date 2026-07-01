@@ -6,13 +6,12 @@ use sqlx::FromRow;
 use utoipa::ToSchema;
 
 /// 标签记录
+/// 注: SQL 中已经 `tag_id AS id` 和 `tag_name AS name`, 所以 sqlx 按字段名 `id`/`name` 匹配即可
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct TagRecord {
-    #[sqlx(rename = "tag_id")]
     pub id: i64,
     pub group_id: i64,
-    #[sqlx(rename = "tag_name")]
     pub name: String,
     pub color: Option<String>,
     pub sort: i32,

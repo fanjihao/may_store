@@ -6,10 +6,10 @@ use sqlx::FromRow;
 use utoipa::ToSchema;
 
 /// 食材记录
+/// 注: SQL 中已经 `ingredient_id AS id`, 所以 sqlx 按字段名 `id` 匹配即可
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct IngredientRecord {
-    #[sqlx(rename = "ingredient_id")]
     pub id: i64,
     pub group_id: i64,
     pub name: String,
