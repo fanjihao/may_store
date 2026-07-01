@@ -68,8 +68,7 @@ impl Modify for SecurityAddon {
         crate::api::groups::routes::create_group_order,
         crate::api::groups::routes::update_group_name,
         crate::api::groups::routes::update_group,
-        crate::api::groups::routes::get_group_point_config,
-        crate::api::groups::routes::update_group_point_config,
+        // 注: get_group_point_config / update_group_point_config 已删除 (MVP 不需要)
         // ==================== Foods CRUD (菜品 §5) ====================
         crate::api::foods::routes::create_food,
         crate::api::foods::routes::list_foods,
@@ -241,8 +240,6 @@ impl Modify for SecurityAddon {
             crate::api::groups::routes::UpdateGroupNameResponse,
             crate::api::groups::routes::UpdateGroupRequest,
             crate::api::groups::routes::UpdateGroupResponse,
-            crate::api::groups::routes::GroupPointConfigResponse,
-            crate::api::groups::routes::GroupPointConfigUpdateRequest,
             // -- Domain Group --
             crate::domain::group::entities::GroupDetailInfo,
             crate::domain::group::entities::SettlementCheckResult,
