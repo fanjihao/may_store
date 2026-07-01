@@ -90,6 +90,26 @@
 - 代码里出现 `CREATE TABLE`、`ALTER TABLE`、`CREATE TYPE`、`CREATE INDEX` 这种 DDL 语句时，需要确认：这条 DDL 在 v3.sql 里有没有对应？没有就补上，不能让 DDL 只活在代码注释或迁移脚本里。
 - 接手 / 复盘时：对一遍"代码里所有 FROM / JOIN / INSERT / UPDATE 用到的表和列" vs "v3.sql 实际定义的表和列"，有差异就要修复 v3.sql。
 
+## sqlx 字段映射一致性约束
+
+- Rust 端使用 `sqlx::query_as::<_, SomeStruct>` 反序列化 DB 行时，**字段名必须能在 SQL 查询结果中找到对应列**。
+- 常见踩坑：结构体上 `#[sqlx(rename = "tag_id")]` 会让 sqlx 去找名为 `tag_id` 的列；但如果 SQL 里写的是 `SELECT tag_id AS id, ...`，Row 里只有 `id` 这一列，**rename 目标找不到 → 运行时 `ColumnNotFound("tag_id")` → 报 "查询字段不存在"**。
+- **禁止**在结构体字段上加 `#[sqlx(rename)]` 然后又在 SQL 里 `AS` 成另一个名字——两边必须一致。
+- 已有约束：
+  - 本项目用 `scripts/check_query_as.py` 扫描所有 `query_as` 调用，自动检测这种不一致。
+  - 已集成到 `cargo test` —— 改完 Rust 代码必须 `cargo test` 通过才能提交。
+  - 集成测试位置：`tests/sqlx_rename_consistency.rs`。
+
+## 改动 Rust 代码后必须跑的检查
+
+- 改完 Rust 代码 → 在 `cargo check` 通过之后，**必须**再跑：
+  ```bash
+  CARGO_BUILD_JOBS=2 cargo test --test sqlx_rename_consistency
+  ```
+- 这是 `cargo test` 默认会跑的集成测试之一（如果只改 Rust 代码也可以直接 `cargo test`）。
+- 如果测试失败，提示"某字段 rename 在 SQL 中找不到对应列"——按错误信息修代码（要么删 rename 让 sqlx 用 Rust 字段名找，要么改 SQL 别 `AS`）。
+- 这一条是**强制的**——任何改了 Rust 代码的 commit 都必须通过该测试。
+
 ## 7. 相关项目位置
 
 - **前端项目 `wx-store`**：与本仓（`may_store`）同级，路径 `../wx-store`（绝对路径 `/home/peter/project/wx-store`）。
