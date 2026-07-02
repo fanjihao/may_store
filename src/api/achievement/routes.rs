@@ -1,7 +1,7 @@
 // API - 成就路由
 // FSD.latest.md compliant - 成就列表、成就墙
 
-use ntex::web::{self, types::State, HttpResponse, Responder, ServiceConfig};
+use ntex::web::{self, types::State, Responder, ServiceConfig};
 use serde::Serialize;
 use sqlx::Row;
 use std::sync::Arc;
@@ -16,8 +16,7 @@ use crate::utils::response::ApiResponse;
 /// 配置成就路由
 pub fn configure(cfg: &mut ServiceConfig) {
     cfg.service(
-        web::resource("/api/groups/{group_id}/achievements")
-            .route(web::get().to(get_achievements)),
+        web::resource("/api/groups/{group_id}/achievements").route(web::get().to(get_achievements)),
     );
     cfg.service(
         web::resource("/api/groups/{group_id}/achievements/wall")
@@ -98,7 +97,7 @@ pub async fn get_achievements(
 
     // 检查用户是否是组成员
     let is_member: bool = sqlx::query_scalar::<_, bool>(
-        "SELECT EXISTS(SELECT 1 FROM association_group_members WHERE group_id=$1 AND user_id=$2 AND member_status='ACTIVE')"
+        "SELECT EXISTS(SELECT 1 FROM association_group_members WHERE group_id=$1 AND user_id=$2 AND member_status='ACTIVE'::group_member_status_enum)"
     )
     .bind(gid)
     .bind(token.user_id)
@@ -200,7 +199,7 @@ pub async fn get_achievement_wall(
 
     // 检查用户是否是组成员
     let is_member: bool = sqlx::query_scalar::<_, bool>(
-        "SELECT EXISTS(SELECT 1 FROM association_group_members WHERE group_id=$1 AND user_id=$2 AND member_status='ACTIVE')"
+        "SELECT EXISTS(SELECT 1 FROM association_group_members WHERE group_id=$1 AND user_id=$2 AND member_status='ACTIVE'::group_member_status_enum)"
     )
     .bind(gid)
     .bind(token.user_id)

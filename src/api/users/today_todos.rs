@@ -72,7 +72,8 @@ struct OrderRow {
     ref_id: i64,
     group_id: i64,
     group_name: String,
-    title: String,
+    /// orders.title 是可空列(VARCHAR(128)), 老数据可能为 NULL
+    title: Option<String>,
 }
 
 struct WishRow {
@@ -165,7 +166,8 @@ pub async fn get_today_todos(
             group_id: Some(r.group_id),
             group_name: Some(r.group_name.clone()),
             title: title.to_string(),
-            subtitle: Some(r.title.clone()),
+            // orders.title 可空, NULL 时显示占位
+            subtitle: Some(r.title.clone().unwrap_or_else(|| "（未命名）".to_string())),
             ref_id: Some(r.ref_id),
             action_url: format!("/pages/orders/detail?id={}", r.ref_id),
         });
@@ -237,7 +239,7 @@ async fn fetch_sign_in(
         JOIN association_groups g ON g.group_id = gm.group_id
         LEFT JOIN sign_in_records sr
           ON sr.user_id = gm.user_id AND sr.group_id = gm.group_id AND sr.sign_date = $2
-        WHERE gm.user_id = $1 AND gm.member_status = 'ACTIVE'
+        WHERE gm.user_id = $1 AND gm.member_status = 'ACTIVE'::group_member_status_enum
         "#,
     )
     .bind(user_id)
@@ -263,16 +265,16 @@ async fn fetch_orders(db: &sqlx::PgPool, user_id: i64) -> Result<Vec<OrderRow>, 
         SELECT 'ACCEPT' AS kind, o.order_id AS ref_id, o.group_id, g.group_name,
                o.title, o.created_at
         FROM orders o JOIN association_groups g ON g.group_id = o.group_id
-        WHERE o.assignee_id = $1 AND o.status IN ('CREATED','PENDING_ACCEPT')
+        WHERE o.assignee_id = $1 AND o.status IN ('CREATED'::order_status_enum,'PENDING_ACCEPT'::order_status_enum)
         UNION ALL
         SELECT 'COMPLETE' AS kind, o.order_id, o.group_id, g.group_name, o.title, o.created_at
         FROM orders o JOIN association_groups g ON g.group_id = o.group_id
-        WHERE o.assignee_id = $1 AND o.status IN ('ACCEPTED','IN_PROGRESS')
+        WHERE o.assignee_id = $1 AND o.status IN ('ACCEPTED'::order_status_enum,'IN_PROGRESS'::order_status_enum)
         UNION ALL
         SELECT 'CONFIRM' AS kind, o.order_id, o.group_id, g.group_name, o.title, o.created_at
         FROM orders o JOIN association_groups g ON g.group_id = o.group_id
         WHERE o.user_id = $1
-          AND o.status IN ('PRODUCTION_COMPLETED','BREEDER_FINISHED')
+          AND o.status IN ('PRODUCTION_COMPLETED'::order_status_enum,'BREEDER_FINISHED'::order_status_enum)
         ORDER BY created_at ASC
         "#,
     )
@@ -298,11 +300,11 @@ async fn fetch_wishes(db: &sqlx::PgPool, user_id: i64) -> Result<Vec<WishRow>, s
         SELECT 'FULFILL' AS kind, w.wish_id AS ref_id, w.group_id, g.group_name,
                w.wish_name AS title, w.fulfillment_due_at AS sort_at
         FROM wishes w JOIN association_groups g ON g.group_id = w.group_id
-        WHERE w.fulfiller_id = $1 AND w.status = 'CLAIMED'
+        WHERE w.fulfiller_id = $1 AND w.status = 'CLAIMED'::wish_status_enum
         UNION ALL
         SELECT 'NEGOTIATE' AS kind, w.wish_id, w.group_id, g.group_name, w.wish_name, w.created_at
         FROM wishes w JOIN association_groups g ON g.group_id = w.group_id
-        WHERE w.status = 'NEGOTIATING'
+        WHERE w.status = 'NEGOTIATING'::wish_status_enum
           AND (w.requester_id = $1 OR w.fulfiller_id = $1)
         ORDER BY sort_at ASC NULLS LAST
         "#,

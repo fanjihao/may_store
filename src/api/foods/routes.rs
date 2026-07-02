@@ -187,7 +187,7 @@ async fn ensure_member(
     let ok: bool = sqlx::query_scalar(
         r#"SELECT EXISTS(
              SELECT 1 FROM association_group_members
-             WHERE user_id = $1 AND group_id = $2 AND member_status = 'ACTIVE'
+             WHERE user_id = $1 AND group_id = $2 AND member_status = 'ACTIVE'::group_member_status_enum
            )"#,
     )
     .bind(user_id)
@@ -327,8 +327,7 @@ pub async fn create_food(
         r#"INSERT INTO foods (food_id, food_name, description, images, tag_id, ingredients, steps,
                               food_status, submit_role, apply_status, created_by, group_id,
                               created_at, updated_at)
-           VALUES ($1, $2, $3, $4::jsonb, $5, $6, $7,
-                   'NORMAL', 'RECEIVING_CREATE', 'APPROVED', $8, $9, NOW(), NOW())"#,
+           VALUES ($1, $2, $3, $4::jsonb, $5, $6, $7, 'NORMAL'::food_status_enum, 'RECEIVING_CREATE'::submit_role_enum, 'APPROVED'::apply_status_enum, $8, $9, NOW(), NOW())"#,
     )
     .bind(food_id)
     .bind(name)
@@ -429,12 +428,12 @@ pub async fn list_foods(
               lo.last_order_at,
               lo.last_completed_at,
               EXISTS(SELECT 1 FROM user_food_mark ufm
-                     WHERE ufm.user_id = $8 AND ufm.food_id = f.food_id AND ufm.mark_type = 'LIKE') AS is_favorited
+                     WHERE ufm.user_id = $8 AND ufm.food_id = f.food_id AND ufm.mark_type = 'LIKE'::mark_type_enum) AS is_favorited
        FROM foods f
        LEFT JOIN tags t ON t.tag_id = f.tag_id
        LEFT JOIN LATERAL (
          SELECT MAX(o.created_at) AS last_order_at,
-                MAX(CASE WHEN o.status = 'CONFIRMED_COMPLETED' THEN o.updated_at END) AS last_completed_at
+                MAX(CASE WHEN o.status = 'CONFIRMED_COMPLETED'::order_status_enum THEN o.updated_at END) AS last_completed_at
          FROM order_items oi
          JOIN orders o ON o.order_id = oi.order_id
          WHERE oi.food_id = f.food_id
@@ -453,7 +452,7 @@ pub async fn list_foods(
            SELECT 1 FROM user_food_mark ufm_fav
            WHERE ufm_fav.user_id = $8
              AND ufm_fav.food_id = f.food_id
-             AND ufm_fav.mark_type = 'LIKE'
+             AND ufm_fav.mark_type = 'LIKE'::mark_type_enum
          )"#,
         );
     }
@@ -566,12 +565,12 @@ pub async fn get_food(
                   lo.last_order_at,
                   lo.last_completed_at,
                   EXISTS(SELECT 1 FROM user_food_mark ufm
-                         WHERE ufm.user_id = $3 AND ufm.food_id = f.food_id AND ufm.mark_type = 'LIKE') AS is_favorited
+                         WHERE ufm.user_id = $3 AND ufm.food_id = f.food_id AND ufm.mark_type = 'LIKE'::mark_type_enum) AS is_favorited
            FROM foods f
            LEFT JOIN tags t ON t.tag_id = f.tag_id
            LEFT JOIN LATERAL (
              SELECT MAX(o.created_at) AS last_order_at,
-                    MAX(CASE WHEN o.status = 'CONFIRMED_COMPLETED' THEN o.updated_at END) AS last_completed_at
+                    MAX(CASE WHEN o.status = 'CONFIRMED_COMPLETED'::order_status_enum THEN o.updated_at END) AS last_completed_at
              FROM order_items oi
              JOIN orders o ON o.order_id = oi.order_id
              WHERE oi.food_id = f.food_id

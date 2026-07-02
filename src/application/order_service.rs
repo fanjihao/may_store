@@ -111,7 +111,7 @@ impl OrderService {
 
         // 记录状态历史
         sqlx::query(
-            "INSERT INTO order_status_history (order_id, from_status, to_status, changed_by) VALUES ($1,$2,$3,$4)"
+            "INSERT INTO order_status_history (order_id, from_status, to_status, changed_by) VALUES ($1, $2::order_status_enum, $3::order_status_enum, $4)"
         )
         .bind(rec.order_id)
         .bind::<Option<OrderStatus>>(None)
@@ -726,14 +726,14 @@ impl OrderService {
     ) -> Result<OrderStatistics, CustomError> {
         let count = sqlx::query(
             "SELECT
-                COALESCE(SUM(CASE WHEN status = 'PENDING_ACCEPT' THEN 1 ELSE 0 END), 0) as pending_accept,
-                COALESCE(SUM(CASE WHEN status = 'IN_PROGRESS' THEN 1 ELSE 0 END), 0) as in_progress,
-                COALESCE(SUM(CASE WHEN status = 'BREEDER_FINISHED' THEN 1 ELSE 0 END), 0) as pending_confirm
+                COALESCE(SUM(CASE WHEN status = 'PENDING_ACCEPT'::order_status_enum THEN 1 ELSE 0 END), 0) as pending_accept,
+                COALESCE(SUM(CASE WHEN status = 'IN_PROGRESS'::order_status_enum THEN 1 ELSE 0 END), 0) as in_progress,
+                COALESCE(SUM(CASE WHEN status = 'BREEDER_FINISHED'::order_status_enum THEN 1 ELSE 0 END), 0) as pending_confirm
             FROM
                 orders
             WHERE
                 group_id = $1
-                AND status IN ('PENDING_ACCEPT', 'IN_PROGRESS', 'BREEDER_FINISHED')",
+                AND status IN ('PENDING_ACCEPT'::order_status_enum, 'IN_PROGRESS'::order_status_enum, 'BREEDER_FINISHED'::order_status_enum)",
         )
         .bind(group_id)
         .fetch_one(db)
@@ -883,11 +883,22 @@ impl OrderService {
                 {
                     let current_lp: i32 = user_row.get("love_point");
                     let balance_after = current_lp + delta;
-                    sqlx::query("INSERT INTO love_point_transactions (user_id, amount, type, biz_type, biz_id, available_after) VALUES ($1,$2,'FINISH_REWARD','ORDER',$3,$4)")
+                    // love_point_tx_type_enum 合法值: EARN / FREEZE / UNFREEZE / DEDUCT / ADJUST
+                    // 订单完成: 正值用 EARN, 负值用 DEDUCT
+                    // 字符串到自定义 enum PG 不会隐式转换, 必须 ::love_point_tx_type_enum
+                    let tx_type = if delta >= 0 { "EARN" } else { "DEDUCT" };
+                    sqlx::query(
+                        r#"INSERT INTO love_point_transactions
+                           (user_id, group_id, type, amount, available_before, available_after, frozen_before, frozen_after, biz_type, biz_id)
+                           VALUES ($1, $2, $7::love_point_tx_type_enum, $3, $4, $5, 0, 0, 'ORDER', $6)"#
+                    )
                         .bind(receiver_user_id)
+                        .bind(group_id)
                         .bind(delta)
+                        .bind(current_lp as i64)
+                        .bind(balance_after as i64)
                         .bind(order.order_id)
-                        .bind(balance_after)
+                        .bind(tx_type)
                         .execute(&mut *tx)
                         .await?;
                     sqlx::query("UPDATE users SET love_point=$2 WHERE user_id=$1")
@@ -903,7 +914,7 @@ impl OrderService {
         }
 
         // 记录状态历史
-        sqlx::query("INSERT INTO order_status_history (order_id, from_status, to_status, changed_by, remark) VALUES ($1,$2,$3,$4,$5)")
+        sqlx::query("INSERT INTO order_status_history (order_id, from_status, to_status, changed_by, remark) VALUES ($1, $2::order_status_enum, $3::order_status_enum, $4, $5)")
             .bind(order.order_id)
             .bind(from_status)
             .bind(input.to_status)
@@ -958,6 +969,38 @@ impl OrderService {
         .collect();
 
         tx.commit().await?;
+
+        // 发布状态变更事件 (用于 /api/groups/{group_id}/activities 活动流)
+        // 仅在 from != to 时发（防御性，正常情况前面已经拦截）
+        if from_status != input.to_status {
+            let event_type = match input.to_status {
+                OrderStatus::Accepted => EventType::OrderAccepted,
+                OrderStatus::ProductionCompleted => EventType::OrderCompleted,
+                OrderStatus::ConfirmedCompleted => EventType::OrderConfirmedCompleted,
+                OrderStatus::ConfirmedIncomplete => EventType::OrderConfirmedIncomplete,
+                OrderStatus::Cancelled => EventType::OrderCancelled,
+                OrderStatus::Rejected => EventType::OrderRejected,
+                OrderStatus::Timeout => EventType::OrderTimeout,
+                // Created 是独立入口 (create_order), 不在这发
+                OrderStatus::Created => EventType::OrderCreated,
+            };
+            let _ = EventPublisher::publish(
+                db,
+                event_type,
+                serde_json::json!({
+                    "order_id": order.order_id,
+                    "user_id": user_id,
+                    "group_id": order.group_id,
+                    "from_status": from_status,
+                    "to_status": input.to_status,
+                    "order_type": order.points_reward, // 留个口子, 真实 order_type 字段后续可以加
+                }),
+                Some(user_id),
+                order.group_id,
+                Some("order"),
+                Some(order.order_id),
+            );
+        }
 
         Ok(OrderOutNew {
             order_id: order.order_id,
@@ -1035,7 +1078,7 @@ impl OrderService {
                 ON
                     agm.group_id = o.group_id
                 WHERE
-                    o.order_id = $1 AND agm.role_in_group = 'RECEIVING' FOR UPDATE",
+                    o.order_id = $1 AND agm.role_in_group = 'RECEIVING'::group_member_role_enum FOR UPDATE",
         )
         .bind(order_id)
         .fetch_optional(db)
@@ -1158,20 +1201,65 @@ impl OrderService {
         }
     }
 
-    async fn get_group_point_config<'a, E>(
-        executor: E,
+    async fn get_group_point_config(
+        conn: &mut sqlx::PgConnection,
         group_id: Option<i64>,
-    ) -> GroupPointConfigOut
-    where
-        E: sqlx::Executor<'a, Database = sqlx::Postgres>,
-    {
+    ) -> GroupPointConfigOut {
         let mut cfg = GroupPointConfigOut::default();
+
+        // 1) 优先从 global_configs 读取系统级默认值
+        //    multi-admin「系统配置」页改这 4 项即可生效，无需重启
+        macro_rules! read_global_int {
+            ($conn:expr, $key:literal, $default:expr) => {
+                sqlx::query_as::<_, (Option<serde_json::Value>,)>(
+                    "SELECT config_value FROM global_configs WHERE config_key = $1",
+                )
+                .bind($key)
+                .fetch_optional($conn)
+                .await
+                .ok()
+                .flatten()
+                .and_then(|(v,)| v)
+                .and_then(|v| v.as_i64().map(|n| n as i32))
+                .unwrap_or($default)
+            };
+        }
+
+        cfg.confirmed_finished_points = read_global_int!(
+            &mut *conn,
+            "confirmedFinishedPoints",
+            cfg.confirmed_finished_points
+        );
+        cfg.confirmed_unfinished_points = read_global_int!(
+            &mut *conn,
+            "confirmedUnfinishedPoints",
+            cfg.confirmed_unfinished_points
+        );
+        cfg.breeder_closed_points = read_global_int!(
+            &mut *conn,
+            "breederClosedPoints",
+            cfg.breeder_closed_points
+        );
+        cfg.timeout_points = read_global_int!(
+            &mut *conn,
+            "timeoutPoints",
+            cfg.timeout_points
+        );
+
+        // 2) per-group 覆盖 (FSD §11.23 group_configs 表) —— 已存在的 group 行会盖掉上面 4 个值
+        //    group_configs.normal_order_love_point 替代旧 group_point_configs.confirmed_finished_points
         if let Some(gid) = group_id {
             if let Ok(Some(r)) = sqlx::query_as::<_, GroupPointConfigOut>(
-                "SELECT group_id, breeder_closed_points, confirmed_finished_points, confirmed_unfinished_points, timeout_points, overdue_unfinished_points FROM group_point_configs WHERE group_id=$1"
+                "SELECT group_id, \
+                        breeder_closed_points, \
+                        normal_order_love_point AS confirmed_finished_points, \
+                        confirmed_unfinished_points, \
+                        timeout_points, \
+                        overdue_unfinished_points \
+                 FROM group_configs WHERE group_id=$1"
             )
             .bind(gid)
-            .fetch_optional(executor)
+            .fetch_optional(&mut *conn)
             .await {
                 cfg = r;
             }
@@ -1180,7 +1268,7 @@ impl OrderService {
     }
 }
 
-/// 群组积分配置（用于订单服务）
+/// 群组积分配置（用于订单服务）—— 从 group_configs (FSD §11.23) 读
 #[allow(dead_code)]
 #[derive(Debug, Clone, sqlx::FromRow)]
 pub struct GroupPointConfigOut {

@@ -57,7 +57,7 @@ impl OrderRepository for PostgresOrderRepository {
     async fn save(&self, order: &OrderRecord) -> Result<(), CustomError> {
         sqlx::query(
             r#"INSERT INTO orders (order_id, user_id, group_id, status, goal_time, remark, points_reward)
-               VALUES ($1, $2, $3, $4, $5, $6, $7)"#
+               VALUES ($1, $2, $3, $4::order_status_enum, $5, $6, $7)"#
         )
         .bind(order.order_id)
         .bind(order.user_id)
@@ -72,7 +72,7 @@ impl OrderRepository for PostgresOrderRepository {
     }
 
     async fn update_status(&self, order_id: i64, status: &str) -> Result<(), CustomError> {
-        sqlx::query("UPDATE orders SET status = $2, last_status_change_at = NOW() WHERE order_id = $1")
+        sqlx::query("UPDATE orders SET status = $2::order_status_enum, last_status_change_at = NOW() WHERE order_id = $1")
             .bind(order_id)
             .bind(status)
             .execute(&self.pool)
@@ -81,7 +81,7 @@ impl OrderRepository for PostgresOrderRepository {
     }
 
     async fn delete(&self, order_id: i64) -> Result<(), CustomError> {
-        sqlx::query("UPDATE orders SET status = 'DELETED' WHERE order_id = $1")
+        sqlx::query("UPDATE orders SET status = 'DELETED'::user_status_enum WHERE order_id = $1")
             .bind(order_id)
             .execute(&self.pool)
             .await?;

@@ -23,7 +23,7 @@ impl MemorialDayService {
 
         // Get user's group_id
         let group_id: Option<i64> = sqlx::query_scalar(
-            "SELECT group_id FROM association_group_members WHERE user_id = $1 AND member_status='ACTIVE' LIMIT 1"
+            "SELECT group_id FROM association_group_members WHERE user_id = $1 AND member_status='ACTIVE'::group_member_status_enum LIMIT 1"
         )
         .bind(user_id)
         .fetch_optional(db)
@@ -71,7 +71,7 @@ impl MemorialDayService {
     ) -> Result<MemorialDay, CustomError> {
         // Get user's group_id
         let group_id: Option<i64> = sqlx::query_scalar(
-            "SELECT group_id FROM association_group_members WHERE user_id = $1 AND member_status='ACTIVE' LIMIT 1"
+            "SELECT group_id FROM association_group_members WHERE user_id = $1 AND member_status='ACTIVE'::group_member_status_enum LIMIT 1"
         )
         .bind(user_id)
         .fetch_optional(db)
@@ -128,7 +128,7 @@ impl MemorialDayService {
 
         // Check user is member of this group
         let is_member: bool = sqlx::query_scalar(
-            "SELECT EXISTS(SELECT 1 FROM association_group_members WHERE group_id=$1 AND user_id=$2 AND member_status='ACTIVE')"
+            "SELECT EXISTS(SELECT 1 FROM association_group_members WHERE group_id=$1 AND user_id=$2 AND member_status='ACTIVE'::group_member_status_enum)"
         )
         .bind(owner_group_id)
         .bind(user_id)
@@ -188,7 +188,7 @@ impl MemorialDayService {
 
         // Check user is member of this group
         let is_member: bool = sqlx::query_scalar(
-            "SELECT EXISTS(SELECT 1 FROM association_group_members WHERE group_id=$1 AND user_id=$2 AND member_status='ACTIVE')"
+            "SELECT EXISTS(SELECT 1 FROM association_group_members WHERE group_id=$1 AND user_id=$2 AND member_status='ACTIVE'::group_member_status_enum)"
         )
         .bind(owner_group_id)
         .bind(user_id)

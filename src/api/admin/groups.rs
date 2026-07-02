@@ -3,7 +3,7 @@
 use ntex::web::{
     self,
     types::{Json, Path, State},
-    HttpResponse, Responder, ServiceConfig,
+    Responder, ServiceConfig,
 };
 use serde::{Deserialize, Serialize};
 use sqlx::Row;
@@ -188,12 +188,11 @@ pub async fn get_group_members(
     let group_id = path.into_inner();
     let db = &state.db_pool;
 
-    let exists: Option<i64> = sqlx::query_scalar(
-        "SELECT group_id FROM association_groups WHERE group_id = $1",
-    )
-    .bind(group_id)
-    .fetch_optional(db)
-    .await?;
+    let exists: Option<i64> =
+        sqlx::query_scalar("SELECT group_id FROM association_groups WHERE group_id = $1")
+            .bind(group_id)
+            .fetch_optional(db)
+            .await?;
 
     if exists.is_none() {
         return Err(CustomError::NotFound("组不存在".into()));
@@ -204,7 +203,7 @@ pub async fn get_group_members(
                   m.role_in_group::text, m.member_status::text, m.joined_at
            FROM association_group_members m
            JOIN users u ON u.user_id = m.user_id
-           WHERE m.group_id = $1 AND m.member_status = 'ACTIVE'
+           WHERE m.group_id = $1 AND m.member_status = 'ACTIVE'::group_member_status_enum
            ORDER BY m.is_primary DESC, m.joined_at ASC"#,
     )
     .bind(group_id)

@@ -4,11 +4,10 @@
 use crate::config::AppState;
 use crate::domain::user::entities::UserRecord;
 use crate::domain::user::{
-    BindUserDirectlyInput, ConfirmInvitationInput, Gender, GroupInfoOut, GroupPointConfig,
-    GroupPointConfigUpdateInput, GroupUpdateInput, InvitationListOut, InvitationRequestOut,
-    IsRegisterResponse, LoginInput, LoginMethod, LoginResponse, NewInvitationInput,
-    ProfileUpdateInput, RegisterInput, RoleSwitchInput, RoleSwitchResult, UnbindRequestInput,
-    UserInfoResponse, UserPublic, UserRole,
+    BindUserDirectlyInput, ConfirmInvitationInput, Gender, GroupInfoOut, GroupUpdateInput,
+    InvitationListOut, InvitationRequestOut, IsRegisterResponse, LoginInput, LoginMethod,
+    LoginResponse, NewInvitationInput, ProfileUpdateInput, RegisterInput, RoleSwitchInput,
+    RoleSwitchResult, UnbindRequestInput, UserInfoResponse, UserPublic, UserRole,
 };
 use crate::errors::CustomError;
 use crate::middlewares::jwt;
@@ -80,7 +79,7 @@ impl UserService {
 
         let record = sqlx::query_as::<_, UserRecord>(
             r#"SELECT u.user_id, u.username, u.nick_name, u.email, u.role, u.love_point, u.diamond, u.avatar, u.phone, u.open_id, u.status, u.created_at, u.updated_at, u.password_hash, u.password_algo, u.gender, u.birthday, u.username_change, u.login_method, u.last_login_at, u.password_updated_at, u.is_temp_password, u.push_id, u.last_role_switch_at,
-               (SELECT agm.group_id FROM association_group_members agm JOIN association_groups g ON g.group_id=agm.group_id AND g.status='ACTIVE' WHERE agm.user_id=u.user_id AND agm.member_status='ACTIVE' ORDER BY agm.is_primary DESC, agm.group_id ASC LIMIT 1) AS group_id
+               (SELECT agm.group_id FROM association_group_members agm JOIN association_groups g ON g.group_id=agm.group_id AND g.status='ACTIVE'::user_status_enum WHERE agm.user_id=u.user_id AND agm.member_status='ACTIVE'::group_member_status_enum ORDER BY agm.is_primary DESC, agm.group_id ASC LIMIT 1) AS group_id
                FROM users u WHERE u.username = $1 OR u.open_id = $1"#
         )
         .bind(&account)
@@ -139,7 +138,7 @@ impl UserService {
         let db = &state.db_pool;
         let rec = sqlx::query_as::<_, UserRecord>(r#"
             SELECT u.user_id, u.username, u.email, u.nick_name, u.role, u.love_point, u.diamond, u.avatar, u.phone, u.open_id, u.status, u.created_at, u.updated_at, u.password_hash, u.password_algo, u.gender, u.birthday, u.username_change, u.login_method, u.last_login_at, u.password_updated_at, u.is_temp_password, u.push_id, u.last_role_switch_at,
-                   (SELECT agm.group_id FROM association_group_members agm JOIN association_groups g ON g.group_id=agm.group_id AND g.status='ACTIVE' WHERE agm.user_id=u.user_id AND agm.member_status='ACTIVE' ORDER BY agm.is_primary DESC, agm.group_id ASC LIMIT 1) AS group_id
+                   (SELECT agm.group_id FROM association_group_members agm JOIN association_groups g ON g.group_id=agm.group_id AND g.status='ACTIVE'::user_status_enum WHERE agm.user_id=u.user_id AND agm.member_status='ACTIVE'::group_member_status_enum ORDER BY agm.is_primary DESC, agm.group_id ASC LIMIT 1) AS group_id
             FROM users u WHERE u.user_id = $1
         "#)
         .bind(user_id)
@@ -156,7 +155,7 @@ impl UserService {
         let db = &state.db_pool;
         let rec = sqlx::query_as::<_, UserRecord>(r#"
             SELECT u.user_id, u.username, u.email, u.nick_name, u.role, u.love_point, u.diamond, u.avatar, u.phone, u.open_id, u.status, u.created_at, u.updated_at, u.password_hash, u.password_algo, u.gender, u.birthday, u.username_change, u.login_method, u.last_login_at, u.password_updated_at, u.is_temp_password, u.push_id, u.last_role_switch_at,
-                   (SELECT agm.group_id FROM association_group_members agm JOIN association_groups g ON g.group_id=agm.group_id AND g.status='ACTIVE' WHERE agm.user_id=u.user_id AND agm.member_status='ACTIVE' ORDER BY agm.is_primary DESC, agm.group_id ASC LIMIT 1) AS group_id
+                   (SELECT agm.group_id FROM association_group_members agm JOIN association_groups g ON g.group_id=agm.group_id AND g.status='ACTIVE'::user_status_enum WHERE agm.user_id=u.user_id AND agm.member_status='ACTIVE'::group_member_status_enum ORDER BY agm.is_primary DESC, agm.group_id ASC LIMIT 1) AS group_id
             FROM users u WHERE u.username = $1
         "#)
         .bind(username)
@@ -274,8 +273,8 @@ impl UserService {
                       login_method, last_login_at, password_updated_at, is_temp_password,
                       push_id, last_role_switch_at,
                       (SELECT agm.group_id FROM association_group_members agm
-                         JOIN association_groups g ON g.group_id = agm.group_id AND g.status = 'ACTIVE'
-                         WHERE agm.user_id = users.user_id AND agm.member_status = 'ACTIVE'
+                         JOIN association_groups g ON g.group_id = agm.group_id AND g.status = 'ACTIVE'::user_status_enum
+                         WHERE agm.user_id = users.user_id AND agm.member_status = 'ACTIVE'::group_member_status_enum
                          ORDER BY agm.is_primary DESC, agm.group_id ASC LIMIT 1) AS group_id
             "#,
         )
@@ -305,7 +304,7 @@ impl UserService {
         // 检查用户是否有正在进行的订单
         let active_orders: i64 = sqlx::query(
             r#"SELECT COUNT(*) FROM orders WHERE user_id = $1
-               AND status IN ('CREATED', 'ACCEPTED', 'PRODUCTION_COMPLETED')"#,
+               AND status IN ('CREATED'::order_status_enum, 'ACCEPTED'::order_status_enum, 'PRODUCTION_COMPLETED'::order_status_enum)"#,
         )
         .bind(user_id)
         .fetch_one(db)
@@ -521,7 +520,7 @@ impl GroupService {
 
         // 获取组成员数量
         let member_count: i32 =
-            sqlx::query("SELECT COUNT(*) FROM association_group_members WHERE group_id = $1 AND member_status='ACTIVE'")
+            sqlx::query("SELECT COUNT(*) FROM association_group_members WHERE group_id = $1 AND member_status='ACTIVE'::group_member_status_enum")
                 .bind(group_id)
                 .fetch_one(db)
                 .await?
@@ -531,12 +530,12 @@ impl GroupService {
         let members = sqlx::query_as::<_, UserRecord>(
             r#"SELECT u.user_id, u.username, u.nick_name, u.avatar, u.role, u.love_point, u.diamond,
                (SELECT agm.group_id FROM association_group_members agm
-                  JOIN association_groups g ON g.group_id = agm.group_id AND g.status = 'ACTIVE'
-                  WHERE agm.user_id = u.user_id AND agm.member_status = 'ACTIVE'
+                  JOIN association_groups g ON g.group_id = agm.group_id AND g.status = 'ACTIVE'::user_status_enum
+                  WHERE agm.user_id = u.user_id AND agm.member_status = 'ACTIVE'::group_member_status_enum
                   ORDER BY agm.is_primary DESC, agm.group_id ASC LIMIT 1) AS group_id
                FROM users u
                JOIN association_group_members agm ON agm.user_id = u.user_id
-               WHERE agm.group_id = $1 AND agm.member_status = 'ACTIVE'"#
+               WHERE agm.group_id = $1 AND agm.member_status = 'ACTIVE'::group_member_status_enum"#
         )
         .bind(group_id)
         .fetch_all(db)
@@ -630,73 +629,6 @@ impl GroupService {
                 .execute(db)
                 .await?;
         }
-
-        Ok(())
-    }
-
-    /// 获取群组积分配置
-    #[allow(dead_code)]
-    pub async fn get_group_point_config(
-        _user_id: i64,
-        group_id: i64,
-        state: &Arc<AppState>,
-    ) -> Result<GroupPointConfig, CustomError> {
-        let db = &state.db_pool;
-        let cfg = sqlx::query_as::<_, GroupPointConfig>(
-            "SELECT group_id, order_point_percent FROM group_point_configs WHERE group_id=$1"
-        )
-        .bind(group_id)
-        .fetch_optional(db)
-        .await?;
-
-        cfg.ok_or_else(|| CustomError::NotFound("群组积分配置不存在".into()))
-    }
-
-    /// 更新群组积分配置
-    pub async fn update_group_point_config(
-        user_id: i64,
-        group_id: i64,
-        input: GroupPointConfigUpdateInput,
-        state: &Arc<AppState>,
-    ) -> Result<(), CustomError> {
-        let db = &state.db_pool;
-
-        // 检查用户是否是组管理员
-        let user_role: Option<(String,)> =
-            sqlx::query_as("SELECT role::text FROM users WHERE user_id = $1")
-                .bind(user_id)
-                .fetch_optional(db)
-                .await?;
-
-        let is_admin = user_role.map(|(r,)| r == "ADMIN").unwrap_or(false);
-        if !is_admin {
-            return Err(CustomError::Forbidden("只有管理员才能更新积分配置".into()));
-        }
-
-        // 构建动态更新
-        let mut updates = Vec::new();
-        let mut param_count = 1;
-
-        if input.order_point_percent.is_some() {
-            updates.push(format!("order_point_percent = ${}", param_count));
-            param_count += 1;
-        }
-
-        if updates.is_empty() {
-            return Err(CustomError::BadRequest("没有需要更新的字段".into()));
-        }
-
-        let query = format!(
-            "UPDATE group_point_configs SET {} WHERE group_id = ${}",
-            updates.join(", "),
-            param_count
-        );
-
-        sqlx::query(&query)
-            .bind(input.order_point_percent)
-            .bind(group_id)
-            .execute(db)
-            .await?;
 
         Ok(())
     }

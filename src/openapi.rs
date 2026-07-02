@@ -54,6 +54,7 @@ impl Modify for SecurityAddon {
         crate::api::users::get_user_groups,
         crate::api::users::delete_account,
         crate::api::users::today_todos::get_today_todos,
+        crate::api::users::get_points_config,
         // ==================== Groups (双人组) ====================
         crate::api::groups::routes::create_group,
         crate::api::groups::routes::get_group,
@@ -224,6 +225,7 @@ impl Modify for SecurityAddon {
             crate::api::users::today_todos::TodoItem,
             crate::api::users::today_todos::TodayTodosSummary,
             crate::api::users::today_todos::TodayTodosResponse,
+            crate::api::users::PointsConfigResponse,
             // -- Groups --
             crate::api::groups::routes::CreateGroupResponse,
             crate::api::groups::routes::SwapRoleResponse,

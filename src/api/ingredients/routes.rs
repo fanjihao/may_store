@@ -53,7 +53,7 @@ async fn ensure_member(
     let ok: bool = sqlx::query_scalar(
         r#"SELECT EXISTS(
              SELECT 1 FROM association_group_members
-             WHERE user_id = $1 AND group_id = $2 AND member_status = 'ACTIVE'
+             WHERE user_id = $1 AND group_id = $2 AND member_status = 'ACTIVE'::group_member_status_enum
            )"#,
     )
     .bind(user_id)

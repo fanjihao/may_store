@@ -15,39 +15,20 @@ DROP TABLE IF EXISTS support_tickets CASCADE;
 DROP TABLE IF EXISTS admin_users CASCADE;
 DROP TABLE IF EXISTS group_configs CASCADE;
 DROP TABLE IF EXISTS global_configs CASCADE;
-DROP TABLE IF EXISTS group_achievements CASCADE;
 DROP TABLE IF EXISTS user_achievements CASCADE;
 DROP TABLE IF EXISTS achievements CASCADE;
 DROP TABLE IF EXISTS audit_logs CASCADE;
 DROP TABLE IF EXISTS upload_files CASCADE;
 DROP TABLE IF EXISTS notifications CASCADE;
-DROP TABLE IF EXISTS group_footprint_capacity CASCADE;
 DROP TABLE IF EXISTS footprints CASCADE;
 DROP TABLE IF EXISTS sign_in_records CASCADE;
-DROP TABLE IF EXISTS group_invites CASCADE;
 DROP TABLE IF EXISTS memorial_day CASCADE;
 DROP TABLE IF EXISTS event_log CASCADE;
-DROP TABLE IF EXISTS achievement_definitions CASCADE;
-DROP TABLE IF EXISTS user_record CASCADE;
 DROP TABLE IF EXISTS record_group CASCADE;
-DROP TABLE IF EXISTS group_diamond_flow CASCADE;
-DROP TABLE IF EXISTS diamond_flow CASCADE;
-DROP TABLE IF EXISTS user_diamond CASCADE;
-DROP TABLE IF EXISTS group_point_configs CASCADE;
 DROP TABLE IF EXISTS wx_subscription_templates CASCADE;
 DROP TABLE IF EXISTS food_stats CASCADE;
-DROP TABLE IF EXISTS cart_items CASCADE;
-DROP TABLE IF EXISTS carts CASCADE;
 DROP TABLE IF EXISTS feedback CASCADE;
-DROP TABLE IF EXISTS user_message_state CASCADE;
-DROP TABLE IF EXISTS messages CASCADE;
-DROP TABLE IF EXISTS message_categories CASCADE;
-DROP TABLE IF EXISTS lottery_draw_results CASCADE;
-DROP TABLE IF EXISTS lottery_draws CASCADE;
 DROP TABLE IF EXISTS order_ratings CASCADE;
-DROP TABLE IF EXISTS sweet_talks CASCADE;
-DROP TABLE IF EXISTS sign_records CASCADE;
-DROP TABLE IF EXISTS point_transactions CASCADE;
 DROP TABLE IF EXISTS daily_reward_counters CASCADE;
 DROP TABLE IF EXISTS diamond_transactions CASCADE;
 DROP TABLE IF EXISTS group_exp_transactions CASCADE;
@@ -65,25 +46,17 @@ DROP TABLE IF EXISTS ingredients CASCADE;
 DROP TABLE IF EXISTS foods CASCADE;
 DROP TABLE IF EXISTS tags CASCADE;
 DROP TABLE IF EXISTS guest_invitations CASCADE;
-DROP TABLE IF EXISTS association_group_requests CASCADE;
 DROP TABLE IF EXISTS user_group_points CASCADE;
 DROP TABLE IF EXISTS association_group_members CASCADE;
 DROP TABLE IF EXISTS group_level_configs CASCADE;
 DROP TABLE IF EXISTS association_groups CASCADE;
 DROP TABLE IF EXISTS users CASCADE;
 
--- Drop legacy compatibility tables (reset together with v3 tables)
-DROP TABLE IF EXISTS point_flow CASCADE;
-DROP TABLE IF EXISTS group_invitations CASCADE;
-
 -- Drop enum types
 DROP TYPE IF EXISTS login_method_enum CASCADE;
 DROP TYPE IF EXISTS gender_enum CASCADE;
 DROP TYPE IF EXISTS mark_type_enum CASCADE;
-DROP TYPE IF EXISTS cart_status_enum CASCADE;
 DROP TYPE IF EXISTS feedback_status_enum CASCADE;
-DROP TYPE IF EXISTS message_status_enum CASCADE;
-DROP TYPE IF EXISTS lottery_success_enum CASCADE;
 DROP TYPE IF EXISTS point_tx_type_enum CASCADE;
 DROP TYPE IF EXISTS event_status_enum CASCADE;
 DROP TYPE IF EXISTS guest_invite_status_enum CASCADE;
@@ -97,7 +70,6 @@ DROP TYPE IF EXISTS audit_action_enum CASCADE;
 DROP TYPE IF EXISTS upload_business_ref_enum CASCADE;
 DROP TYPE IF EXISTS content_check_status_enum CASCADE;
 DROP TYPE IF EXISTS notification_type_enum CASCADE;
-DROP TYPE IF EXISTS group_invite_status_enum CASCADE;
 DROP TYPE IF EXISTS food_status_v2_enum CASCADE;
 DROP TYPE IF EXISTS wish_quality_level_enum CASCADE;
 DROP TYPE IF EXISTS wish_quality_status_enum CASCADE;
@@ -227,7 +199,6 @@ CREATE TYPE wish_quality_level_enum AS ENUM ('NONE', 'NORMAL', 'GOOD', 'EXCELLEN
 CREATE TYPE food_status_v2_enum AS ENUM ('ACTIVE', 'HIDDEN', 'DELETED');
 
 -- Group invite status (FSD §11.14)
-CREATE TYPE group_invite_status_enum AS ENUM ('ACTIVE', 'EXPIRED', 'EXHAUSTED');
 
 -- Notification type (FSD §10.1)
 CREATE TYPE notification_type_enum AS ENUM ('ORDER', 'WISH', 'SIGN_IN', 'SYSTEM');
@@ -308,16 +279,13 @@ CREATE TYPE point_tx_type_enum AS ENUM (
 );
 
 -- Lottery success
-CREATE TYPE lottery_success_enum AS ENUM ('SUCCESS', 'FAIL');
 
 -- Message status
-CREATE TYPE message_status_enum AS ENUM ('ACTIVE', 'REVOKED');
 
 -- Feedback status
 CREATE TYPE feedback_status_enum AS ENUM ('NEW', 'PROCESSING', 'CLOSED');
 
 -- Cart status
-CREATE TYPE cart_status_enum AS ENUM ('ACTIVE', 'SETTLED', 'CLEARED');
 
 -- Mark type
 CREATE TYPE mark_type_enum AS ENUM ('LIKE', 'NOT_RECOMMEND', 'DONE', 'RETRY', 'HATE');
@@ -499,24 +467,6 @@ COMMENT ON COLUMN user_group_points.frozen_love_point IS '冻结爱心积分（�
 CREATE INDEX idx_ugp_user_group ON user_group_points(user_id, group_id);
 
 -- ================= ASSOCIATION GROUP REQUESTS =================
-CREATE TABLE association_group_requests (
-    request_id BIGSERIAL PRIMARY KEY,
-    requester_id BIGINT NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
-    target_user_id BIGINT NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
-    status SMALLINT NOT NULL DEFAULT 0,
-    remark VARCHAR(255),
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    handled_at TIMESTAMPTZ
-);
-COMMENT ON TABLE association_group_requests IS '绑定申请记录';
-COMMENT ON COLUMN association_group_requests.request_id IS '申请记录主键';
-COMMENT ON COLUMN association_group_requests.requester_id IS '发起者用户ID';
-COMMENT ON COLUMN association_group_requests.target_user_id IS '目标用户ID';
-COMMENT ON COLUMN association_group_requests.status IS '申请状态：0待处理 1同意 2拒绝';
-COMMENT ON COLUMN association_group_requests.remark IS '备注/理由';
-COMMENT ON COLUMN association_group_requests.created_at IS '创建时间';
-COMMENT ON COLUMN association_group_requests.handled_at IS '处理时间';
-CREATE INDEX idx_agr_target_status ON association_group_requests(target_user_id, status);
 
 -- ================= GUEST INVITATIONS =================
 CREATE TABLE guest_invitations (
@@ -952,56 +902,9 @@ CREATE TABLE daily_reward_counters (
 COMMENT ON TABLE daily_reward_counters IS '每日奖励上限统计 - 超上限后订单完成但不发放奖励';
 CREATE INDEX idx_drc_group_date ON daily_reward_counters(group_id, stat_date);
 
--- ================= POINT TRANSACTIONS (legacy) =================
-CREATE TABLE point_transactions (
-    id BIGSERIAL PRIMARY KEY,
-    user_id BIGINT NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
-    amount INT NOT NULL,
-    type point_tx_type_enum NOT NULL,
-    ref_type SMALLINT,
-    ref_id BIGINT,
-    balance_after INT NOT NULL,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-COMMENT ON TABLE point_transactions IS '积分变动流水(legacy)';
-CREATE INDEX idx_pt_user_created ON point_transactions(user_id, created_at);
-CREATE INDEX idx_pt_ref ON point_transactions(ref_type, ref_id);
-CREATE INDEX idx_pt_type ON point_transactions(type);
-
 -- ================= SIGN IN =================
-CREATE TABLE sign_records (
-    sign_id BIGSERIAL PRIMARY KEY,
-    user_id BIGINT NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
-    group_id BIGINT NOT NULL REFERENCES association_groups(group_id) ON DELETE CASCADE,
-    sign_date DATE NOT NULL,
-    consecutive_days INT NOT NULL DEFAULT 1,
-    diamond_reward INT NOT NULL DEFAULT 0,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    UNIQUE(user_id, group_id, sign_date)
-);
-COMMENT ON TABLE sign_records IS '用户签到记录';
-COMMENT ON COLUMN sign_records.sign_id IS '签到记录主键ID';
-COMMENT ON COLUMN sign_records.user_id IS '用户ID';
-COMMENT ON COLUMN sign_records.group_id IS '组ID';
-COMMENT ON COLUMN sign_records.sign_date IS '签到日期';
-COMMENT ON COLUMN sign_records.consecutive_days IS '连续签到天数';
-COMMENT ON COLUMN sign_records.diamond_reward IS '本次签到获得钻石';
-COMMENT ON COLUMN sign_records.created_at IS '签到时间';
-CREATE INDEX idx_sr_user_date ON sign_records(user_id, sign_date DESC);
-CREATE INDEX idx_sr_group_date ON sign_records(group_id, sign_date DESC);
 
 -- ================= SWEET TALKS =================
-CREATE TABLE sweet_talks (
-    talk_id BIGSERIAL PRIMARY KEY,
-    user_id BIGINT NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
-    group_id BIGINT NOT NULL REFERENCES association_groups(group_id) ON DELETE CASCADE,
-    content TEXT NOT NULL,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-COMMENT ON TABLE sweet_talks IS '每日情话记录';
-CREATE INDEX idx_st_group_time ON sweet_talks(group_id, created_at DESC);
-CREATE INDEX idx_st_user_today ON sweet_talks(user_id, (CAST(created_at AT TIME ZONE 'Asia/Shanghai' AS DATE)));
-
 -- ================= ORDER RATINGS =================
 CREATE TABLE order_ratings (
     rating_id BIGSERIAL PRIMARY KEY,
@@ -1018,63 +921,7 @@ CREATE INDEX idx_or_target ON order_ratings(target_user_id);
 CREATE INDEX idx_or_rater ON order_ratings(rater_user_id);
 
 -- ================= LOTTERY =================
-CREATE TABLE lottery_draws (
-    draw_id BIGSERIAL PRIMARY KEY,
-    user_id BIGINT NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
-    food_types_requested VARCHAR(32),
-    request_payload JSONB,
-    is_success lottery_success_enum NOT NULL DEFAULT 'SUCCESS',
-    fail_reason VARCHAR(255),
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-COMMENT ON TABLE lottery_draws IS '抽奖主记录';
-CREATE INDEX idx_ld_user_time ON lottery_draws(user_id, created_at);
-
-CREATE TABLE lottery_draw_results (
-    id BIGSERIAL PRIMARY KEY,
-    draw_id BIGINT NOT NULL REFERENCES lottery_draws(draw_id) ON DELETE CASCADE,
-    food_type SMALLINT NOT NULL,
-    food_id BIGINT NOT NULL REFERENCES foods(food_id) ON DELETE RESTRICT,
-    food_name_snapshot VARCHAR(128),
-    food_photo_snapshot VARCHAR(256),
-    allocated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    UNIQUE(draw_id, food_type)
-);
-COMMENT ON TABLE lottery_draw_results IS '抽奖结果明细';
-CREATE INDEX idx_ldr_draw ON lottery_draw_results(draw_id);
-
 -- ================= MESSAGES =================
-CREATE TABLE message_categories (
-    category_id BIGSERIAL PRIMARY KEY,
-    type_name VARCHAR(64) NOT NULL UNIQUE,
-    display_name VARCHAR(128),
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-COMMENT ON TABLE message_categories IS '消息类别';
-
-CREATE TABLE messages (
-    message_id BIGSERIAL PRIMARY KEY,
-    category_id BIGINT NOT NULL REFERENCES message_categories(category_id) ON DELETE CASCADE,
-    sender_id BIGINT REFERENCES users(user_id) ON DELETE SET NULL,
-    target_user_id BIGINT REFERENCES users(user_id) ON DELETE CASCADE,
-    content TEXT NOT NULL,
-    status message_status_enum NOT NULL DEFAULT 'ACTIVE',
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-COMMENT ON TABLE messages IS '消息记录';
-CREATE INDEX idx_msg_category_time ON messages(category_id, created_at);
-CREATE INDEX idx_msg_target ON messages(target_user_id);
-
-CREATE TABLE user_message_state (
-    id BIGSERIAL PRIMARY KEY,
-    user_id BIGINT NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
-    category_id BIGINT NOT NULL REFERENCES message_categories(category_id) ON DELETE CASCADE,
-    last_read_at TIMESTAMPTZ,
-    unread_count INT NOT NULL DEFAULT 0,
-    UNIQUE(user_id, category_id)
-);
-COMMENT ON TABLE user_message_state IS '用户消息阅读状态';
-
 -- ================= FEEDBACK =================
 CREATE TABLE feedback (
     feedback_id BIGSERIAL PRIMARY KEY,
@@ -1089,27 +936,6 @@ COMMENT ON TABLE feedback IS '用户反馈';
 CREATE INDEX idx_fb_status ON feedback(status);
 
 -- ================= CART =================
-CREATE TABLE carts (
-    cart_id BIGSERIAL PRIMARY KEY,
-    user_id BIGINT NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
-    group_id BIGINT NOT NULL REFERENCES association_groups(group_id) ON DELETE CASCADE,
-    status cart_status_enum NOT NULL DEFAULT 'ACTIVE',
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    UNIQUE (user_id, group_id, status)
-);
-COMMENT ON TABLE carts IS '购物车主表';
-
-CREATE TABLE cart_items (
-    id BIGSERIAL PRIMARY KEY,
-    cart_id BIGINT NOT NULL REFERENCES carts(cart_id) ON DELETE CASCADE,
-    food_id BIGINT NOT NULL REFERENCES foods(food_id) ON DELETE RESTRICT,
-    quantity INT NOT NULL DEFAULT 1,
-    added_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-COMMENT ON TABLE cart_items IS '购物车明细';
-CREATE INDEX idx_ci_cart ON cart_items(cart_id);
-CREATE INDEX idx_ci_food ON cart_items(food_id);
-
 -- ================= FOOD STATS =================
 CREATE TABLE food_stats (
     food_id BIGINT PRIMARY KEY REFERENCES foods(food_id) ON DELETE CASCADE,
@@ -1139,66 +965,10 @@ CREATE INDEX idx_wst_code ON wx_subscription_templates(template_code);
 CREATE INDEX idx_wst_active ON wx_subscription_templates(is_active);
 
 -- ================= GROUP POINT CONFIGS =================
-CREATE TABLE group_point_configs (
-    group_id BIGINT PRIMARY KEY REFERENCES association_groups(group_id) ON DELETE CASCADE,
-    breeder_closed_points INT NOT NULL DEFAULT -8,
-    confirmed_finished_points INT NOT NULL DEFAULT 10,
-    confirmed_unfinished_points INT NOT NULL DEFAULT -5,
-    timeout_points INT NOT NULL DEFAULT -3,
-    overdue_unfinished_points INT NOT NULL DEFAULT -10,
-    unlock_card_diamond_cost INT NOT NULL DEFAULT 100,
-    default_footprint_capacity INT NOT NULL DEFAULT 10,
-    order_point_percent INT NOT NULL DEFAULT 100,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-COMMENT ON TABLE group_point_configs IS '组积分奖惩配置';
-COMMENT ON COLUMN group_point_configs.order_point_percent IS '订单积分百分比';
 
 -- ================= USER DIAMOND (legacy) =================
-CREATE TABLE user_diamond (
-    id BIGSERIAL PRIMARY KEY,
-    user_id BIGINT NOT NULL UNIQUE REFERENCES users(user_id) ON DELETE CASCADE,
-    diamond_balance INT NOT NULL DEFAULT 0,
-    total_get INT NOT NULL DEFAULT 0,
-    total_consume INT NOT NULL DEFAULT 0,
-    create_time TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    update_time TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-COMMENT ON TABLE user_diamond IS '用户钻石余额表(legacy)';
-
 -- ================= DIAMOND FLOW (legacy) =================
-CREATE TABLE diamond_flow (
-    id BIGSERIAL PRIMARY KEY,
-    flow_no VARCHAR(64) NOT NULL UNIQUE,
-    user_id BIGINT NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
-    type SMALLINT NOT NULL,
-    scene VARCHAR(32) NOT NULL,
-    diamond_num INT NOT NULL,
-    balance_after INT NOT NULL,
-    relation_id BIGINT,
-    remark VARCHAR(255),
-    create_time TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-COMMENT ON TABLE diamond_flow IS '钻石流水记录表(legacy)';
-CREATE INDEX idx_diamond_flow_user_id ON diamond_flow(user_id);
-
 -- ================= GROUP DIAMOND FLOW =================
-CREATE TABLE group_diamond_flow (
-    id BIGSERIAL PRIMARY KEY,
-    group_id BIGINT NOT NULL REFERENCES association_groups(group_id) ON DELETE CASCADE,
-    type SMALLINT NOT NULL,
-    scene VARCHAR(50) NOT NULL,
-    diamond_num INT NOT NULL,
-    balance_after INT NOT NULL,
-    remark TEXT,
-    ref_id BIGINT,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-COMMENT ON TABLE group_diamond_flow IS '组钻石流水记录表';
-CREATE INDEX idx_gdf_group_id ON group_diamond_flow(group_id);
-CREATE INDEX idx_gdf_created ON group_diamond_flow(created_at);
-
 -- ================= RECORD GROUP =================
 CREATE TABLE record_group (
     id BIGSERIAL PRIMARY KEY,
@@ -1216,46 +986,12 @@ COMMENT ON TABLE record_group IS '足迹记录分组表';
 CREATE INDEX idx_record_group_group_id ON record_group(group_id);
 
 -- ================= USER RECORD =================
-CREATE TABLE user_record (
-    id BIGSERIAL PRIMARY KEY,
-    group_id BIGINT NOT NULL REFERENCES association_groups(group_id) ON DELETE CASCADE,
-    record_group_id BIGINT NOT NULL REFERENCES record_group(id) ON DELETE CASCADE,
-    user_id BIGINT NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
-    order_id BIGINT UNIQUE REFERENCES orders(order_id) ON DELETE SET NULL,
-    title VARCHAR(128),
-    images TEXT NOT NULL,
-    content TEXT,
-    address VARCHAR(255),
-    record_time TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    like_count INT NOT NULL DEFAULT 0,
-    comment_count INT NOT NULL DEFAULT 0,
-    is_draft SMALLINT NOT NULL DEFAULT 0,
-    create_time TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    update_time TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-COMMENT ON TABLE user_record IS '用户足迹记录表';
-CREATE INDEX idx_user_record_group_id ON user_record(group_id);
-CREATE INDEX idx_user_record_rg_id ON user_record(record_group_id);
-
 -- ================= COMMENTS & LIKES (V2.0 暂缓) =================
 -- 足迹评论与点赞 V1.0 不实现。表结构从 v3.sql 移除。
 -- FSD §24.11 旧章节已删除，§24.12 标记 V2.0 暂缓。
 -- V2.0 重新设计时新建 record_comment / record_like 表。
 
 -- ================= ACHIEVEMENTS =================
-CREATE TABLE achievement_definitions (
-    id BIGSERIAL PRIMARY KEY,
-    slug VARCHAR(64) NOT NULL UNIQUE,
-    name VARCHAR(128) NOT NULL,
-    icon VARCHAR(256),
-    description TEXT,
-    requirement_type VARCHAR(64) NOT NULL,
-    requirement_value INT NOT NULL,
-    is_active BOOLEAN NOT NULL DEFAULT TRUE,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-COMMENT ON TABLE achievement_definitions IS '成就/勋章定义表 (DEPRECATED - 已被 achievements 替代,FSD §11.21)';
-
 -- ================= EVENT LOG =================
 CREATE TABLE event_log (
     id BIGSERIAL PRIMARY KEY,
@@ -1307,27 +1043,8 @@ CREATE INDEX idx_memorial_group ON memorial_day(group_id);
 
 -- ================= GROUP INVITES (§11.14) =================
 -- 替代旧的 guest_invitations；统一处理组邀请
-CREATE TABLE group_invites (
-    invite_id BIGSERIAL PRIMARY KEY,
-    group_id BIGINT NOT NULL REFERENCES association_groups(group_id) ON DELETE CASCADE,
-    invite_code VARCHAR(32) NOT NULL UNIQUE,
-    created_by BIGINT NOT NULL REFERENCES users(user_id) ON DELETE RESTRICT,
-    expire_at TIMESTAMPTZ NOT NULL,
-    max_uses INT NOT NULL DEFAULT 1,
-    used_count INT NOT NULL DEFAULT 0,
-    status group_invite_status_enum NOT NULL DEFAULT 'ACTIVE',
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-COMMENT ON TABLE group_invites IS '组邀请链接/邀请码 - FSD §11.14';
-COMMENT ON COLUMN group_invites.invite_code IS '6位字母数字邀请码';
-COMMENT ON COLUMN group_invites.expire_at IS '失效时间';
-COMMENT ON COLUMN group_invites.max_uses IS '最大使用次数';
-COMMENT ON COLUMN group_invites.status IS 'ACTIVE/EXPIRED/EXHAUSTED';
-CREATE UNIQUE INDEX uniq_group_invites_code ON group_invites(invite_code);
-CREATE INDEX idx_group_invites_group_status ON group_invites(group_id, status);
 
 -- ================= SIGN IN RECORDS (§11.15) =================
--- 替代旧的 sign_records
 CREATE TABLE sign_in_records (
     id BIGSERIAL PRIMARY KEY,
     group_id BIGINT NOT NULL REFERENCES association_groups(group_id) ON DELETE CASCADE,
@@ -1350,7 +1067,6 @@ CREATE UNIQUE INDEX uniq_sign_in_group_user_date ON sign_in_records(group_id, us
 CREATE INDEX idx_sign_in_group_date ON sign_in_records(group_id, sign_date);
 
 -- ================= FOOTPRINTS (§11.16) =================
--- 替代旧的 user_record；统一为 FSD 定义的足迹结构
 CREATE TABLE footprints (
     footprint_id BIGSERIAL PRIMARY KEY,
     group_id BIGINT NOT NULL REFERENCES association_groups(group_id) ON DELETE CASCADE,
@@ -1393,22 +1109,8 @@ CREATE INDEX idx_footprints_user ON footprints(user_id);
 CREATE INDEX idx_footprints_record_group ON footprints(record_group_id) WHERE record_group_id IS NOT NULL;
 
 -- ================= GROUP FOOTPRINT CAPACITY (§11.17) =================
-CREATE TABLE group_footprint_capacity (
-    id BIGSERIAL PRIMARY KEY,
-    group_id BIGINT NOT NULL UNIQUE REFERENCES association_groups(group_id) ON DELETE CASCADE,
-    base_capacity INT NOT NULL DEFAULT 20,
-    expanded_capacity INT NOT NULL DEFAULT 0,
-    total_capacity INT NOT NULL DEFAULT 20,
-    diamond_spent BIGINT NOT NULL DEFAULT 0,
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-COMMENT ON TABLE group_footprint_capacity IS '组足迹容量配置 - FSD §11.17';
-COMMENT ON COLUMN group_footprint_capacity.base_capacity IS '等级基础容量';
-COMMENT ON COLUMN group_footprint_capacity.expanded_capacity IS '钻石扩容累加';
-COMMENT ON COLUMN group_footprint_capacity.total_capacity IS '实际容量=基础+扩容';
 
 -- ================= NOTIFICATIONS (§11.18) =================
--- 替代旧的 messages；统一为 FSD 定义的 4 类通知
 CREATE TABLE notifications (
     notification_id BIGSERIAL PRIMARY KEY,
     user_id BIGINT NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
@@ -1478,7 +1180,6 @@ CREATE INDEX idx_audit_operator_created ON audit_logs(operator_id, created_at DE
 CREATE INDEX idx_audit_action_created ON audit_logs(action_type, created_at DESC);
 
 -- ================= ACHIEVEMENTS (§11.21) =================
--- 替代 achievement_definitions；增加 rule_config JSONB
 CREATE TABLE achievements (
     achievement_id BIGSERIAL PRIMARY KEY,
     code VARCHAR(64) NOT NULL UNIQUE,
@@ -1509,18 +1210,6 @@ CREATE TABLE user_achievements (
 COMMENT ON TABLE user_achievements IS '用户成就解锁记录 - FSD §11.21';
 CREATE UNIQUE INDEX uniq_user_achievement ON user_achievements(user_id, achievement_id);
 
-CREATE TABLE group_achievements (
-    id BIGSERIAL PRIMARY KEY,
-    group_id BIGINT NOT NULL REFERENCES association_groups(group_id) ON DELETE CASCADE,
-    achievement_id BIGINT NOT NULL REFERENCES achievements(achievement_id) ON DELETE CASCADE,
-    progress INT NOT NULL DEFAULT 0,
-    unlocked_at TIMESTAMPTZ,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    UNIQUE(group_id, achievement_id)
-);
-COMMENT ON TABLE group_achievements IS '组成就解锁记录 - FSD §11.21';
-CREATE UNIQUE INDEX uniq_group_achievement ON group_achievements(group_id, achievement_id);
-
 -- ================= GLOBAL CONFIGS (§11.22) =================
 CREATE TABLE global_configs (
     config_id BIGSERIAL PRIMARY KEY,
@@ -1544,11 +1233,14 @@ INSERT INTO global_configs (config_key, config_value, category, description) VAL
     ('orderPointPercent', '100'::jsonb, 'ORDER', '订单积分百分比'),
     ('diamondUnlockCost', '100'::jsonb, 'REWARDS', '钻石解锁价格'),
     ('defaultFootprintCapacity', '50'::jsonb, 'GENERAL', '默认足迹容量'),
-    ('fullTeamBonusAmt', '10'::jsonb, 'SIGN_IN', '全组满签时最后签到用户获得的组钻石数')
+    ('fullTeamBonusAmt', '10'::jsonb, 'SIGN_IN', '全组满签时最后签到用户获得的组钻石数'),
+    ('confirmedFinishedPoints', '10'::jsonb, 'ORDER', '订单确认完成后奖励的爱心积分'),
+    ('confirmedUnfinishedPoints', '-5'::jsonb, 'ORDER', '订单确认未完成扣减的爱心积分'),
+    ('breederClosedPoints', '-8'::jsonb, 'ORDER', '主人家取消订单扣减的爱心积分'),
+    ('timeoutPoints', '-3'::jsonb, 'ORDER', '订单超时扣减的爱心积分')
 ON CONFLICT (config_key) DO NOTHING;
 
 -- ================= GROUP CONFIGS (§11.23) =================
--- 替代 group_point_configs；统一为 FSD 定义的 9 个字段
 CREATE TABLE group_configs (
     config_id BIGSERIAL PRIMARY KEY,
     group_id BIGINT NOT NULL UNIQUE REFERENCES association_groups(group_id) ON DELETE CASCADE,
@@ -1556,17 +1248,23 @@ CREATE TABLE group_configs (
     guest_order_love_point INT NOT NULL DEFAULT 10,
     normal_order_group_exp INT NOT NULL DEFAULT 5,
     guest_order_group_exp INT NOT NULL DEFAULT 5,
+    confirmed_unfinished_points INT NOT NULL DEFAULT -5,
+    breeder_closed_points INT NOT NULL DEFAULT -8,
+    timeout_points INT NOT NULL DEFAULT -3,
+    overdue_unfinished_points INT NOT NULL DEFAULT -10,
+    unlock_card_diamond_cost INT NOT NULL DEFAULT 100,
+    -- 限额 / 容量
     daily_love_point_limit INT NOT NULL DEFAULT 100,
     daily_group_exp_limit INT NOT NULL DEFAULT 200,
     order_timeout_hours INT NOT NULL DEFAULT 24,
     food_capacity INT NOT NULL DEFAULT 20,
     tag_capacity INT NOT NULL DEFAULT 10,
-    footprint_capacity INT NOT NULL DEFAULT 20,
+    footprint_capacity INT NOT NULL DEFAULT 10,
     updated_by BIGINT REFERENCES users(user_id) ON DELETE SET NULL,
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
-COMMENT ON TABLE group_configs IS '组级配置覆盖 - FSD §11.23';
-COMMENT ON COLUMN group_configs.normal_order_love_point IS '本组普通订单完成默认爱心积分';
+COMMENT ON TABLE group_configs IS '组级配置覆盖 - FSD §11.23 (扩展: 含积分奖惩 + 解锁钻石成本)';
+COMMENT ON COLUMN group_configs.normal_order_love_point IS '本组普通订单完成默认爱心积分 (= 旧 group_point_configs.confirmed_finished_points)';
 COMMENT ON COLUMN group_configs.guest_order_love_point IS '本组做客订单完成默认爱心积分';
 COMMENT ON COLUMN group_configs.daily_love_point_limit IS '本组用户每日爱心积分上限';
 COMMENT ON COLUMN group_configs.order_timeout_hours IS '本组订单超时时间(小时)';
@@ -1618,7 +1316,6 @@ CREATE INDEX idx_support_handler_status ON support_tickets(handler_id, status);
 -- 以下表为旧版本遗留，FSD §11 已废弃。保留以防旧代码引用，未来版本将移除。
 -- 关键字段不与 FSD 对齐，新代码不应使用。
 
--- 旧版做客邀请（已被 group_invites 替代，但 guest_invitations 仍有做客订单引用）
 -- 保留供历史数据
 -- 已重构为支持做客订单
 -- 旧版签到（已被 sign_in_records 替代）
@@ -1652,39 +1349,4 @@ VALUES (
     NOW(),
     NOW()
 );
--- ================= LEGACY POINT FLOW (dashboard_service 引用) =================
--- 旧版代码用 point_flow 表存积分流水,新版本拆为 love_point_transactions。
--- 此处保留以兼容 application/dashboard_service.rs 的 point_journey 查询。
-CREATE TABLE point_flow (
-    id BIGSERIAL PRIMARY KEY,
-    user_id BIGINT NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
-    group_id BIGINT REFERENCES association_groups(group_id) ON DELETE CASCADE,
-    amount BIGINT NOT NULL,
-    biz_type VARCHAR(32) NOT NULL,           -- ORDER / WISH / SIGN_IN / REFUND
-    biz_id BIGINT,                           -- 关联业务 ID
-    ref_type VARCHAR(32),                    -- 旧代码引用的字段名
-    balance_after BIGINT,                    -- 旧代码引用的字段名
-    scene VARCHAR(32),                       -- 业务场景:wish / order_complete
-    remark VARCHAR(256),
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-COMMENT ON TABLE point_flow IS '积分流水(legacy) - dashboard_service point_journey 引用';
-CREATE INDEX idx_pf_user ON point_flow(user_id, created_at DESC);
-
--- ================= LEGACY GROUP INVITATIONS (kitchens 路由引用) =================
--- 旧版 application 用 group_invitations 表存做客邀请;v3 用 guest_invitations。
--- 此处保留以兼容 api/kitchens/routes.rs 的查询。
-CREATE TABLE group_invitations (
-    id BIGSERIAL PRIMARY KEY,
-    group_id BIGINT NOT NULL REFERENCES association_groups(group_id) ON DELETE CASCADE,
-    invite_code VARCHAR(32) NOT NULL UNIQUE,
-    created_by BIGINT NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
-    max_uses INT NOT NULL DEFAULT 1,
-    used_count INT NOT NULL DEFAULT 0,
-    expires_at TIMESTAMPTZ,
-    revoked BOOLEAN NOT NULL DEFAULT FALSE,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-COMMENT ON TABLE group_invitations IS '组做客邀请(legacy 名称) - 实际功能同 guest_invitations';
-CREATE INDEX idx_group_invitations_code ON group_invitations(invite_code);
-CREATE INDEX idx_group_invitations_group ON group_invitations(group_id);
+-- ================= END =================

@@ -13,8 +13,6 @@ use utoipa::ToSchema;
 
 use crate::api::admin::auth;
 use crate::api::admin::group_levels;
-use crate::api::admin::groups;
-use crate::api::admin::users;
 use crate::config::AppState;
 use crate::errors::CustomError;
 use crate::middlewares::admin_auth::AdminToken;
@@ -27,6 +25,10 @@ const CONFIG_ENTRIES: &[(&str, i64, i64, &str)] = &[
     ("diamondUnlockCost", 10, 10000, "REWARDS"),
     ("defaultFootprintCapacity", 10, 1000, "GENERAL"),
     ("fullTeamBonusAmt", 0, 100, "SIGN_IN"),
+    ("confirmedFinishedPoints", -1000, 1000, "ORDER"),
+    ("confirmedUnfinishedPoints", -1000, 1000, "ORDER"),
+    ("breederClosedPoints", -1000, 1000, "ORDER"),
+    ("timeoutPoints", -1000, 1000, "ORDER"),
 ];
 
 const SIGN_IN_REWARDS_ELEMENT_MIN: i64 = 1;
@@ -189,6 +191,14 @@ pub struct ConfigResponse {
     pub default_footprint_capacity: i32,
     /// 全组满签时最后签到用户获得的组钻石数
     pub full_team_bonus_amt: i32,
+    /// 订单确认完成后奖励的爱心积分（可正可负）
+    pub confirmed_finished_points: i32,
+    /// 订单确认未完成扣减的爱心积分
+    pub confirmed_unfinished_points: i32,
+    /// 主人家取消订单扣减的爱心积分
+    pub breeder_closed_points: i32,
+    /// 订单超时扣减的爱心积分
+    pub timeout_points: i32,
 }
 
 /// 心愿质量奖励响应
@@ -381,6 +391,10 @@ pub async fn get_config(
     let default_diamond_unlock_cost: i32 = 100;
     let default_footprint_capacity: i32 = 50;
     let default_full_team_bonus_amt: i32 = 10;
+    let default_confirmed_finished_points: i32 = 10;
+    let default_confirmed_unfinished_points: i32 = -5;
+    let default_breeder_closed_points: i32 = -8;
+    let default_timeout_points: i32 = -3;
 
     // 读 7 天奖励数组
     let rewards: Vec<i32> = sqlx::query_as::<_, (Option<serde_json::Value>,)>(
@@ -420,6 +434,10 @@ pub async fn get_config(
         diamond_unlock_cost: read_int(db, "diamondUnlockCost", default_diamond_unlock_cost).await,
         default_footprint_capacity: read_int(db, "defaultFootprintCapacity", default_footprint_capacity).await,
         full_team_bonus_amt: read_int(db, "fullTeamBonusAmt", default_full_team_bonus_amt).await,
+        confirmed_finished_points: read_int(db, "confirmedFinishedPoints", default_confirmed_finished_points).await,
+        confirmed_unfinished_points: read_int(db, "confirmedUnfinishedPoints", default_confirmed_unfinished_points).await,
+        breeder_closed_points: read_int(db, "breederClosedPoints", default_breeder_closed_points).await,
+        timeout_points: read_int(db, "timeoutPoints", default_timeout_points).await,
     };
 
     Ok(ApiResponse::success(response))
@@ -568,7 +586,7 @@ pub async fn wish_quality_reward(
     sqlx::query(
         r#"
         UPDATE wishes SET
-            quality_review_status = 'REVIEWED',
+            quality_review_status = 'REVIEWED'::wish_quality_status_enum,
             quality_reviewer_id = $1,
             quality_remark = $2,
             diamond_reward = $3,
@@ -601,8 +619,7 @@ pub async fn wish_quality_reward(
         sqlx::query(
             r#"
             INSERT INTO diamond_transactions (group_id, type, amount, balance_before, balance_after, biz_type, biz_id, idempotency_key, trace_id, created_at)
-            SELECT $1, 'EARN', $2, diamond - $2, diamond, 'WISH_QUALITY_REWARD', $3, $4, $5, NOW()
-            FROM association_groups WHERE group_id = $1
+            SELECT $1, 'EARN'::diamond_tx_type_enum, $2, diamond - $2, diamond, 'WISH_QUALITY_REWARD', $3, $4, $5, NOW()FROM association_groups WHERE group_id = $1
             "#
         )
         .bind(group_id)
@@ -738,7 +755,7 @@ pub async fn get_pending_review_orders(
         r#"SELECT order_id, group_id, type, user_id, status, risk_status, risk_detail,
            points_reward, group_exp_reward, point_grant_status, exp_grant_status, created_at
            FROM orders
-           WHERE point_grant_status = 'PENDING_REVIEW' OR exp_grant_status = 'PENDING_REVIEW'
+           WHERE point_grant_status = 'PENDING_REVIEW'::point_grant_status_enum OR exp_grant_status = 'PENDING_REVIEW'
            ORDER BY created_at DESC
            LIMIT $1"#,
     )
@@ -1075,8 +1092,7 @@ pub async fn compensate_points(
         sqlx::query(
             r#"INSERT INTO love_point_transactions
                (user_id, group_id, type, amount, available_before, available_after, biz_type, biz_id, idempotency_key, created_at)
-               SELECT $1, $2, 'ADJUST', $3, love_point, love_point + $3, $4, $5, $6, NOW()
-               FROM user_group_points WHERE user_id = $1 AND group_id = $2"#,
+               SELECT $1, $2, 'ADJUST'::love_point_tx_type_enum, $3, love_point, love_point + $3, $4, $5, $6, NOW()FROM user_group_points WHERE user_id = $1 AND group_id = $2"#,
         )
         .bind(input.user_id)
         .bind(group_id)
@@ -1099,8 +1115,7 @@ pub async fn compensate_points(
         sqlx::query(
             r#"INSERT INTO love_point_transactions
                (user_id, group_id, type, amount, available_before, available_after, biz_type, biz_id, idempotency_key, created_at)
-               SELECT $1, $2, 'ADJUST', $3, love_point, love_point - $3, $4, $5, $6, NOW()
-               FROM user_group_points WHERE user_id = $1 AND group_id = $2"#,
+               SELECT $1, $2, 'ADJUST'::love_point_tx_type_enum, $3, love_point, love_point - $3, $4, $5, $6, NOW()FROM user_group_points WHERE user_id = $1 AND group_id = $2"#,
         )
         .bind(input.user_id)
         .bind(group_id)
@@ -1171,8 +1186,7 @@ pub async fn compensate_diamonds(
         sqlx::query(
             r#"INSERT INTO diamond_transactions
                (group_id, type, amount, balance_before, balance_after, biz_type, idempotency_key, created_at)
-               SELECT $1, 'ADJUST', $2, diamond, diamond + $2, 'ADMIN_COMPENSATION', $3, NOW()
-               FROM association_groups WHERE group_id = $1"#,
+               SELECT $1, 'ADJUST'::diamond_tx_type_enum, $2, diamond, diamond + $2, 'ADMIN_COMPENSATION', $3, NOW()FROM association_groups WHERE group_id = $1"#,
         )
         .bind(group_id)
         .bind(input.amount)
@@ -1189,8 +1203,7 @@ pub async fn compensate_diamonds(
         sqlx::query(
             r#"INSERT INTO diamond_transactions
                (group_id, type, amount, balance_before, balance_after, biz_type, idempotency_key, created_at)
-               SELECT $1, 'ADJUST', $2, diamond, diamond - $2, 'ADMIN_COMPENSATION', $3, NOW()
-               FROM association_groups WHERE group_id = $1"#,
+               SELECT $1, 'ADJUST'::diamond_tx_type_enum, $2, diamond, diamond - $2, 'ADMIN_COMPENSATION', $3, NOW()FROM association_groups WHERE group_id = $1"#,
         )
         .bind(group_id)
         .bind(input.amount)
@@ -1346,7 +1359,7 @@ pub async fn list_pending_food_audits(
     let rows = sqlx::query(
         r#"SELECT food_id, food_name, food_photo, group_id, created_by, apply_status, apply_remark, created_at
            FROM foods
-           WHERE apply_status = 'PENDING' AND is_del = 0
+           WHERE apply_status = 'PENDING'::apply_status_enum AND is_del = 0
              AND (
                $1::TIMESTAMPTZ IS NULL
                OR created_at > $1
@@ -1362,7 +1375,7 @@ pub async fn list_pending_food_audits(
     .await?;
 
     let total: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM foods WHERE apply_status = 'PENDING' AND is_del = 0"
+        "SELECT COUNT(*) FROM foods WHERE apply_status = 'PENDING'::apply_status_enum AND is_del = 0"
     )
     .fetch_one(&state.db_pool)
     .await?;
@@ -1459,7 +1472,7 @@ pub async fn audit_food(
     // 写审核日志
     sqlx::query(
         r#"INSERT INTO food_audit_logs (food_id, action, from_status, to_status, acted_by, remark)
-           VALUES ($1, $2, $3, $4, $5, $6)"#,
+           VALUES ($1, $2, $3::apply_status_enum, $4::apply_status_enum, $5, $6)"#,
     )
     .bind(food_id)
     .bind(if input.action == "APPROVE" { 2 } else { 3 })
@@ -1472,7 +1485,7 @@ pub async fn audit_food(
 
     // 更新菜品:apply_status + food_status
     sqlx::query(
-        "UPDATE foods SET apply_status = $1, food_status = $2, approved_at = NOW(), approved_by = $3 WHERE food_id = $4"
+        "UPDATE foods SET apply_status = $1::apply_status_enum, food_status = $2::food_status_enum, approved_at = NOW(), approved_by = $3 WHERE food_id = $4"
     )
     .bind(new_apply_status)
     .bind(new_food_status)

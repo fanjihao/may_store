@@ -102,10 +102,12 @@
 
 ## 改动 Rust 代码后必须跑的检查
 
-- 改完 Rust 代码 → 在 `cargo check` 通过之后，**必须**再跑：
+- 改完 Rust 代码 → 在 `cargo check` 通过之后，**必须**再跑：、
+
   ```bash
   CARGO_BUILD_JOBS=2 cargo test --test sqlx_rename_consistency
   ```
+  
 - 这是 `cargo test` 默认会跑的集成测试之一（如果只改 Rust 代码也可以直接 `cargo test`）。
 - 如果测试失败，提示"某字段 rename 在 SQL 中找不到对应列"——按错误信息修代码（要么删 rename 让 sqlx 用 Rust 字段名找，要么改 SQL 别 `AS`）。
 - 这一条是**强制的**——任何改了 Rust 代码的 commit 都必须通过该测试。

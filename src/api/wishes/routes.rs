@@ -129,7 +129,7 @@ pub async fn create_group_wish(
 
     // 检查用户是否是组成员
     let is_member: bool = sqlx::query_scalar::<_, bool>(
-        "SELECT EXISTS(SELECT 1 FROM association_group_members WHERE group_id=$1 AND user_id=$2 AND member_status='ACTIVE')",
+        "SELECT EXISTS(SELECT 1 FROM association_group_members WHERE group_id=$1 AND user_id=$2 AND member_status='ACTIVE'::group_member_status_enum)",
     )
     .bind(gid)
     .bind(user_token.user_id)
@@ -143,7 +143,7 @@ pub async fn create_group_wish(
     // 校验: 组内至少 2 人才能创建心愿
     let member_count: i64 = sqlx::query_scalar(
         "SELECT COUNT(*) FROM association_group_members \
-         WHERE group_id = $1 AND member_status = 'ACTIVE'",
+         WHERE group_id = $1 AND member_status = 'ACTIVE'::group_member_status_enum",
     )
     .bind(gid)
     .fetch_one(db)
@@ -191,7 +191,7 @@ pub async fn list_group_wishes(
 
     // 检查用户是否是组成员
     let is_member: bool = sqlx::query_scalar::<_, bool>(
-        "SELECT EXISTS(SELECT 1 FROM association_group_members WHERE group_id=$1 AND user_id=$2 AND member_status='ACTIVE')",
+        "SELECT EXISTS(SELECT 1 FROM association_group_members WHERE group_id=$1 AND user_id=$2 AND member_status='ACTIVE'::group_member_status_enum)",
     )
     .bind(gid)
     .bind(user_token.user_id)
@@ -706,11 +706,11 @@ pub async fn list_group_wishes(
             let sql = format!(
                 r#"SELECT
                       COUNT(*)::BIGINT AS total,
-                      COUNT(*) FILTER (WHERE w.status = 'NEGOTIATING')::BIGINT AS negotiating,
-                      COUNT(*) FILTER (WHERE w.status = 'CREATED')::BIGINT AS unlocked,
-                      COUNT(*) FILTER (WHERE w.status = 'CLAIMED')::BIGINT AS claimed,
-                      COUNT(*) FILTER (WHERE w.status = 'FINISHED')::BIGINT AS finished,
-                      COUNT(*) FILTER (WHERE w.status IN ('EXPIRED','CLOSED'))::BIGINT AS closed
+                      COUNT(*) FILTER (WHERE w.status = 'NEGOTIATING'::wish_status_enum)::BIGINT AS negotiating,
+                      COUNT(*) FILTER (WHERE w.status = 'CREATED'::order_status_enum)::BIGINT AS unlocked,
+                      COUNT(*) FILTER (WHERE w.status = 'CLAIMED'::wish_status_enum)::BIGINT AS claimed,
+                      COUNT(*) FILTER (WHERE w.status = 'FINISHED'::wish_status_enum)::BIGINT AS finished,
+                      COUNT(*) FILTER (WHERE w.status IN ('EXPIRED'::wish_status_enum,'CLOSED'::wish_status_enum))::BIGINT AS closed
                    FROM wishes w
                    WHERE w.group_id = $1 AND w.status = $2::wish_status_enum AND w.{} = $3
                      AND (w.created_by = $4 OR w.fulfiller_id = $4)"#,
@@ -723,11 +723,11 @@ pub async fn list_group_wishes(
         (Some(_sc), Some(s), None) => sqlx::query(
             r#"SELECT
                   COUNT(*)::BIGINT AS total,
-                  COUNT(*) FILTER (WHERE w.status = 'NEGOTIATING')::BIGINT AS negotiating,
-                  COUNT(*) FILTER (WHERE w.status = 'CREATED')::BIGINT AS unlocked,
-                  COUNT(*) FILTER (WHERE w.status = 'CLAIMED')::BIGINT AS claimed,
-                  COUNT(*) FILTER (WHERE w.status = 'FINISHED')::BIGINT AS finished,
-                  COUNT(*) FILTER (WHERE w.status IN ('EXPIRED','CLOSED'))::BIGINT AS closed
+                  COUNT(*) FILTER (WHERE w.status = 'NEGOTIATING'::wish_status_enum)::BIGINT AS negotiating,
+                  COUNT(*) FILTER (WHERE w.status = 'CREATED'::order_status_enum)::BIGINT AS unlocked,
+                  COUNT(*) FILTER (WHERE w.status = 'CLAIMED'::wish_status_enum)::BIGINT AS claimed,
+                  COUNT(*) FILTER (WHERE w.status = 'FINISHED'::wish_status_enum)::BIGINT AS finished,
+                  COUNT(*) FILTER (WHERE w.status IN ('EXPIRED'::wish_status_enum,'CLOSED'::wish_status_enum))::BIGINT AS closed
                FROM wishes w
                WHERE w.group_id = $1 AND w.status = $2::wish_status_enum
                  AND (w.created_by = $3 OR w.fulfiller_id = $3)"#,
@@ -739,11 +739,11 @@ pub async fn list_group_wishes(
             let sql = format!(
                 r#"SELECT
                       COUNT(*)::BIGINT AS total,
-                      COUNT(*) FILTER (WHERE w.status = 'NEGOTIATING')::BIGINT AS negotiating,
-                      COUNT(*) FILTER (WHERE w.status = 'CREATED')::BIGINT AS unlocked,
-                      COUNT(*) FILTER (WHERE w.status = 'CLAIMED')::BIGINT AS claimed,
-                      COUNT(*) FILTER (WHERE w.status = 'FINISHED')::BIGINT AS finished,
-                      COUNT(*) FILTER (WHERE w.status IN ('EXPIRED','CLOSED'))::BIGINT AS closed
+                      COUNT(*) FILTER (WHERE w.status = 'NEGOTIATING'::wish_status_enum)::BIGINT AS negotiating,
+                      COUNT(*) FILTER (WHERE w.status = 'CREATED'::order_status_enum)::BIGINT AS unlocked,
+                      COUNT(*) FILTER (WHERE w.status = 'CLAIMED'::wish_status_enum)::BIGINT AS claimed,
+                      COUNT(*) FILTER (WHERE w.status = 'FINISHED'::wish_status_enum)::BIGINT AS finished,
+                      COUNT(*) FILTER (WHERE w.status IN ('EXPIRED'::wish_status_enum,'CLOSED'::wish_status_enum))::BIGINT AS closed
                    FROM wishes w
                    WHERE w.group_id = $1 AND w.{} = $2
                      AND (w.created_by = $3 OR w.fulfiller_id = $3)"#,
@@ -756,11 +756,11 @@ pub async fn list_group_wishes(
         (Some(_sc), None, None) => sqlx::query(
             r#"SELECT
                   COUNT(*)::BIGINT AS total,
-                  COUNT(*) FILTER (WHERE w.status = 'NEGOTIATING')::BIGINT AS negotiating,
-                  COUNT(*) FILTER (WHERE w.status = 'CREATED')::BIGINT AS unlocked,
-                  COUNT(*) FILTER (WHERE w.status = 'CLAIMED')::BIGINT AS claimed,
-                  COUNT(*) FILTER (WHERE w.status = 'FINISHED')::BIGINT AS finished,
-                  COUNT(*) FILTER (WHERE w.status IN ('EXPIRED','CLOSED'))::BIGINT AS closed
+                  COUNT(*) FILTER (WHERE w.status = 'NEGOTIATING'::wish_status_enum)::BIGINT AS negotiating,
+                  COUNT(*) FILTER (WHERE w.status = 'CREATED'::order_status_enum)::BIGINT AS unlocked,
+                  COUNT(*) FILTER (WHERE w.status = 'CLAIMED'::wish_status_enum)::BIGINT AS claimed,
+                  COUNT(*) FILTER (WHERE w.status = 'FINISHED'::wish_status_enum)::BIGINT AS finished,
+                  COUNT(*) FILTER (WHERE w.status IN ('EXPIRED'::wish_status_enum,'CLOSED'::wish_status_enum))::BIGINT AS closed
                FROM wishes w
                WHERE w.group_id = $1
                  AND (w.created_by = $2 OR w.fulfiller_id = $2)"#,
@@ -772,11 +772,11 @@ pub async fn list_group_wishes(
             let sql = format!(
                 r#"SELECT
                       COUNT(*)::BIGINT AS total,
-                      COUNT(*) FILTER (WHERE w.status = 'NEGOTIATING')::BIGINT AS negotiating,
-                      COUNT(*) FILTER (WHERE w.status = 'CREATED')::BIGINT AS unlocked,
-                      COUNT(*) FILTER (WHERE w.status = 'CLAIMED')::BIGINT AS claimed,
-                      COUNT(*) FILTER (WHERE w.status = 'FINISHED')::BIGINT AS finished,
-                      COUNT(*) FILTER (WHERE w.status IN ('EXPIRED','CLOSED'))::BIGINT AS closed
+                      COUNT(*) FILTER (WHERE w.status = 'NEGOTIATING'::wish_status_enum)::BIGINT AS negotiating,
+                      COUNT(*) FILTER (WHERE w.status = 'CREATED'::order_status_enum)::BIGINT AS unlocked,
+                      COUNT(*) FILTER (WHERE w.status = 'CLAIMED'::wish_status_enum)::BIGINT AS claimed,
+                      COUNT(*) FILTER (WHERE w.status = 'FINISHED'::wish_status_enum)::BIGINT AS finished,
+                      COUNT(*) FILTER (WHERE w.status IN ('EXPIRED'::wish_status_enum,'CLOSED'::wish_status_enum))::BIGINT AS closed
                    FROM wishes w
                    WHERE w.group_id = $1 AND w.status = $2::wish_status_enum AND w.{} = $3"#,
                 col
@@ -788,11 +788,11 @@ pub async fn list_group_wishes(
         (None, Some(s), None) => sqlx::query(
             r#"SELECT
                   COUNT(*)::BIGINT AS total,
-                  COUNT(*) FILTER (WHERE w.status = 'NEGOTIATING')::BIGINT AS negotiating,
-                  COUNT(*) FILTER (WHERE w.status = 'CREATED')::BIGINT AS unlocked,
-                  COUNT(*) FILTER (WHERE w.status = 'CLAIMED')::BIGINT AS claimed,
-                  COUNT(*) FILTER (WHERE w.status = 'FINISHED')::BIGINT AS finished,
-                  COUNT(*) FILTER (WHERE w.status IN ('EXPIRED','CLOSED'))::BIGINT AS closed
+                  COUNT(*) FILTER (WHERE w.status = 'NEGOTIATING'::wish_status_enum)::BIGINT AS negotiating,
+                  COUNT(*) FILTER (WHERE w.status = 'CREATED'::order_status_enum)::BIGINT AS unlocked,
+                  COUNT(*) FILTER (WHERE w.status = 'CLAIMED'::wish_status_enum)::BIGINT AS claimed,
+                  COUNT(*) FILTER (WHERE w.status = 'FINISHED'::wish_status_enum)::BIGINT AS finished,
+                  COUNT(*) FILTER (WHERE w.status IN ('EXPIRED'::wish_status_enum,'CLOSED'::wish_status_enum))::BIGINT AS closed
                FROM wishes w
                WHERE w.group_id = $1 AND w.status = $2::wish_status_enum"#,
         )
@@ -803,11 +803,11 @@ pub async fn list_group_wishes(
             let sql = format!(
                 r#"SELECT
                       COUNT(*)::BIGINT AS total,
-                      COUNT(*) FILTER (WHERE w.status = 'NEGOTIATING')::BIGINT AS negotiating,
-                      COUNT(*) FILTER (WHERE w.status = 'CREATED')::BIGINT AS unlocked,
-                      COUNT(*) FILTER (WHERE w.status = 'CLAIMED')::BIGINT AS claimed,
-                      COUNT(*) FILTER (WHERE w.status = 'FINISHED')::BIGINT AS finished,
-                      COUNT(*) FILTER (WHERE w.status IN ('EXPIRED','CLOSED'))::BIGINT AS closed
+                      COUNT(*) FILTER (WHERE w.status = 'NEGOTIATING'::wish_status_enum)::BIGINT AS negotiating,
+                      COUNT(*) FILTER (WHERE w.status = 'CREATED'::order_status_enum)::BIGINT AS unlocked,
+                      COUNT(*) FILTER (WHERE w.status = 'CLAIMED'::wish_status_enum)::BIGINT AS claimed,
+                      COUNT(*) FILTER (WHERE w.status = 'FINISHED'::wish_status_enum)::BIGINT AS finished,
+                      COUNT(*) FILTER (WHERE w.status IN ('EXPIRED'::wish_status_enum,'CLOSED'::wish_status_enum))::BIGINT AS closed
                    FROM wishes w
                    WHERE w.group_id = $1 AND w.{} = $2"#,
                 col
@@ -819,11 +819,11 @@ pub async fn list_group_wishes(
         (None, None, None) => sqlx::query(
             r#"SELECT
                   COUNT(*)::BIGINT AS total,
-                  COUNT(*) FILTER (WHERE w.status = 'NEGOTIATING')::BIGINT AS negotiating,
-                  COUNT(*) FILTER (WHERE w.status = 'CREATED')::BIGINT AS unlocked,
-                  COUNT(*) FILTER (WHERE w.status = 'CLAIMED')::BIGINT AS claimed,
-                  COUNT(*) FILTER (WHERE w.status = 'FINISHED')::BIGINT AS finished,
-                  COUNT(*) FILTER (WHERE w.status IN ('EXPIRED','CLOSED'))::BIGINT AS closed
+                  COUNT(*) FILTER (WHERE w.status = 'NEGOTIATING'::wish_status_enum)::BIGINT AS negotiating,
+                  COUNT(*) FILTER (WHERE w.status = 'CREATED'::order_status_enum)::BIGINT AS unlocked,
+                  COUNT(*) FILTER (WHERE w.status = 'CLAIMED'::wish_status_enum)::BIGINT AS claimed,
+                  COUNT(*) FILTER (WHERE w.status = 'FINISHED'::wish_status_enum)::BIGINT AS finished,
+                  COUNT(*) FILTER (WHERE w.status IN ('EXPIRED'::wish_status_enum,'CLOSED'::wish_status_enum))::BIGINT AS closed
                FROM wishes w
                WHERE w.group_id = $1"#,
         )
@@ -1153,8 +1153,8 @@ pub async fn wish_expire(
 
     // P2-3: 用条件 UPDATE 保证幂等,防止 TOCTOU 双重处理
     let expired_rows = sqlx::query(
-        "UPDATE wishes SET status='EXPIRED', expired_at=NOW(), updated_at=NOW() \
-         WHERE wish_id=$1 AND status='CLAIMED' RETURNING wish_id"
+        "UPDATE wishes SET status='EXPIRED'::wish_status_enum, expired_at=NOW(), updated_at=NOW() \
+         WHERE wish_id=$1 AND status='CLAIMED'::wish_status_enum RETURNING wish_id"
     )
     .bind(wish_id)
     .fetch_optional(db)
@@ -1171,7 +1171,7 @@ pub async fn wish_expire(
 
     // 获取冻结金额并解冻(用 idempotency_key 二次防护)
     let frozen_amount: i64 = sqlx::query_scalar::<_, i64>(
-        r#"SELECT COALESCE(SUM(CASE WHEN type='FREEZE' THEN amount ELSE 0 END)::bigint - SUM(CASE WHEN type='UNFREEZE' THEN amount ELSE 0 END)::bigint, 0::bigint) FROM love_point_transactions WHERE user_id=$1 AND group_id=$2 AND biz_id=$3 AND biz_type = 'wish'"#
+        r#"SELECT COALESCE(SUM(CASE WHEN type='FREEZE'::love_point_tx_type_enum THEN amount ELSE 0 END)::bigint - SUM(CASE WHEN type='UNFREEZE'::love_point_tx_type_enum THEN amount ELSE 0 END)::bigint, 0::bigint) FROM love_point_transactions WHERE user_id=$1 AND group_id=$2 AND biz_id=$3 AND biz_type = 'wish'"#
     )
     .bind(requester_id)
     .bind(group_id)
@@ -1183,7 +1183,7 @@ pub async fn wish_expire(
     if frozen_amount > 0 {
         let idempotency_key = format!("wish_expire_{}", wish_id);
         let row = sqlx::query_as::<_, (i64, i64)>(
-            "SELECT COALESCE(SUM(CASE WHEN type IN ('EARN') THEN amount ELSE 0 END)::bigint, 0::bigint), COALESCE(SUM(CASE WHEN type='FREEZE' THEN amount ELSE 0 END)::bigint - SUM(CASE WHEN type='UNFREEZE' THEN amount ELSE 0 END)::bigint, 0::bigint) FROM love_point_transactions WHERE user_id=$1 AND group_id=$2"
+            "SELECT COALESCE(SUM(CASE WHEN type IN ('EARN'::love_point_tx_type_enum) THEN amount ELSE 0 END)::bigint, 0::bigint), COALESCE(SUM(CASE WHEN type='FREEZE'::love_point_tx_type_enum THEN amount ELSE 0 END)::bigint - SUM(CASE WHEN type='UNFREEZE'::love_point_tx_type_enum THEN amount ELSE 0 END)::bigint, 0::bigint) FROM love_point_transactions WHERE user_id=$1 AND group_id=$2"
         )
         .bind(requester_id)
         .bind(group_id)
@@ -1193,7 +1193,7 @@ pub async fn wish_expire(
 
         sqlx::query(
             r#"INSERT INTO love_point_transactions (user_id, group_id, type, amount, available_before, available_after, frozen_before, frozen_after, biz_type, biz_id, idempotency_key, created_at)
-               VALUES ($1, $2, 'UNFREEZE', $3, $4, $4+$3, $5, 0, 'wish', $6, $7, NOW())"#
+               VALUES ($1, $2, 'UNFREEZE'::love_point_tx_type_enum, $3, $4, $4+$3, $5, 0, 'wish', $6, $7, NOW())"#
         )
         .bind(requester_id)
         .bind(group_id)
@@ -1318,7 +1318,7 @@ pub async fn pending_fulfillment(
                    CASE WHEN w.fulfillment_due_at < NOW() THEN true ELSE false END as is_overdue
             FROM wishes w
             JOIN users u ON u.user_id = w.requester_id
-            WHERE w.fulfiller_id = $1 AND w.status = 'CLAIMED' AND w.group_id = $2
+            WHERE w.fulfiller_id = $1 AND w.status = 'CLAIMED'::wish_status_enum AND w.group_id = $2
             ORDER BY w.fulfillment_due_at ASC
             "#,
             )
@@ -1335,7 +1335,7 @@ pub async fn pending_fulfillment(
                    CASE WHEN w.fulfillment_due_at < NOW() THEN true ELSE false END as is_overdue
             FROM wishes w
             JOIN users u ON u.user_id = w.requester_id
-            WHERE w.fulfiller_id = $1 AND w.status = 'CLAIMED'
+            WHERE w.fulfiller_id = $1 AND w.status = 'CLAIMED'::wish_status_enum
             ORDER BY w.fulfillment_due_at ASC
             "#,
             )

@@ -196,7 +196,7 @@ async fn get_points_balance(
 
     // 检查用户是否是组成员
     let is_member: bool = sqlx::query_scalar::<_, bool>(
-        "SELECT EXISTS(SELECT 1 FROM association_group_members WHERE group_id=$1 AND user_id=$2 AND member_status='ACTIVE')",
+        "SELECT EXISTS(SELECT 1 FROM association_group_members WHERE group_id=$1 AND user_id=$2 AND member_status='ACTIVE'::group_member_status_enum)",
     )
     .bind(gid)
     .bind(user_id)
@@ -224,7 +224,7 @@ async fn get_points_balance(
     // 获取今日获取积分（简化：从流水汇总）
     let today_earned: i64 = sqlx::query_scalar(
         r#"SELECT COALESCE(SUM(amount), 0)::BIGINT FROM love_point_transactions
-           WHERE user_id=$1 AND group_id=$2 AND type='EARN'
+           WHERE user_id=$1 AND group_id=$2 AND type='EARN'::love_point_tx_type_enum
            AND created_at >= CURRENT_DATE"#
     )
     .bind(user_id)
@@ -277,7 +277,7 @@ async fn get_points_transactions(
 
     // 检查用户是否是组成员
     let is_member: bool = sqlx::query_scalar::<_, bool>(
-        "SELECT EXISTS(SELECT 1 FROM association_group_members WHERE group_id=$1 AND user_id=$2 AND member_status='ACTIVE')",
+        "SELECT EXISTS(SELECT 1 FROM association_group_members WHERE group_id=$1 AND user_id=$2 AND member_status='ACTIVE'::group_member_status_enum)",
     )
     .bind(gid)
     .bind(user_id)
@@ -388,7 +388,7 @@ async fn get_diamonds_balance(
 
     // 检查用户是否是组成员
     let is_member: bool = sqlx::query_scalar::<_, bool>(
-        "SELECT EXISTS(SELECT 1 FROM association_group_members WHERE group_id=$1 AND user_id=$2 AND member_status='ACTIVE')",
+        "SELECT EXISTS(SELECT 1 FROM association_group_members WHERE group_id=$1 AND user_id=$2 AND member_status='ACTIVE'::group_member_status_enum)",
     )
     .bind(gid)
     .bind(user_id)
@@ -413,7 +413,7 @@ async fn get_diamonds_balance(
     // 获取今日获取钻石
     let today_earned: i64 = sqlx::query_scalar(
         r#"SELECT COALESCE(SUM(amount), 0)::BIGINT FROM diamond_transactions
-           WHERE group_id=$1 AND type='EARN'
+           WHERE group_id=$1 AND type='EARN'::love_point_tx_type_enum
            AND created_at >= CURRENT_DATE"#
     )
     .bind(gid)
@@ -460,7 +460,7 @@ async fn get_diamonds_transactions(
 
     // 检查用户是否是组成员
     let is_member: bool = sqlx::query_scalar::<_, bool>(
-        "SELECT EXISTS(SELECT 1 FROM association_group_members WHERE group_id=$1 AND user_id=$2 AND member_status='ACTIVE')",
+        "SELECT EXISTS(SELECT 1 FROM association_group_members WHERE group_id=$1 AND user_id=$2 AND member_status='ACTIVE'::group_member_status_enum)",
     )
     .bind(gid)
     .bind(user_id)
@@ -565,7 +565,7 @@ async fn get_group_exp(
 
     // 检查用户是否是组成员
     let is_member: bool = sqlx::query_scalar::<_, bool>(
-        "SELECT EXISTS(SELECT 1 FROM association_group_members WHERE group_id=$1 AND user_id=$2 AND member_status='ACTIVE')",
+        "SELECT EXISTS(SELECT 1 FROM association_group_members WHERE group_id=$1 AND user_id=$2 AND member_status='ACTIVE'::group_member_status_enum)",
     )
     .bind(gid)
     .bind(user_id)
@@ -592,7 +592,7 @@ async fn get_group_exp(
     // 获取今日获取经验
     let today_exp: i64 = sqlx::query_scalar(
         r#"SELECT COALESCE(SUM(amount), 0)::BIGINT FROM group_exp_transactions
-           WHERE group_id=$1 AND type='EARN'
+           WHERE group_id=$1 AND type='EARN'::love_point_tx_type_enum
            AND created_at >= CURRENT_DATE"#
     )
     .bind(gid)
@@ -647,7 +647,7 @@ async fn get_exp_transactions(
 
     // 检查用户是否是组成员
     let is_member: bool = sqlx::query_scalar::<_, bool>(
-        "SELECT EXISTS(SELECT 1 FROM association_group_members WHERE group_id=$1 AND user_id=$2 AND member_status='ACTIVE')",
+        "SELECT EXISTS(SELECT 1 FROM association_group_members WHERE group_id=$1 AND user_id=$2 AND member_status='ACTIVE'::group_member_status_enum)",
     )
     .bind(gid)
     .bind(user_id)

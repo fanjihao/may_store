@@ -17,7 +17,11 @@ pub fn configure(cfg: &mut ServiceConfig) {
             .route("", web::patch().to(update_info))
             .route("/groups", web::get().to(get_user_groups))
             .route("/delete", web::post().to(delete_account))
-            .route("/today-todos", web::get().to(today_todos::get_today_todos)),
+            .route("/today-todos", web::get().to(today_todos::get_today_todos))
+            .route(
+                "/points-config",
+                web::get().to(get_points_config),
+            ),
     );
 }
 
@@ -151,11 +155,11 @@ pub async fn get_user_groups(
     let rows = sqlx::query(
         r#"SELECT g.group_id, g.group_name,
            CASE WHEN g.buyer_user_id = $1 THEN 'BUYER' ELSE 'SELLER' END as my_role,
-           (SELECT COUNT(*) FROM association_group_members WHERE group_id = g.group_id AND member_status = 'ACTIVE') as member_count,
+           (SELECT COUNT(*) FROM association_group_members WHERE group_id = g.group_id AND member_status = 'ACTIVE'::group_member_status_enum) as member_count,
            g.diamond, g.level, g.created_at
            FROM association_groups g
            JOIN association_group_members gm ON gm.group_id = g.group_id
-           WHERE gm.user_id = $1 AND gm.member_status = 'ACTIVE'
+           WHERE gm.user_id = $1 AND gm.member_status = 'ACTIVE'::group_member_status_enum
            ORDER BY g.created_at DESC"#,
     )
     .bind(token.user_id)
@@ -223,7 +227,7 @@ pub async fn delete_account(
     let recovery_deadline = deleted_at + chrono::Duration::days(30);
 
     sqlx::query(
-        r#"UPDATE users SET status = 'DELETED'
+        r#"UPDATE users SET status = 'DELETED'::user_status_enum
            WHERE user_id = $1"#,
     )
     .bind(token.user_id)
@@ -234,6 +238,72 @@ pub async fn delete_account(
         deleted_at: deleted_at.to_rfc3339(),
         recovery_deadline: recovery_deadline.to_rfc3339(),
     }))
+}
+
+// ========== C 端积分配置（不需要 admin 鉴权） ==========
+
+/// 积分奖惩配置（C 端可读）
+///
+/// 与 multi-admin 后台「系统配置」页的 4 项 ORDER 类别配置对应。
+/// C 端用 UserToken 鉴权（任何登录用户都能读），admin 配置在 /api/admin/configs。
+#[derive(Debug, Serialize, ToSchema, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct PointsConfigResponse {
+    /// 订单确认完成后奖励的爱心积分
+    pub confirmed_finished_points: i32,
+    /// 订单确认未完成扣减的爱心积分
+    pub confirmed_unfinished_points: i32,
+    /// 主人家取消订单扣减的爱心积分
+    pub breeder_closed_points: i32,
+    /// 订单超时扣减的爱心积分
+    pub timeout_points: i32,
+}
+
+/// GET /api/users/me/points-config
+#[utoipa::path(
+    get,
+    path = "/api/users/me/points-config",
+    operation_id = "get_points_config",
+    tag = "用户",
+    summary = "获取 C 端可见的积分奖惩配置",
+    responses(
+        (status = 200, description = "获取成功", body = PointsConfigResponse),
+        (status = 401, body = CustomError)
+    ),
+    security(("bearer_auth" = []))
+)]
+pub async fn get_points_config(
+    _token: UserToken,
+    state: State<Arc<AppState>>,
+) -> Result<impl Responder, CustomError> {
+    let db = &state.db_pool;
+
+    async fn read_int(
+        db: &sqlx::PgPool,
+        key: &str,
+        default: i32,
+    ) -> i32 {
+        sqlx::query_as::<_, (Option<serde_json::Value>,)>(
+            "SELECT config_value FROM global_configs WHERE config_key = $1",
+        )
+        .bind(key)
+        .fetch_optional(db)
+        .await
+        .ok()
+        .flatten()
+        .and_then(|(v,)| v)
+        .and_then(|v| v.as_i64().map(|n| n as i32))
+        .unwrap_or(default)
+    }
+
+    let resp = PointsConfigResponse {
+        confirmed_finished_points: read_int(db, "confirmedFinishedPoints", 10).await,
+        confirmed_unfinished_points: read_int(db, "confirmedUnfinishedPoints", -5).await,
+        breeder_closed_points: read_int(db, "breederClosedPoints", -8).await,
+        timeout_points: read_int(db, "timeoutPoints", -3).await,
+    };
+
+    Ok(ApiResponse::success(resp))
 }
 
 // ========== 遗留接口已移除 ==========

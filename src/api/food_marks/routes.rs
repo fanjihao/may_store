@@ -95,7 +95,7 @@ pub async fn mark_food(
 
     // 校验成员
     let member: Option<(i64,)> = sqlx::query_as(
-        "SELECT user_id FROM association_group_members WHERE user_id = $1 AND group_id = $2 AND member_status = 'ACTIVE'"
+        "SELECT user_id FROM association_group_members WHERE user_id = $1 AND group_id = $2 AND member_status = 'ACTIVE'::group_member_status_enum"
     )
     .bind(token.user_id)
     .bind(group_id)

@@ -461,7 +461,7 @@ pub async fn confirm_upload(
     sqlx::query(
         r#"
         UPDATE upload_files
-        SET status = 'ACTIVE', updated_at = NOW()
+        SET status = 'ACTIVE'::user_status_enum, updated_at = NOW()
         WHERE file_key = $1
         "#,
     )
@@ -493,7 +493,7 @@ pub async fn qiniu_callback(
     sqlx::query(
         r#"
         UPDATE upload_files
-        SET status = 'ACTIVE', updated_at = NOW()
+        SET status = 'ACTIVE'::user_status_enum, updated_at = NOW()
         WHERE file_key = $1 AND user_id = $2
         "#,
     )
@@ -552,7 +552,7 @@ pub async fn delete_file(
     sqlx::query(
         r#"
         UPDATE upload_files
-        SET status = 'DELETED', deleted_at = NOW(), updated_at = NOW()
+        SET status = 'DELETED'::user_status_enum, deleted_at = NOW(), updated_at = NOW()
         WHERE file_key = $1
         "#,
     )

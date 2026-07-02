@@ -53,7 +53,7 @@ impl EventLogQuery {
                    status, retry_count, max_retries, error_message, idempotency_key,
                    trace_id, created_at, processed_at
             FROM event_log
-            WHERE status = 'PENDING'
+            WHERE status = 'PENDING'::event_status_enum
             ORDER BY created_at ASC
             LIMIT $1
             FOR UPDATE SKIP LOCKED
@@ -69,8 +69,8 @@ impl EventLogQuery {
         sqlx::query(
             r#"
             UPDATE event_log
-            SET status = 'PROCESSING'
-            WHERE id = $1 AND status = 'PENDING'
+            SET status = 'PROCESSING'::event_status_enum
+            WHERE id = $1 AND status = 'PENDING'::event_status_enum
             "#,
         )
         .bind(id)
@@ -84,7 +84,7 @@ impl EventLogQuery {
         sqlx::query(
             r#"
             UPDATE event_log
-            SET status = 'DONE', processed_at = NOW()
+            SET status = 'DONE'::event_status_enum, processed_at = NOW()
             WHERE id = $1
             "#,
         )

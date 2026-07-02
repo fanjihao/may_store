@@ -69,7 +69,7 @@ pub async fn push_group_diamond_change_notice(
     // 按 group_id 反查所有 ACTIVE 成员 -> 全体推送
     let target_ids: Vec<i64> = match sqlx::query_scalar(
         "SELECT user_id FROM association_group_members
-         WHERE group_id = $1 AND member_status = 'ACTIVE'",
+         WHERE group_id = $1 AND member_status = 'ACTIVE'::group_member_status_enum",
     )
     .bind(group_id)
     .fetch_all(db)

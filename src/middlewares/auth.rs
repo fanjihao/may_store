@@ -50,8 +50,8 @@ pub async fn load_user_public_for_token(
                u.is_temp_password AS "is_temp_password!: Option<bool>",
                u.push_id, u.last_role_switch_at,
                (SELECT agm.group_id FROM association_group_members agm
-                  JOIN association_groups g ON g.group_id=agm.group_id AND g.status='ACTIVE'
-                  WHERE agm.user_id=u.user_id AND agm.member_status='ACTIVE'
+                  JOIN association_groups g ON g.group_id=agm.group_id AND g.status='ACTIVE'::user_status_enum
+                  WHERE agm.user_id=u.user_id AND agm.member_status='ACTIVE'::group_member_status_enum
                   ORDER BY agm.is_primary DESC, agm.group_id ASC LIMIT 1) AS "group_id!: Option<i64>"
         FROM users u WHERE u.user_id=$1 AND u.status='ACTIVE'
         "#,

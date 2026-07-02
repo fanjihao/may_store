@@ -16,6 +16,9 @@ pub enum EventType {
     OrderCompleted,
     OrderConfirmedCompleted,
     OrderConfirmedIncomplete,
+    OrderCancelled,
+    OrderRejected,
+    OrderTimeout,
     OrderRiskDetected,
     // 心愿事件
     WishCreated,
@@ -57,6 +60,9 @@ impl EventType {
             EventType::OrderCompleted => "OrderCompletedEvent",
             EventType::OrderConfirmedCompleted => "OrderConfirmedCompletedEvent",
             EventType::OrderConfirmedIncomplete => "OrderConfirmedIncompleteEvent",
+            EventType::OrderCancelled => "OrderCancelledEvent",
+            EventType::OrderRejected => "OrderRejectedEvent",
+            EventType::OrderTimeout => "OrderTimeoutEvent",
             EventType::OrderRiskDetected => "OrderRiskDetectedEvent",
             EventType::WishCreated => "WishCreatedEvent",
             EventType::WishNegotiating => "WishNegotiatingEvent",
@@ -93,6 +99,9 @@ impl EventType {
             "OrderCompletedEvent" => Some(EventType::OrderCompleted),
             "OrderConfirmedCompletedEvent" => Some(EventType::OrderConfirmedCompleted),
             "OrderConfirmedIncompleteEvent" => Some(EventType::OrderConfirmedIncomplete),
+            "OrderCancelledEvent" => Some(EventType::OrderCancelled),
+            "OrderRejectedEvent" => Some(EventType::OrderRejected),
+            "OrderTimeoutEvent" => Some(EventType::OrderTimeout),
             "OrderRiskDetectedEvent" => Some(EventType::OrderRiskDetected),
             "WishCreatedEvent" => Some(EventType::WishCreated),
             "WishNegotiatingEvent" => Some(EventType::WishNegotiating),
@@ -145,19 +154,6 @@ pub struct OrderAcceptedPayload {
     pub user_id: i64,
     pub assignee_id: i64,
     pub group_id: Option<i64>,
-    pub trace_id: Option<String>,
-}
-
-/// 订单完成事件 Payload
-#[allow(dead_code)]
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct OrderCompletedPayload {
-    pub order_id: i64,
-    pub user_id: i64,
-    pub assignee_id: i64,
-    pub group_id: Option<i64>,
-    pub order_type: String,
     pub trace_id: Option<String>,
 }
 

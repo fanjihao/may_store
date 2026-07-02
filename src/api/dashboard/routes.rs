@@ -248,7 +248,7 @@ pub async fn get_group_dashboard(
 
     // 检查用户是否是组成员
     let is_member: bool = sqlx::query_scalar::<_, bool>(
-        "SELECT EXISTS(SELECT 1 FROM association_group_members WHERE group_id=$1 AND user_id=$2 AND member_status='ACTIVE')",
+        "SELECT EXISTS(SELECT 1 FROM association_group_members WHERE group_id=$1 AND user_id=$2 AND member_status='ACTIVE'::group_member_status_enum)",
     )
     .bind(gid)
     .bind(user_id)
@@ -285,9 +285,9 @@ pub async fn get_group_dashboard(
     let (orders_today, points_today, exp_today): (i32, i32, i32) = sqlx::query_as(
         r#"
         SELECT
-            COALESCE(SUM(CASE WHEN o.status = 'COMPLETED' THEN 1 ELSE 0 END), 0),
-            COALESCE(SUM(CASE WHEN lt.type = 'EARN' AND DATE(lt.created_at) = CURRENT_DATE THEN lt.amount ELSE 0 END), 0),
-            COALESCE(SUM(CASE WHEN gt.type = 'EARN' AND DATE(gt.created_at) = CURRENT_DATE THEN gt.amount ELSE 0 END), 0)
+            COALESCE(SUM(CASE WHEN o.status = 'COMPLETED'::order_status_enum THEN 1 ELSE 0 END), 0),
+            COALESCE(SUM(CASE WHEN lt.type = 'EARN'::love_point_tx_type_enum AND DATE(lt.created_at) = CURRENT_DATE THEN lt.amount ELSE 0 END), 0),
+            COALESCE(SUM(CASE WHEN gt.type = 'EARN'::love_point_tx_type_enum AND DATE(gt.created_at) = CURRENT_DATE THEN gt.amount ELSE 0 END), 0)
         FROM association_groups g
         LEFT JOIN orders o ON o.group_id = g.group_id
         LEFT JOIN love_point_transactions lt ON lt.group_id = g.group_id AND lt.user_id = $1
@@ -305,10 +305,10 @@ pub async fn get_group_dashboard(
         sqlx::query_as(
             r#"
             SELECT
-                COALESCE(SUM(CASE WHEN o.status = 'COMPLETED' AND o.created_at >= DATE_TRUNC('month', CURRENT_DATE) THEN 1 ELSE 0 END), 0),
-                COALESCE(COUNT(CASE WHEN w.status = 'FINISHED' AND w.updated_at >= DATE_TRUNC('month', CURRENT_DATE) THEN 1 END), 0),
-                COALESCE(SUM(CASE WHEN lt.type = 'DEDUCT' AND lt.created_at >= DATE_TRUNC('month', CURRENT_DATE) THEN lt.amount ELSE 0 END), 0),
-                COALESCE(SUM(CASE WHEN lt.type = 'EARN' AND lt.created_at >= DATE_TRUNC('month', CURRENT_DATE) THEN lt.amount ELSE 0 END), 0)
+                COALESCE(SUM(CASE WHEN o.status = 'COMPLETED'::order_status_enum AND o.created_at >= DATE_TRUNC('month', CURRENT_DATE) THEN 1 ELSE 0 END), 0),
+                COALESCE(COUNT(CASE WHEN w.status = 'FINISHED'::wish_status_enum AND w.updated_at >= DATE_TRUNC('month', CURRENT_DATE) THEN 1 END), 0),
+                COALESCE(SUM(CASE WHEN lt.type = 'DEDUCT'::love_point_tx_type_enum AND lt.created_at >= DATE_TRUNC('month', CURRENT_DATE) THEN lt.amount ELSE 0 END), 0),
+                COALESCE(SUM(CASE WHEN lt.type = 'EARN'::love_point_tx_type_enum AND lt.created_at >= DATE_TRUNC('month', CURRENT_DATE) THEN lt.amount ELSE 0 END), 0)
             FROM association_groups g
             LEFT JOIN orders o ON o.group_id = g.group_id
             LEFT JOIN wishes w ON w.group_id = g.group_id
@@ -326,9 +326,9 @@ pub async fn get_group_dashboard(
         sqlx::query_as(
             r#"
             SELECT
-                COUNT(CASE WHEN o.status = 'COMPLETED' THEN 1 END),
+                COUNT(CASE WHEN o.status = 'COMPLETED'::order_status_enum THEN 1 END),
                 COUNT(CASE WHEN w.id IS NOT NULL THEN 1 END),
-                COUNT(CASE WHEN w.status = 'FINISHED' THEN 1 END),
+                COUNT(CASE WHEN w.status = 'FINISHED'::wish_status_enum THEN 1 END),
                 COALESCE(sr1.consecutive_days, 0),
                 COALESCE(sr2.consecutive_days, 0)
             FROM association_groups g
@@ -364,14 +364,14 @@ pub async fn get_group_dashboard(
         sqlx::query_scalar::<_, i64>(
             r#"SELECT COUNT(*) FROM orders
                WHERE group_id = $1
-                 AND status IN ('CONFIRMED_COMPLETED','COMPLETED')"#,
+                 AND status IN ('CONFIRMED_COMPLETED'::order_status_enum,'COMPLETED'::order_status_enum)"#,
         )
         .bind(gid)
         .fetch_one(db),
         sqlx::query_scalar::<_, i64>(
             r#"SELECT COUNT(*) FROM orders
                WHERE group_id = $1
-                 AND status IN ('CONFIRMED_COMPLETED','COMPLETED')
+                 AND status IN ('CONFIRMED_COMPLETED'::order_status_enum,'COMPLETED'::order_status_enum)
                  AND updated_at >= DATE_TRUNC('month', CURRENT_DATE)"#,
         )
         .bind(gid)
@@ -379,8 +379,8 @@ pub async fn get_group_dashboard(
         async {
             let row: (i64, i64) = sqlx::query_as(
                 r#"SELECT
-                     COALESCE(SUM(CASE WHEN type = 'EARN' THEN amount ELSE 0 END), 0),
-                     COALESCE(SUM(CASE WHEN type = 'CONSUME' THEN amount ELSE 0 END), 0)
+                     COALESCE(SUM(CASE WHEN type = 'EARN'::love_point_tx_type_enum THEN amount ELSE 0 END), 0),
+                     COALESCE(SUM(CASE WHEN type = 'CONSUME'::diamond_tx_type_enum THEN amount ELSE 0 END), 0)
                    FROM diamond_transactions
                    WHERE group_id = $1"#,
             )
@@ -502,7 +502,7 @@ pub async fn get_admin_dashboard(
             r#"
             SELECT
                 COUNT(*) as total,
-                COUNT(CASE WHEN status = 'COMPLETED' THEN 1 END) as completed,
+                COUNT(CASE WHEN status = 'COMPLETED'::order_status_enum THEN 1 END) as completed,
                 COUNT(CASE WHEN order_type = 'GUEST' THEN 1 END) as guest,
                 COUNT(CASE WHEN order_type = 'NORMAL' THEN 1 END) as normal
             FROM orders WHERE created_at >= CURRENT_DATE
@@ -524,9 +524,9 @@ pub async fn get_admin_dashboard(
         r#"
         SELECT
             COUNT(*) as total,
-            COUNT(CASE WHEN status IN ('CREATED', 'NEGOTIATING', 'CLAIMED') THEN 1 END) as active,
-            COUNT(CASE WHEN status = 'FINISHED' THEN 1 END) as finished,
-            COUNT(CASE WHEN status = 'EXPIRED' THEN 1 END) as expired,
+            COUNT(CASE WHEN status IN ('CREATED'::order_status_enum, 'NEGOTIATING'::wish_status_enum, 'CLAIMED'::wish_status_enum) THEN 1 END) as active,
+            COUNT(CASE WHEN status = 'FINISHED'::wish_status_enum THEN 1 END) as finished,
+            COUNT(CASE WHEN status = 'EXPIRED'::wish_status_enum THEN 1 END) as expired,
             COALESCE(SUM(final_cost), 0)
         FROM wishes WHERE created_at >= CURRENT_DATE - INTERVAL '30 days'
         "#,
@@ -538,9 +538,9 @@ pub async fn get_admin_dashboard(
     let (points_today, diamonds_spent, exp_today): (i64, i64, i64) = sqlx::query_as(
         r#"
         SELECT
-            COALESCE(SUM(CASE WHEN type = 'EARN' THEN amount ELSE 0 END), 0),
-            COALESCE(SUM(CASE WHEN type = 'CONSUME' THEN amount ELSE 0 END), 0),
-            COALESCE(SUM(CASE WHEN type = 'EARN' THEN amount ELSE 0 END), 0)
+            COALESCE(SUM(CASE WHEN type = 'EARN'::love_point_tx_type_enum THEN amount ELSE 0 END), 0),
+            COALESCE(SUM(CASE WHEN type = 'CONSUME'::diamond_tx_type_enum THEN amount ELSE 0 END), 0),
+            COALESCE(SUM(CASE WHEN type = 'EARN'::love_point_tx_type_enum THEN amount ELSE 0 END), 0)
         FROM love_point_transactions, group_exp_transactions
         WHERE created_at >= CURRENT_DATE
         "#
@@ -558,9 +558,9 @@ pub async fn get_admin_dashboard(
     let (pending_review, suspected_fraud, banned_today): (i64, i64, i64) = sqlx::query_as(
         r#"
         SELECT
-            (SELECT COUNT(*) FROM orders WHERE risk_status = 'SUSPECT' AND point_grant_status = 'PENDING_REVIEW'),
+            (SELECT COUNT(*) FROM orders WHERE risk_status = 'SUSPECT'::risk_status_enum AND point_grant_status = 'PENDING_REVIEW'::point_grant_status_enum),
             (SELECT COUNT(*) FROM orders WHERE risk_status = 'BLOCKED'),
-            (SELECT COUNT(*) FROM users WHERE status = 'BANNED' AND updated_at >= CURRENT_DATE)
+            (SELECT COUNT(*) FROM users WHERE status = 'BANNED'::user_status_enum AND updated_at >= CURRENT_DATE)
         "#
     )
     .fetch_one(db)
@@ -718,7 +718,7 @@ pub async fn get_group_activities(
     // 鉴权: 必须是该组 ACTIVE 成员
     let is_member: bool = sqlx::query_scalar(
         "SELECT EXISTS(SELECT 1 FROM association_group_members \
-         WHERE group_id=$1 AND user_id=$2 AND member_status='ACTIVE')",
+         WHERE group_id=$1 AND user_id=$2 AND member_status='ACTIVE'::group_member_status_enum)",
     )
     .bind(group_id)
     .bind(token.user_id)

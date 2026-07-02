@@ -750,7 +750,7 @@ fn row_to_memorial_out(row: sqlx::postgres::PgRow, today: NaiveDate) -> Memorial
 
 async fn verify_group_member(state: &Arc<AppState>, user_id: i64, group_id: i64) -> Result<(), CustomError> {
     let member: Option<(i64,)> = sqlx::query_as(
-        "SELECT user_id FROM association_group_members WHERE user_id = $1 AND group_id = $2 AND member_status = 'ACTIVE'"
+        "SELECT user_id FROM association_group_members WHERE user_id = $1 AND group_id = $2 AND member_status = 'ACTIVE'::group_member_status_enum"
     )
     .bind(user_id)
     .bind(group_id)

@@ -150,9 +150,9 @@ async fn create_group(
 
     // 检查用户是否已在组中
     // 注意:is_primary 是 smallint(0/1),不能用 true/false
-    // 必须同时过滤 member_status='ACTIVE',否则 LEFT 状态的旧记录也会被算成"已在组中"
+    // 必须同时过滤 member_status = 'ACTIVE'::group_member_status_enum,否则 LEFT 状态的旧记录也会被算成"已在组中"
     let existing: Option<(i64,)> = sqlx::query_as(
-        "SELECT group_id FROM association_group_members WHERE user_id = $1 AND is_primary = 1 AND member_status = 'ACTIVE'",
+        "SELECT group_id FROM association_group_members WHERE user_id = $1 AND is_primary = 1 AND member_status = 'ACTIVE'::group_member_status_enum",
     )
     .bind(token.user_id)
     .fetch_optional(db)
@@ -171,7 +171,7 @@ async fn create_group(
     let invite_code = format!("{:08x}", rand::random::<u32>());
     let group: GroupRecord = sqlx::query_as::<_, GroupRecord>(
         r#"INSERT INTO association_groups (group_name, group_type, status, invite_code, diamond, footprint_capacity, footprint_count, buyer_user_id, seller_user_id, level, exp, created_at, updated_at)
-           VALUES ($1, 'PAIR', 'ACTIVE', $2, 0, 50, 0, $3, NULL, 1, 0, $4, $4)
+           VALUES ($1, 'PAIR'::group_type_enum, 'ACTIVE'::user_status_enum, $2, 0, 50, 0, $3, NULL, 1, 0, $4, $4)
            RETURNING group_id, group_name, group_type::text AS group_type, status::text AS status, invite_code, diamond, footprint_capacity, footprint_count, created_at, updated_at,
                      buyer_user_id, seller_user_id, level, exp, settings"#
     )
@@ -185,7 +185,7 @@ async fn create_group(
     // 将创建者加为组成员(is_primary 是 smallint,这里写 1 不用 true)
     sqlx::query(
         r#"INSERT INTO association_group_members (user_id, group_id, role_in_group, is_primary, joined_at)
-           VALUES ($1, $2, 'ORDERING', 1, $3)"#
+           VALUES ($1, $2, 'ORDERING'::group_member_role_enum, 1, $3)"#
     )
     .bind(token.user_id)
     .bind(group.group_id)
@@ -195,7 +195,7 @@ async fn create_group(
 
     // 同步更新 users.role 为 ORDERING, 保证前端 userInfo.role 立即反映
     sqlx::query(
-        "UPDATE users SET role='ORDERING', last_role_switch_at=NOW() WHERE user_id=$1"
+        "UPDATE users SET role='ORDERING'::user_role_enum, last_role_switch_at=NOW() WHERE user_id=$1"
     )
     .bind(token.user_id)
     .execute(&mut *tx)
@@ -395,7 +395,7 @@ async fn swap_role(
     //   强制让用户先把当前协商的心愿处理完(同意/拒绝)再切。
     let negotiating_wishes: i64 = sqlx::query_scalar::<_, i64>(
         r#"SELECT COUNT(*) FROM wishes
-           WHERE group_id = $1 AND status IN ('DRAFT', 'NEGOTIATING')"#,
+           WHERE group_id = $1 AND status IN ('DRAFT'::wish_status_enum, 'NEGOTIATING'::wish_status_enum)"#,
     )
     .bind(gid)
     .fetch_one(&mut *tx)
@@ -410,7 +410,7 @@ async fn swap_role(
     if !swap_ignore_wish {
         let pending_wishes: i64 = sqlx::query_scalar::<_, i64>(
             r#"SELECT COUNT(*) FROM wishes
-               WHERE group_id=$1 AND status='CLAIMED'
+               WHERE group_id=$1 AND status='CLAIMED'::wish_status_enum
                AND (selected_by=$2 OR fulfiller_id=$2)"#,
         )
         .bind(gid)
@@ -445,24 +445,24 @@ async fn swap_role(
 
     // 更新组成员角色
     if let Some(buyer_id) = new_buyer {
-        sqlx::query("UPDATE association_group_members SET role_in_group='ORDERING' WHERE user_id=$1 AND group_id=$2")
+        sqlx::query("UPDATE association_group_members SET role_in_group = 'ORDERING'::group_member_role_enum WHERE user_id=$1 AND group_id=$2")
             .bind(buyer_id)
             .bind(gid)
             .execute(&mut *tx)
             .await?;
         // 关键: 同步更新 users.role,否则前端 userInfo.role 不会变(它来自 users 表)
-        sqlx::query("UPDATE users SET role='ORDERING', last_role_switch_at=NOW() WHERE user_id=$1")
+        sqlx::query("UPDATE users SET role='ORDERING'::user_role_enum, last_role_switch_at=NOW() WHERE user_id=$1")
             .bind(buyer_id)
             .execute(&mut *tx)
             .await?;
     }
     if let Some(seller_id) = new_seller {
-        sqlx::query("UPDATE association_group_members SET role_in_group='RECEIVING' WHERE user_id=$1 AND group_id=$2")
+        sqlx::query("UPDATE association_group_members SET role_in_group = 'RECEIVING'::group_member_role_enum WHERE user_id=$1 AND group_id=$2")
             .bind(seller_id)
             .bind(gid)
             .execute(&mut *tx)
             .await?;
-        sqlx::query("UPDATE users SET role='RECEIVING', last_role_switch_at=NOW() WHERE user_id=$1")
+        sqlx::query("UPDATE users SET role='RECEIVING'::user_role_enum, last_role_switch_at=NOW() WHERE user_id=$1")
             .bind(seller_id)
             .execute(&mut *tx)
             .await?;
@@ -568,7 +568,7 @@ async fn settlement_check(
     // 检查冻结爱心积分(SUM 返回 NUMERIC,::BIGINT 强转)
     let frozen_points: i64 = sqlx::query_scalar::<_, Option<i64>>(
         r#"SELECT COALESCE(SUM(amount), 0)::BIGINT FROM love_point_transactions
-           WHERE user_id=$1 AND group_id=$2 AND type='FREEZE'"#,
+           WHERE user_id=$1 AND group_id=$2 AND type='FREEZE'::love_point_tx_type_enum"#,
     )
     .bind(token.user_id)
     .bind(gid)
@@ -670,7 +670,7 @@ async fn fulfillment_stats(
         // 按期完成数
         let finished: i64 = sqlx::query_scalar::<_, Option<i64>>(
             r#"SELECT COUNT(*) FROM wishes
-               WHERE group_id=$1 AND fulfiller_id=$2 AND status='FINISHED'
+               WHERE group_id=$1 AND fulfiller_id=$2 AND status='FINISHED'::wish_status_enum
                AND fulfilled_at <= fulfillment_due_at"#,
         )
         .bind(gid)
@@ -682,7 +682,7 @@ async fn fulfillment_stats(
         // 逾期数
         let expired: i64 = sqlx::query_scalar::<_, Option<i64>>(
             r#"SELECT COUNT(*) FROM wishes
-               WHERE group_id=$1 AND fulfiller_id=$2 AND status='EXPIRED'"#,
+               WHERE group_id=$1 AND fulfiller_id=$2 AND status='EXPIRED'::wish_status_enum"#,
         )
         .bind(gid)
         .bind(user_id)
@@ -693,7 +693,7 @@ async fn fulfillment_stats(
         // 待履约数
         let pending: i64 = sqlx::query_scalar::<_, Option<i64>>(
             r#"SELECT COUNT(*) FROM wishes
-               WHERE group_id=$1 AND fulfiller_id=$2 AND status='CLAIMED'"#,
+               WHERE group_id=$1 AND fulfiller_id=$2 AND status='CLAIMED'::wish_status_enum"#,
         )
         .bind(gid)
         .bind(user_id)
@@ -785,7 +785,7 @@ async fn create_invite(
 
     // 检查组是否已满2人
     let member_count: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM association_group_members WHERE group_id=$1 AND member_status='ACTIVE'"
+        "SELECT COUNT(*) FROM association_group_members WHERE group_id=$1 AND member_status = 'ACTIVE'::group_member_status_enum"
     )
     .bind(gid)
     .fetch_one(db)
@@ -801,7 +801,7 @@ async fn create_invite(
 
     sqlx::query(
         r#"INSERT INTO guest_invitations (group_id, invite_code, created_by, expires_at, max_uses, used_count, status)
-           VALUES ($1, $2, $3, $4, 1, 0, 'ACTIVE')"#
+           VALUES ($1, $2, $3, $4, 1, 0, 'ACTIVE'::user_status_enum)"#
     )
     .bind(gid)
     .bind(&invite_code)
@@ -894,7 +894,7 @@ async fn create_group_order(
 
     sqlx::query(
         r#"INSERT INTO orders (order_id, group_id, type, user_id, assignee_id, creator_role_snapshot, status, title, content, deadline, created_at)
-           VALUES ($1, $2, 'NORMAL', $3, $4, 'ORDERING', 'CREATED', $5, $6, $7, NOW())"#
+           VALUES ($1, $2, 'NORMAL'::order_type_enum, $3, $4, 'ORDERING', 'CREATED'::order_status_enum, $5, $6, $7, NOW())"#
     )
     .bind(order_id)
     .bind(gid)
@@ -987,7 +987,7 @@ async fn create_group_wish(
 
     sqlx::query(
         r#"INSERT INTO wishes (wish_id, group_id, created_by, requester_id, fulfiller_id, creator_role_snapshot, wish_name, wish_cost, initial_cost, status, created_at)
-           VALUES ($1, $2, $3, $3, $4, $5, $6, $7, $7, 'DRAFT', NOW())"#
+           VALUES ($1, $2, $3, $3, $4, $5, $6, $7, $7, 'DRAFT'::wish_status_enum, NOW())"#
     )
     .bind(wish_id)
     .bind(gid)
@@ -1041,7 +1041,7 @@ async fn join_group(
     let invite: Option<(i64, chrono::DateTime<chrono::Utc>, i32, i32)> = sqlx::query_as(
         r#"SELECT group_id, expires_at, max_uses, used_count
            FROM guest_invitations
-           WHERE invite_code = $1 AND status = 'ACTIVE'"#
+           WHERE invite_code = $1 AND status = 'ACTIVE'::user_status_enum"#
     )
     .bind(&input.invite_code)
     .fetch_optional(db)
@@ -1070,7 +1070,7 @@ async fn join_group(
     // 幂等: 用户已经在本 group 的 ACTIVE 成员里, 直接返回成功 (跳过 INSERT / 推送)
     let same_group_existing: Option<(i64,)> = sqlx::query_as(
         "SELECT group_id FROM association_group_members
-         WHERE user_id = $1 AND group_id = $2 AND member_status = 'ACTIVE'"
+         WHERE user_id = $1 AND group_id = $2 AND member_status = 'ACTIVE'::group_member_status_enum"
     )
     .bind(token.user_id)
     .bind(group_id)
@@ -1097,7 +1097,7 @@ async fn join_group(
     // 用户已经在别的 group 的 ACTIVE 成员里, 拒绝 (业务规则)
     let other_group_existing: Option<(i64,)> = sqlx::query_as(
         "SELECT group_id FROM association_group_members
-         WHERE user_id = $1 AND member_status = 'ACTIVE'"
+         WHERE user_id = $1 AND member_status = 'ACTIVE'::group_member_status_enum"
     )
     .bind(token.user_id)
     .fetch_optional(db)
@@ -1125,7 +1125,7 @@ async fn join_group(
 
     // 检查组是否已满
     let member_count: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM association_group_members WHERE group_id=$1 AND member_status='ACTIVE'"
+        "SELECT COUNT(*) FROM association_group_members WHERE group_id=$1 AND member_status = 'ACTIVE'::group_member_status_enum"
     )
     .bind(group_id)
     .fetch_one(db)
@@ -1141,7 +1141,7 @@ async fn join_group(
     // 加入组成员(is_primary 是 smallint,这里写 0 不用 false)
     sqlx::query(
         r#"INSERT INTO association_group_members (user_id, group_id, role_in_group, is_primary, member_status, joined_at)
-           VALUES ($1, $2, 'RECEIVING', 0, 'ACTIVE', $3)"#
+           VALUES ($1, $2, 'RECEIVING'::group_member_role_enum, 0, 'ACTIVE'::group_member_status_enum, $3)"#
     )
     .bind(token.user_id)
     .bind(group_id)
@@ -1168,7 +1168,7 @@ async fn join_group(
 
     // 同步更新 users.role 为 RECEIVING, 保证前端 userInfo.role 立即反映
     sqlx::query(
-        "UPDATE users SET role='RECEIVING', last_role_switch_at=NOW() WHERE user_id=$1"
+        "UPDATE users SET role='RECEIVING'::user_role_enum, last_role_switch_at=NOW() WHERE user_id=$1"
     )
     .bind(token.user_id)
     .execute(&mut *tx)
@@ -1236,7 +1236,7 @@ async fn exit_group(
 
     // 检查用户是否是组成员
     let is_member: bool = sqlx::query_scalar::<_, bool>(
-        "SELECT EXISTS(SELECT 1 FROM association_group_members WHERE group_id=$1 AND user_id=$2 AND member_status='ACTIVE')",
+        "SELECT EXISTS(SELECT 1 FROM association_group_members WHERE group_id=$1 AND user_id=$2 AND member_status = 'ACTIVE'::group_member_status_enum)",
     )
     .bind(gid)
     .bind(token.user_id)
@@ -1266,7 +1266,7 @@ async fn exit_group(
 
     // 更新组成员状态为 LEFT
     sqlx::query(
-        "UPDATE association_group_members SET member_status='LEFT' WHERE group_id=$1 AND user_id=$2"
+        "UPDATE association_group_members SET member_status = 'LEFT'::group_member_status_enum WHERE group_id=$1 AND user_id=$2"
     )
     .bind(gid)
     .bind(token.user_id)
@@ -1363,7 +1363,7 @@ async fn get_group_members(
 
     // 检查用户是否是组成员
     let is_member: bool = sqlx::query_scalar::<_, bool>(
-        "SELECT EXISTS(SELECT 1 FROM association_group_members WHERE group_id=$1 AND user_id=$2 AND member_status='ACTIVE')",
+        "SELECT EXISTS(SELECT 1 FROM association_group_members WHERE group_id=$1 AND user_id=$2 AND member_status = 'ACTIVE'::group_member_status_enum)",
     )
     .bind(gid)
     .bind(token.user_id)
@@ -1383,7 +1383,7 @@ async fn get_group_members(
            FROM association_group_members agm
            JOIN users u ON u.user_id = agm.user_id
            LEFT JOIN user_group_points ugp ON ugp.user_id = agm.user_id AND ugp.group_id = agm.group_id
-           WHERE agm.group_id = $1 AND agm.member_status = 'ACTIVE'"#
+           WHERE agm.group_id = $1 AND agm.member_status = 'ACTIVE'::group_member_status_enum"#
     )
     .bind(gid)
     .fetch_all(db)
@@ -1439,7 +1439,7 @@ async fn settlement_check_impl(
     // SUM 在 PostgreSQL 返回 NUMERIC,::BIGINT 强转才能解 i64
     let frozen_points: i64 = sqlx::query_scalar::<_, Option<i64>>(
         r#"SELECT COALESCE(SUM(amount)::BIGINT, 0) FROM love_point_transactions
-           WHERE user_id=$1 AND group_id=$2 AND type='FREEZE'"#
+           WHERE user_id=$1 AND group_id=$2 AND type='FREEZE'::love_point_tx_type_enum"#
     )
     .bind(user_id)
     .bind(group_id)
@@ -1584,7 +1584,7 @@ async fn swap_role_check(
            FROM association_groups g
            JOIN association_group_members gm
              ON gm.group_id = g.group_id AND gm.user_id = $2
-           WHERE g.group_id = $1 AND gm.member_status = 'ACTIVE'"#,
+           WHERE g.group_id = $1 AND gm.member_status = 'ACTIVE'::group_member_status_enum"#,
     )
     .bind(gid)
     .bind(user_id)
@@ -1656,7 +1656,7 @@ async fn swap_role_check(
             }
             let n: i64 = sqlx::query_scalar(
                 r#"SELECT COUNT(*) FROM wishes
-                   WHERE group_id = $1 AND status = 'CLAIMED'
+                   WHERE group_id = $1 AND status = 'CLAIMED'::wish_status_enum
                      AND (selected_by = $2 OR fulfiller_id = $2)"#,
             )
             .bind(gid)
@@ -1669,7 +1669,7 @@ async fn swap_role_check(
             // SUM 在 PostgreSQL 返回 NUMERIC,不是 BIGINT,直接解码 i64 会炸
             // 加 ::BIGINT 显式强转,COALESCE 在 SUM 为 NULL 时(理论上不会)回退到 0
             r#"SELECT COALESCE(SUM(amount)::BIGINT, 0) FROM love_point_transactions
-               WHERE user_id = $1 AND group_id = $2 AND type = 'FREEZE'"#,
+               WHERE user_id = $1 AND group_id = $2 AND type = 'FREEZE'::love_point_tx_type_enum"#,
         )
         .bind(user_id)
         .bind(gid)
@@ -1783,7 +1783,7 @@ async fn push_group_member_change_notice(
     // 落到 association_groups.buyer/seller 字段的瞬间状态。
     let target_ids: Vec<i64> = sqlx::query_scalar(
         "SELECT user_id FROM association_group_members
-         WHERE group_id = $1 AND member_status = 'ACTIVE'"
+         WHERE group_id = $1 AND member_status = 'ACTIVE'::group_member_status_enum"
     )
     .bind(group_id)
     .fetch_all(db)
@@ -1908,7 +1908,7 @@ pub async fn update_group_name(
     // 鉴权: 必须是该组 ACTIVE 成员
     let is_member: Option<(i64,)> = sqlx::query_as(
         "SELECT user_id FROM association_group_members
-         WHERE group_id = $1 AND user_id = $2 AND member_status = 'ACTIVE'"
+         WHERE group_id = $1 AND user_id = $2 AND member_status = 'ACTIVE'::group_member_status_enum"
     )
     .bind(group_id)
     .bind(token.user_id)
@@ -2005,7 +2005,7 @@ pub async fn update_group(
     // 鉴权：必须是该组 ACTIVE 成员
     let is_member: Option<(i64,)> = sqlx::query_as(
         "SELECT user_id FROM association_group_members
-         WHERE group_id = $1 AND user_id = $2 AND member_status = 'ACTIVE'",
+         WHERE group_id = $1 AND user_id = $2 AND member_status = 'ACTIVE'::group_member_status_enum",
     )
     .bind(group_id)
     .bind(token.user_id)

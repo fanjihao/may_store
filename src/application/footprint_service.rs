@@ -93,10 +93,10 @@ impl FootprintService {
         user_id: i64,
         group_id: i64,
     ) -> Result<i32, CustomError> {
-        // 获取当前容量
+        // 获取当前容量 (FSD §11.23 group_configs.footprint_capacity + unlock_card_diamond_cost)
         let (current_capacity, diamond_cost): (i32, i32) = sqlx::query_as(
-            "SELECT COALESCE(default_footprint_capacity, 10), COALESCE(unlock_card_diamond_cost, 100) \
-             FROM group_point_configs WHERE group_id = $1"
+            "SELECT COALESCE(footprint_capacity, 10), COALESCE(unlock_card_diamond_cost, 100) \
+             FROM group_configs WHERE group_id = $1"
         )
         .bind(group_id)
         .fetch_optional(db)
@@ -123,10 +123,10 @@ impl FootprintService {
             .execute(db)
             .await?;
 
-        // 扩展容量（每次+10）
+        // 扩展容量（每次+10）—— 写 FSD §11.23 group_configs.footprint_capacity
         let new_capacity = current_capacity + 10;
         sqlx::query(
-            "UPDATE group_point_configs SET default_footprint_capacity = $2 WHERE group_id = $1",
+            "UPDATE group_configs SET footprint_capacity = $2 WHERE group_id = $1",
         )
         .bind(group_id)
         .bind(new_capacity)
@@ -152,7 +152,7 @@ impl FootprintService {
 
         // 获取足迹容量
         let footprint_capacity: i32 = sqlx::query(
-            "SELECT COALESCE(default_footprint_capacity, 50) FROM group_point_configs WHERE group_id = $1"
+            "SELECT COALESCE(footprint_capacity, 50) FROM group_configs WHERE group_id = $1"
         )
         .bind(group_id)
         .fetch_one(db)
@@ -354,7 +354,7 @@ impl FootprintService {
 
         // 检查容量
         let capacity: i32 = sqlx::query(
-            "SELECT COALESCE(default_footprint_capacity, 50) FROM group_point_configs WHERE group_id = $1"
+            "SELECT COALESCE(footprint_capacity, 50) FROM group_configs WHERE group_id = $1"
         )
         .bind(group_id)
         .fetch_one(db)

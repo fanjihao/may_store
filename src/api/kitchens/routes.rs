@@ -71,7 +71,7 @@ async fn access_kitchen(
     let invite = sqlx::query_as::<_, (i64, chrono::DateTime<chrono::Utc>, i64, i64)>(
         r#"SELECT gi.group_id, gi.expires_at, gi.max_uses, gi.used_count
            FROM guest_invitations gi
-           WHERE gi.invite_code = $1 AND gi.status = 'ACTIVE'"#,
+           WHERE gi.invite_code = $1 AND gi.status = 'ACTIVE'::user_status_enum"#,
     )
     .bind(&code)
     .fetch_optional(db)
@@ -165,8 +165,8 @@ async fn get_kitchen_foods(
 
     // 验证邀请码
     let group_id: i64 = sqlx::query_scalar(
-        r#"SELECT gi.group_id FROM group_invitations gi
-           WHERE gi.invite_code = $1 AND gi.revoked = false
+        r#"SELECT gi.group_id FROM guest_invitations gi
+           WHERE gi.invite_code = $1 AND gi.status = 'ACTIVE'::user_status_enum
            AND gi.expires_at > NOW() AND gi.used_count < gi.max_uses"#,
     )
     .bind(&code)
@@ -177,7 +177,7 @@ async fn get_kitchen_foods(
     // 获取主人家菜品
     let foods = sqlx::query(
         r#"SELECT food_id, group_id, name, description, images, tags, ingredients, steps, status
-           FROM foods WHERE group_id=$1 AND food_status='NORMAL'
+           FROM foods WHERE group_id=$1 AND food_status='NORMAL'::food_status_enum
            ORDER BY created_at DESC"#,
     )
     .bind(group_id)
@@ -247,7 +247,7 @@ async fn create_guest_order(
     let invite_row = sqlx::query_as::<_, (i64, i64)>(
         r#"SELECT gi.group_id, gi.id
            FROM guest_invitations gi
-           WHERE gi.invite_code = $1 AND gi.status = 'ACTIVE'
+           WHERE gi.invite_code = $1 AND gi.status = 'ACTIVE'::user_status_enum
            AND gi.expires_at > NOW() AND gi.used_count < gi.max_uses"#,
     )
     .bind(&code)
@@ -269,7 +269,7 @@ async fn create_guest_order(
 
     sqlx::query(
         r#"INSERT INTO orders (order_id, user_id, group_id, type, status, creator_role_snapshot, assignee_id, assignee_role_snapshot, title, content, guest_user_id, guest_invite_id, guest_remark, is_guest, created_at)
-           VALUES ($1, $2, $3, 'GUEST', 'CREATED', 'ORDERING', $4, 'RECEIVING', $5, $6, $7, $8, $9, true, NOW())"#
+           VALUES ($1, $2, $3, 'GUEST'::order_type_enum, 'CREATED'::order_status_enum, 'ORDERING', $4, 'RECEIVING', $5, $6, $7, $8, $9, true, NOW())"#
     )
     .bind(order_id)
     .bind(token.user_id)
@@ -284,7 +284,7 @@ async fn create_guest_order(
     .await?;
 
     // 增加邀请已使用次数
-    sqlx::query("UPDATE group_invitations SET used_count = used_count + 1 WHERE id = $1")
+    sqlx::query("UPDATE guest_invitations SET used_count = used_count + 1 WHERE id = $1")
         .bind(invite_id)
         .execute(db)
         .await?;

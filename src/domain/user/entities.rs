@@ -58,6 +58,7 @@ impl From<UserRecord> for UserPublic {
             avatar: r.avatar,
             role: r.role,
             group_id: r.group_id,
+            love_point: r.love_point as i64,
         }
     }
 }
@@ -97,6 +98,8 @@ pub struct UserPublic {
     pub avatar: Option<String>,
     pub role: UserRole,
     pub group_id: Option<i64>,
+    /// 爱心积分（前端「我的」页 / 订单奖励展示）
+    pub love_point: i64,
 }
 
 /// 用户Token（用于认证）
@@ -255,18 +258,4 @@ pub struct GroupUpdateInput {
 pub struct BindUserDirectlyInput {
     pub user_id: i64,
 }
-
-/// 群组积分配置
-#[derive(Debug, Clone, Serialize, Deserialize, FromRow, ToSchema)]
-#[serde(rename_all = "camelCase")]
-pub struct GroupPointConfig {
-    pub group_id: i64,
-    pub order_point_percent: i32,
-}
-
-/// 群组积分配置更新输入
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
-#[serde(rename_all = "camelCase")]
-pub struct GroupPointConfigUpdateInput {
-    pub order_point_percent: Option<i32>,
-}
+// 注: 旧的 GroupPointConfig / GroupPointConfigUpdateInput 类型于 2026-07 删除 (已迁到 group_configs FSD §11.23)

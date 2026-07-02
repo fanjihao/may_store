@@ -165,7 +165,7 @@ pub async fn create_footprint(
 
     // 检查用户是否是组成员
     let is_member: bool = sqlx::query_scalar::<_, bool>(
-        "SELECT EXISTS(SELECT 1 FROM association_group_members WHERE group_id=$1 AND user_id=$2 AND member_status='ACTIVE')",
+        "SELECT EXISTS(SELECT 1 FROM association_group_members WHERE group_id=$1 AND user_id=$2 AND member_status='ACTIVE'::group_member_status_enum)",
     )
     .bind(gid)
     .bind(user_id)
@@ -284,7 +284,7 @@ pub async fn list_footprints(
 
     // 检查用户是否是组成员
     let is_member: bool = sqlx::query_scalar::<_, bool>(
-        "SELECT EXISTS(SELECT 1 FROM association_group_members WHERE group_id=$1 AND user_id=$2 AND member_status='ACTIVE')",
+        "SELECT EXISTS(SELECT 1 FROM association_group_members WHERE group_id=$1 AND user_id=$2 AND member_status='ACTIVE'::group_member_status_enum)",
     )
     .bind(gid)
     .bind(user_id)
@@ -457,7 +457,7 @@ pub async fn delete_footprint(
 
     // 检查用户是否是组成员
     let is_member: bool = sqlx::query_scalar::<_, bool>(
-        "SELECT EXISTS(SELECT 1 FROM association_group_members WHERE group_id=$1 AND user_id=$2 AND member_status='ACTIVE')",
+        "SELECT EXISTS(SELECT 1 FROM association_group_members WHERE group_id=$1 AND user_id=$2 AND member_status='ACTIVE'::group_member_status_enum)",
     )
     .bind(gid)
     .bind(user_id)
@@ -534,7 +534,7 @@ pub async fn expand_capacity(
 
     // 检查用户是否是组成员
     let is_member: bool = sqlx::query_scalar::<_, bool>(
-        "SELECT EXISTS(SELECT 1 FROM association_group_members WHERE group_id=$1 AND user_id=$2 AND member_status='ACTIVE')",
+        "SELECT EXISTS(SELECT 1 FROM association_group_members WHERE group_id=$1 AND user_id=$2 AND member_status='ACTIVE'::group_member_status_enum)",
     )
     .bind(gid)
     .bind(user_id)
@@ -580,7 +580,7 @@ pub async fn expand_capacity(
     let idempotency_key = format!("footprint_expand_{}_{}", gid, input.idempotency_key);
     sqlx::query(
         r#"INSERT INTO diamond_transactions (group_id, type, amount, balance_before, balance_after, biz_type, idempotency_key, created_at)
-           VALUES ($1, 'CONSUME', $2, $3, $3 - $2, 'FOOTPRINT_CAPACITY_EXPANSION', $4, NOW())"#
+           VALUES ($1, 'CONSUME'::diamond_tx_type_enum, $2, $3, $3 - $2, 'FOOTPRINT_CAPACITY_EXPANSION', $4, NOW())"#
     )
     .bind(gid)
     .bind(diamond_cost)

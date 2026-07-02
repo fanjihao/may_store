@@ -143,7 +143,7 @@ impl DashboardService {
              FROM orders o \
              LEFT JOIN order_items oi ON o.order_id = oi.order_id
              JOIN foods f ON oi.food_id = f.food_id \
-             WHERE o.group_id = $1 AND o.status IN ('COMPLETED', 'CONFIRMED_COMPLETED') \
+             WHERE o.group_id = $1 AND o.status IN ('COMPLETED'::order_status_enum, 'CONFIRMED_COMPLETED'::order_status_enum) \
              GROUP BY f.food_id, f.name \
              ORDER BY order_count DESC \
              LIMIT 10",
@@ -214,14 +214,14 @@ impl DashboardService {
             .get(0);
 
         let completed_orders: i32 =
-            sqlx::query("SELECT COUNT(*) FROM orders WHERE user_id = $1 AND status IN ('COMPLETED', 'CONFIRMED_COMPLETED')")
+            sqlx::query("SELECT COUNT(*) FROM orders WHERE user_id = $1 AND status IN ('COMPLETED'::order_status_enum, 'CONFIRMED_COMPLETED'::order_status_enum)")
                 .bind(user_id as i64)
                 .fetch_one(db)
                 .await?
                 .get(0);
 
         let pending_orders: i32 = sqlx::query(
-            "SELECT COUNT(*) FROM orders WHERE user_id = $1 AND status IN ('CREATED', 'ACCEPTED')",
+            "SELECT COUNT(*) FROM orders WHERE user_id = $1 AND status IN ('CREATED'::order_status_enum, 'ACCEPTED'::order_status_enum)",
         )
         .bind(user_id as i64)
         .fetch_one(db)

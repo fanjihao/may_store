@@ -184,7 +184,7 @@ pub async fn sign_in_status(
 
     // 检查用户是否是组成员
     let is_member: bool = sqlx::query_scalar::<_, bool>(
-        "SELECT EXISTS(SELECT 1 FROM association_group_members WHERE group_id=$1 AND user_id=$2 AND member_status='ACTIVE')"
+        "SELECT EXISTS(SELECT 1 FROM association_group_members WHERE group_id=$1 AND user_id=$2 AND member_status = 'ACTIVE'::group_member_status_enum)"
     )
     .bind(group_id)
     .bind(token.user_id)
@@ -203,7 +203,7 @@ pub async fn sign_in_status(
         r#"SELECT agm.user_id, sr.sign_date, sr.consecutive_days
            FROM association_group_members agm
            LEFT JOIN sign_in_records sr ON sr.user_id = agm.user_id AND sr.group_id = agm.group_id AND sr.sign_date = $2
-           WHERE agm.group_id = $1 AND agm.member_status = 'ACTIVE'"#
+           WHERE agm.group_id = $1 AND agm.member_status = 'ACTIVE'::group_member_status_enum"#
     )
     .bind(group_id)
     .bind(today)
@@ -321,7 +321,7 @@ pub async fn get_sign_ins(
 
     // 检查用户是否是组成员
     let is_member: bool = sqlx::query_scalar::<_, bool>(
-        "SELECT EXISTS(SELECT 1 FROM association_group_members WHERE group_id=$1 AND user_id=$2 AND member_status='ACTIVE')"
+        "SELECT EXISTS(SELECT 1 FROM association_group_members WHERE group_id=$1 AND user_id=$2 AND member_status = 'ACTIVE'::group_member_status_enum)"
     )
     .bind(group_id)
     .bind(token.user_id)

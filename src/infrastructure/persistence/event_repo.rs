@@ -22,7 +22,7 @@ impl EventRepository for PostgresEventRepository {
     async fn save(&self, event: &EventLogRecord) -> Result<i64, CustomError> {
         let id: i64 = sqlx::query_scalar(
             r#"INSERT INTO event_log (event_type, payload, status, idempotency_key)
-               VALUES ($1, $2, $3, $4) RETURNING id"#
+               VALUES ($1, $2, $3::event_status_enum, $4) RETURNING id"#
         )
         .bind(serde_json::to_string(&event.event_type).unwrap_or_default())
         .bind(serde_json::to_value(&event.payload).unwrap_or(serde_json::json!({})))
@@ -68,7 +68,7 @@ impl EventRepository for PostgresEventRepository {
     async fn find_pending(&self, limit: i64) -> Result<Vec<EventLogRecord>, CustomError> {
         let rows = sqlx::query(
             r#"SELECT id, event_type, payload, status, idempotency_key, created_at, processed_at
-               FROM event_log WHERE status = 'PENDING' ORDER BY created_at ASC LIMIT $1"#
+               FROM event_log WHERE status = 'PENDING'::event_status_enum ORDER BY created_at ASC LIMIT $1"#
         )
         .bind(limit)
         .fetch_all(&self.pool)
@@ -105,7 +105,7 @@ impl EventRepository for PostgresEventRepository {
         };
 
         sqlx::query(
-            r#"UPDATE event_log SET status = $2, processed_at = $3 WHERE id = $1"#
+            r#"UPDATE event_log SET status = $2::event_status_enum, processed_at = $3 WHERE id = $1"#
         )
         .bind(id)
         .bind(status)

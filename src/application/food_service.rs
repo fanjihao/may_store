@@ -21,7 +21,7 @@ impl FoodService {
     ) -> Result<FoodOut, CustomError> {
         let rec = sqlx::query_as::<_, FoodRecord>(
             "INSERT INTO foods (group_id, food_name, description, images, price, food_status, created_by) \
-             VALUES ($1, $2, $3, $4, $5, $6, $7) \
+             VALUES ($1, $2, $3, $4, $5, $6::food_status_enum, $7) \
              RETURNING food_id, group_id, food_name AS name, description, images, tags, price, food_status AS status, created_by, created_at, updated_at"
         )
         .bind(input.group_id)
@@ -197,7 +197,7 @@ impl FoodService {
             return Ok(());
         }
 
-        sqlx::query("INSERT INTO user_food_mark (user_id, food_id, mark_type) VALUES ($1, $2, $3)")
+        sqlx::query("INSERT INTO user_food_mark (user_id, food_id, mark_type) VALUES ($1, $2, $3::mark_type_enum)")
             .bind(user_id as i64)
             .bind(food_id)
             .bind(mark_type)
@@ -268,7 +268,7 @@ impl FoodService {
         input: &BlindBoxDrawInput,
     ) -> Result<BlindBoxDrawResultOut, CustomError> {
         let rec = sqlx::query_as::<_, FoodRecord>(
-            "SELECT food_id, group_id, food_name AS name, description, images, tags, price, food_status AS status, created_by, created_at, updated_at FROM foods WHERE is_del = 0 AND food_status = 'NORMAL' AND group_id = $1 ORDER BY RANDOM() LIMIT 1"
+            "SELECT food_id, group_id, food_name AS name, description, images, tags, price, food_status AS status, created_by, created_at, updated_at FROM foods WHERE is_del = 0 AND food_status = 'NORMAL'::food_status_enum AND group_id = $1 ORDER BY RANDOM() LIMIT 1"
         )
         .bind(input.group_id)
         .fetch_optional(db)

@@ -38,7 +38,7 @@ impl WishService {
         // 1. 找组内另一名 ACTIVE 成员 → 自动设为 fulfiller
         let other_id: Option<i64> = sqlx::query_scalar(
             "SELECT user_id FROM association_group_members \
-             WHERE group_id = $1 AND user_id != $2 AND member_status = 'ACTIVE' \
+             WHERE group_id = $1 AND user_id != $2 AND member_status = 'ACTIVE'::group_member_status_enum \
              LIMIT 1",
         )
         .bind(input.group_id)
@@ -52,7 +52,7 @@ impl WishService {
         // 2. 同组同时只能有 1 条 DRAFT/NEGOTIATING 状态的心愿
         let existing_count: i64 = sqlx::query_scalar(
             "SELECT COUNT(*) FROM wishes \
-             WHERE group_id = $1 AND status IN ('DRAFT', 'NEGOTIATING')",
+             WHERE group_id = $1 AND status IN ('DRAFT'::wish_status_enum, 'NEGOTIATING'::wish_status_enum)",
         )
         .bind(input.group_id)
         .fetch_one(db)
@@ -66,7 +66,7 @@ impl WishService {
         // 3. 创建心愿,requester_id = 创建人,fulfiller_id = 另一成员
         let rec = sqlx::query_as::<_, WishRecord>(
             "INSERT INTO wishes (wish_name, wish_cost, status, created_by, group_id, requester_id, fulfiller_id) \
-             VALUES ($1, $2, 'NEGOTIATING', $3, $4, $3, $5) \
+             VALUES ($1, $2, 'NEGOTIATING'::wish_status_enum, $3, $4, $3, $5) \
              RETURNING wish_id, wish_name, wish_cost, status, created_by, group_id, claimed_by, claimed_at, claim_cost, created_at, updated_at, \
              requester_id, fulfiller_id, initial_cost, final_cost, fulfillment_deadline_hours"
         )
@@ -213,7 +213,7 @@ impl WishService {
         }
 
         let rec = sqlx::query_as::<_, WishRecord>(
-            "UPDATE wishes SET status = 'CLOSED' WHERE wish_id = $1 \
+            "UPDATE wishes SET status = 'CLOSED'::feedback_status_enum::wish_status_enum WHERE wish_id = $1 \
              RETURNING wish_id, wish_name, wish_cost, status, created_by, group_id, claimed_by, claimed_at, claim_cost, created_at, updated_at"
         )
         .bind(wish_id)
@@ -272,7 +272,7 @@ impl WishService {
 
         // 更新心愿状态为已完成
         let rec = sqlx::query_as::<_, WishRecord>(
-            "UPDATE wishes SET status = 'FINISHED' WHERE wish_id = $1 \
+            "UPDATE wishes SET status = 'FINISHED'::wish_status_enum WHERE wish_id = $1 \
              RETURNING wish_id, wish_name, wish_cost, status, created_by, group_id, claimed_by, claimed_at, claim_cost, created_at, updated_at"
         )
         .bind(wish_id)
@@ -323,8 +323,9 @@ impl WishService {
         }
 
         // P1-1:在报价/期限变更前,撤销之前所有 ACCEPT(它们绑定的是旧 final_cost)
+        // PG 不会隐式把 text 转成自定义 enum,必须显式 ::wish_negotiation_action_enum
         sqlx::query(
-            "DELETE FROM wish_negotiations WHERE wish_id = $1 AND action = 'ACCEPT'"
+            "DELETE FROM wish_negotiations WHERE wish_id = $1 AND action = 'ACCEPT'::wish_negotiation_action_enum"
         )
         .bind(wish_id)
         .execute(db)
@@ -350,7 +351,7 @@ impl WishService {
 
         // 根据协商历史判断这是首条报价还是还价
         let has_any_negotiation: bool = sqlx::query_scalar(
-            "SELECT EXISTS(SELECT 1 FROM wish_negotiations WHERE wish_id = $1 AND action IN ('QUOTE', 'COUNTER'))"
+            "SELECT EXISTS(SELECT 1 FROM wish_negotiations WHERE wish_id = $1 AND action IN ('QUOTE'::wish_negotiation_action_enum, 'COUNTER'::wish_negotiation_action_enum))"
         )
         .bind(wish_id)
         .fetch_one(db)
@@ -358,7 +359,7 @@ impl WishService {
         let action_label = if has_any_negotiation { "COUNTER" } else { "QUOTE" };
 
         sqlx::query(
-            "INSERT INTO wish_negotiations (wish_id, group_id, operator_id, operator_role_snapshot, action, cost) VALUES ($1, $2, $3, $4, $5, $6)"
+            "INSERT INTO wish_negotiations (wish_id, group_id, operator_id, operator_role_snapshot, action, cost) VALUES ($1, $2, $3, $4, $5::wish_negotiation_action_enum, $6)"
         )
         .bind(wish_id)
         .bind(existing.group_id)
@@ -445,7 +446,7 @@ impl WishService {
 
         // P1-1:期限变更 → 撤销之前的 ACCEPT(旧 ACCEPT 绑定的是旧 deadline)
         sqlx::query(
-            "DELETE FROM wish_negotiations WHERE wish_id = $1 AND action = 'ACCEPT'"
+            "DELETE FROM wish_negotiations WHERE wish_id = $1 AND action = 'ACCEPT'::wish_negotiation_action_enum"
         )
         .bind(wish_id)
         .execute(db)
@@ -470,7 +471,7 @@ impl WishService {
         let role_snapshot = if user_id == requester_id { "REQUESTER" } else { "FULFILLER" };
 
         sqlx::query(
-            "INSERT INTO wish_negotiations (wish_id, group_id, operator_id, operator_role_snapshot, action, deadline_hours) VALUES ($1, $2, $3, $4, 'SET_DEADLINE', $5)"
+            "INSERT INTO wish_negotiations (wish_id, group_id, operator_id, operator_role_snapshot, action, deadline_hours) VALUES ($1, $2, $3, $4, 'SET_DEADLINE'::wish_negotiation_action_enum, $5)"
         )
         .bind(wish_id)
         .bind(existing.group_id)
@@ -546,7 +547,7 @@ impl WishService {
 
         // P1-1 修复 + 幂等保护:同一用户多次点击 ACCEPT 只保留一条
         sqlx::query(
-            "DELETE FROM wish_negotiations WHERE wish_id = $1 AND operator_id = $2 AND action = 'ACCEPT' AND cost <> $3"
+            "DELETE FROM wish_negotiations WHERE wish_id = $1 AND operator_id = $2 AND action = 'ACCEPT'::wish_negotiation_action_enum AND cost <> $3"
         )
         .bind(wish_id)
         .bind(user_id)
@@ -556,7 +557,7 @@ impl WishService {
 
         // 幂等:同一 cost 下不重复插入 ACCEPT
         let exists: bool = sqlx::query_scalar(
-            "SELECT EXISTS(SELECT 1 FROM wish_negotiations WHERE wish_id = $1 AND operator_id = $2 AND action = 'ACCEPT' AND cost = $3)"
+            "SELECT EXISTS(SELECT 1 FROM wish_negotiations WHERE wish_id = $1 AND operator_id = $2 AND action = 'ACCEPT'::wish_negotiation_action_enum AND cost = $3)"
         )
         .bind(wish_id)
         .bind(user_id)
@@ -568,7 +569,7 @@ impl WishService {
             // P3-3: 操作者角色快照
             let role_snapshot = if user_id == requester_id { "REQUESTER" } else { "FULFILLER" };
             sqlx::query(
-                "INSERT INTO wish_negotiations (wish_id, group_id, operator_id, operator_role_snapshot, action, cost) VALUES ($1, $2, $3, $4, 'ACCEPT', $5)"
+                "INSERT INTO wish_negotiations (wish_id, group_id, operator_id, operator_role_snapshot, action, cost) VALUES ($1, $2, $3, $4, 'ACCEPT'::wish_negotiation_action_enum, $5)"
             )
             .bind(wish_id)
             .bind(existing.group_id)
@@ -581,7 +582,7 @@ impl WishService {
 
         // 2) 取「双方都 ACCEPT」的最新状态(P1-1:基于当前 final_cost 的 ACCEPT)
         let confirmed_rows = sqlx::query(
-            "SELECT DISTINCT operator_id FROM wish_negotiations WHERE wish_id = $1 AND action = 'ACCEPT' AND cost = $2"
+            "SELECT DISTINCT operator_id FROM wish_negotiations WHERE wish_id = $1 AND action = 'ACCEPT'::wish_negotiation_action_enum AND cost = $2"
         )
         .bind(wish_id)
         .bind(final_cost)
@@ -643,7 +644,7 @@ impl WishService {
 
         // 4) 双方都 ACCEPT → 进 CREATED,wish_cost 同步为 final_cost
         let rec = sqlx::query_as::<_, WishRecord>(
-            "UPDATE wishes SET status = 'CREATED', wish_cost = $2, updated_at = NOW() WHERE wish_id = $1 \
+            "UPDATE wishes SET status = 'CREATED'::order_status_enum, wish_cost = $2, updated_at = NOW() WHERE wish_id = $1 \
              RETURNING wish_id, wish_name, wish_cost, status, created_by, group_id, claimed_by, claimed_at, claim_cost, created_at, updated_at, \
              requester_id, fulfiller_id, initial_cost, final_cost, fulfillment_deadline_hours"
         )
@@ -721,7 +722,7 @@ impl WishService {
         };
 
         sqlx::query(
-            "INSERT INTO wish_negotiations (wish_id, group_id, operator_id, operator_role_snapshot, action, remark) VALUES ($1, $2, $3, $4, $5, $6)"
+            "INSERT INTO wish_negotiations (wish_id, group_id, operator_id, operator_role_snapshot, action, remark) VALUES ($1, $2, $3, $4, $5::wish_negotiation_action_enum, $6)"
         )
         .bind(wish_id)
         .bind(existing.group_id)
@@ -733,7 +734,7 @@ impl WishService {
         .await?;
 
         let rec = sqlx::query_as::<_, WishRecord>(
-            "UPDATE wishes SET status = 'CLOSED', closed_at = NOW(), updated_at = NOW() WHERE wish_id = $1 \
+            "UPDATE wishes SET status = 'CLOSED'::feedback_status_enum::wish_status_enum, closed_at = NOW(), updated_at = NOW() WHERE wish_id = $1 \
              RETURNING wish_id, wish_name, wish_cost, status, created_by, group_id, claimed_by, claimed_at, claim_cost, created_at, updated_at, requester_id, fulfiller_id, initial_cost, final_cost, fulfillment_deadline_hours"
         )
         .bind(wish_id)
@@ -793,7 +794,7 @@ impl WishService {
         };
 
         sqlx::query(
-            "INSERT INTO wish_negotiations (wish_id, group_id, operator_id, operator_role_snapshot, action, remark) VALUES ($1, $2, $3, $4, 'CLOSE', $5)"
+            "INSERT INTO wish_negotiations (wish_id, group_id, operator_id, operator_role_snapshot, action, remark) VALUES ($1, $2, $3, $4, 'CLOSE'::wish_negotiation_action_enum, $5)"
         )
         .bind(wish_id)
         .bind(existing.group_id)
@@ -804,7 +805,7 @@ impl WishService {
         .await?;
 
         let rec = sqlx::query_as::<_, WishRecord>(
-            "UPDATE wishes SET status = 'CLOSED', closed_at = NOW(), updated_at = NOW() WHERE wish_id = $1 \
+            "UPDATE wishes SET status = 'CLOSED'::feedback_status_enum::wish_status_enum, closed_at = NOW(), updated_at = NOW() WHERE wish_id = $1 \
              RETURNING wish_id, wish_name, wish_cost, status, created_by, group_id, claimed_by, claimed_at, claim_cost, created_at, updated_at, requester_id, fulfiller_id, initial_cost, final_cost, fulfillment_deadline_hours"
         )
         .bind(wish_id)
@@ -842,7 +843,7 @@ impl WishService {
         idempotency_key: &str,
     ) -> Result<i64, CustomError> {
         let frozen_amount: i64 = sqlx::query_scalar::<_, i64>(
-            r#"SELECT COALESCE(SUM(CASE WHEN type='FREEZE' THEN amount ELSE 0 END)::bigint - SUM(CASE WHEN type='UNFREEZE' THEN amount ELSE 0 END)::bigint, 0::bigint) FROM love_point_transactions WHERE user_id=$1 AND group_id=$2 AND biz_id=$3 AND biz_type = 'wish'"#
+            r#"SELECT COALESCE(SUM(CASE WHEN type='FREEZE'::love_point_tx_type_enum THEN amount ELSE 0 END)::bigint - SUM(CASE WHEN type='UNFREEZE'::love_point_tx_type_enum THEN amount ELSE 0 END)::bigint, 0::bigint) FROM love_point_transactions WHERE user_id=$1 AND group_id=$2 AND biz_id=$3 AND biz_type = 'wish'"#
         )
         .bind(requester_id)
         .bind(group_id)
@@ -867,7 +868,7 @@ impl WishService {
         }
 
         let row = sqlx::query_as::<_, (i64, i64)>(
-            "SELECT COALESCE(SUM(CASE WHEN type IN ('EARN') THEN amount ELSE 0 END)::bigint, 0::bigint), COALESCE(SUM(CASE WHEN type='FREEZE' THEN amount ELSE 0 END)::bigint - SUM(CASE WHEN type='UNFREEZE' THEN amount ELSE 0 END)::bigint, 0::bigint) FROM love_point_transactions WHERE user_id=$1 AND group_id=$2"
+            "SELECT COALESCE(SUM(CASE WHEN type IN ('EARN'::love_point_tx_type_enum) THEN amount ELSE 0 END)::bigint, 0::bigint), COALESCE(SUM(CASE WHEN type='FREEZE'::love_point_tx_type_enum THEN amount ELSE 0 END)::bigint - SUM(CASE WHEN type='UNFREEZE'::love_point_tx_type_enum THEN amount ELSE 0 END)::bigint, 0::bigint) FROM love_point_transactions WHERE user_id=$1 AND group_id=$2"
         )
         .bind(requester_id)
         .bind(group_id)
@@ -877,7 +878,7 @@ impl WishService {
 
         sqlx::query(
             r#"INSERT INTO love_point_transactions (user_id, group_id, type, amount, available_before, available_after, frozen_before, frozen_after, biz_type, biz_id, idempotency_key, created_at)
-               VALUES ($1, $2, 'UNFREEZE', $3, $4, $4+$3, $5, 0, 'wish', $6, $7, NOW())"#
+               VALUES ($1, $2, 'UNFREEZE'::love_point_tx_type_enum, $3, $4, $4+$3, $5, 0, 'wish', $6, $7, NOW())"#
         )
         .bind(requester_id)
         .bind(group_id)
@@ -954,7 +955,7 @@ impl WishService {
         // 写积分流水(冻结) - biz_type 统一为 'wish'
         sqlx::query(
             "INSERT INTO love_point_transactions (user_id, group_id, type, amount, available_before, available_after, frozen_before, frozen_after, biz_type, biz_id, trace_id, created_at) \
-             VALUES ($1, $2, 'FREEZE', $3, $4, $5, $6, $7, 'wish', $8, '', NOW())"
+             VALUES ($1, $2, 'FREEZE'::love_point_tx_type_enum, $3, $4, $5, $6, $7, 'wish', $8, '', NOW())"
         )
         .bind(user_id)
         .bind(existing.group_id)
@@ -973,8 +974,8 @@ impl WishService {
 
         // 更新心愿状态为 CLAIMED(条件 UPDATE 防止 TOCTOU 重复 select)
         let rec = sqlx::query_as::<_, WishRecord>(
-            "UPDATE wishes SET status = 'CLAIMED', selected_by = $2, selected_at = NOW(), claimed_by = $2, fulfillment_due_at = $3, updated_at = NOW() \
-             WHERE wish_id = $1 AND status = 'CREATED' AND claimed_by IS NULL \
+            "UPDATE wishes SET status = 'CLAIMED'::wish_status_enum, selected_by = $2, selected_at = NOW(), claimed_by = $2, fulfillment_due_at = $3, updated_at = NOW() \
+             WHERE wish_id = $1 AND status = 'CREATED'::order_status_enum AND claimed_by IS NULL \
              RETURNING wish_id, wish_name, wish_cost, status, created_by, group_id, claimed_by, claimed_at, claim_cost, created_at, updated_at, \
              requester_id, fulfiller_id, fulfillment_due_at, fulfillment_deadline_hours"
         )

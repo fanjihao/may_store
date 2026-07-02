@@ -121,8 +121,7 @@ impl SignService {
         sqlx::query(
             r#"INSERT INTO diamond_transactions
                (group_id, type, amount, balance_before, balance_after, biz_type, biz_id, idempotency_key, created_at)
-               SELECT $1, 'EARN', $2, diamond, diamond + $2, 'SIGN_IN', $3, $4, NOW()
-               FROM association_groups WHERE group_id = $1"#,
+               SELECT $1, 'EARN'::diamond_tx_type_enum, $2, diamond, diamond + $2, 'SIGN_IN', $3, $4, NOW()FROM association_groups WHERE group_id = $1"#,
         )
         .bind(group_id)
         .bind(diamond_reward as i64)
@@ -159,8 +158,7 @@ impl SignService {
                 sqlx::query(
                     r#"INSERT INTO diamond_transactions
                        (group_id, type, amount, balance_before, balance_after, biz_type, biz_id, idempotency_key, created_at)
-                       SELECT $1, 'EARN', $2, diamond, diamond + $2, 'FULL_TEAM_BONUS', $3, $4, NOW()
-                       FROM association_groups WHERE group_id = $1"#,
+                       SELECT $1, 'EARN'::diamond_tx_type_enum, $2, diamond, diamond + $2, 'FULL_TEAM_BONUS', $3, $4, NOW()FROM association_groups WHERE group_id = $1"#,
                 )
                 .bind(group_id)
                 .bind(amt as i64)
@@ -243,7 +241,7 @@ impl SignService {
     ) -> Result<bool, CustomError> {
         let member_count: i64 = sqlx::query_scalar(
             "SELECT COUNT(*) FROM association_group_members
-             WHERE group_id = $1 AND member_status = 'ACTIVE'",
+             WHERE group_id = $1 AND member_status = 'ACTIVE'::group_member_status_enum",
         )
         .bind(group_id)
         .fetch_one(&mut **tx)

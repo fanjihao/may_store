@@ -4,16 +4,15 @@
 use ntex::web::{
     self,
     types::{Json, State},
-    HttpResponse, Responder, ServiceConfig,
+    Responder, ServiceConfig,
 };
 use serde::{Deserialize, Serialize};
-use sqlx::Row;
 use std::sync::Arc;
 use utoipa::ToSchema;
 
 use crate::config::AppState;
 use crate::errors::CustomError;
-use crate::middlewares::jwt::{self, TokenType};
+use crate::middlewares::jwt;
 use crate::utils::response::ApiResponse;
 
 const ADMIN_USERNAME: &str = "admin";
@@ -32,16 +31,13 @@ pub struct AdminLoginInput {
 #[serde(rename_all = "camelCase")]
 pub struct AdminLoginResponse {
     pub access_token: String,
-    pub expires_at: i64,    // Unix 秒
-    pub role: String,       // "SUPER_ADMIN"
+    pub expires_at: i64, // Unix 秒
+    pub role: String,    // "SUPER_ADMIN"
 }
 
 /// 配置后台管理 auth 路由
 pub fn configure(cfg: &mut ServiceConfig) {
-    cfg.service(
-        web::scope("/api/admin/auth")
-            .route("/login", web::post().to(admin_login)),
-    );
+    cfg.service(web::scope("/api/admin/auth").route("/login", web::post().to(admin_login)));
 }
 
 /// POST /api/admin/auth/login
@@ -86,7 +82,7 @@ pub async fn admin_login(
     // 3. 幂等建 admin_users 行
     sqlx::query(
         r#"INSERT INTO admin_users (user_id, role, status) VALUES ($1, $2::admin_role_enum, 'ACTIVE')
-           ON CONFLICT (user_id) DO UPDATE SET status = 'ACTIVE'"#,
+           ON CONFLICT (user_id) DO UPDATE SET status = 'ACTIVE'::user_status_enum"#,
     )
     .bind(ADMIN_FIXED_USER_ID)
     .bind(ADMIN_DEFAULT_ROLE)
@@ -94,12 +90,11 @@ pub async fn admin_login(
     .await?;
 
     // 4. 读 role + admin_id 出来
-    let row: (i64, String) = sqlx::query_as(
-        "SELECT admin_id, role::text FROM admin_users WHERE user_id = $1",
-    )
-    .bind(ADMIN_FIXED_USER_ID)
-    .fetch_one(db)
-    .await?;
+    let row: (i64, String) =
+        sqlx::query_as("SELECT admin_id, role::text FROM admin_users WHERE user_id = $1")
+            .bind(ADMIN_FIXED_USER_ID)
+            .fetch_one(db)
+            .await?;
 
     // 5. 签 JWT
     let (token, claims) = jwt::issue_access(ADMIN_FIXED_USER_ID, &state.jwt_secret)
