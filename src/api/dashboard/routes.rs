@@ -524,7 +524,7 @@ pub async fn get_admin_dashboard(
         r#"
         SELECT
             COUNT(*) as total,
-            COUNT(CASE WHEN status IN ('CREATED'::order_status_enum, 'NEGOTIATING'::wish_status_enum, 'CLAIMED'::wish_status_enum) THEN 1 END) as active,
+            COUNT(CASE WHEN status IN ('CREATED'::wish_status_enum, 'NEGOTIATING'::wish_status_enum, 'CLAIMED'::wish_status_enum) THEN 1 END) as active,
             COUNT(CASE WHEN status = 'FINISHED'::wish_status_enum THEN 1 END) as finished,
             COUNT(CASE WHEN status = 'EXPIRED'::wish_status_enum THEN 1 END) as expired,
             COALESCE(SUM(final_cost), 0)

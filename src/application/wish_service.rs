@@ -644,7 +644,7 @@ impl WishService {
 
         // 4) 双方都 ACCEPT → 进 CREATED,wish_cost 同步为 final_cost
         let rec = sqlx::query_as::<_, WishRecord>(
-            "UPDATE wishes SET status = 'CREATED'::order_status_enum, wish_cost = $2, updated_at = NOW() WHERE wish_id = $1 \
+            "UPDATE wishes SET status = 'CREATED'::wish_status_enum, wish_cost = $2, updated_at = NOW() WHERE wish_id = $1 \
              RETURNING wish_id, wish_name, wish_cost, status, created_by, group_id, claimed_by, claimed_at, claim_cost, created_at, updated_at, \
              requester_id, fulfiller_id, initial_cost, final_cost, fulfillment_deadline_hours"
         )
@@ -975,7 +975,7 @@ impl WishService {
         // 更新心愿状态为 CLAIMED(条件 UPDATE 防止 TOCTOU 重复 select)
         let rec = sqlx::query_as::<_, WishRecord>(
             "UPDATE wishes SET status = 'CLAIMED'::wish_status_enum, selected_by = $2, selected_at = NOW(), claimed_by = $2, fulfillment_due_at = $3, updated_at = NOW() \
-             WHERE wish_id = $1 AND status = 'CREATED'::order_status_enum AND claimed_by IS NULL \
+             WHERE wish_id = $1 AND status = 'CREATED'::wish_status_enum AND claimed_by IS NULL \
              RETURNING wish_id, wish_name, wish_cost, status, created_by, group_id, claimed_by, claimed_at, claim_cost, created_at, updated_at, \
              requester_id, fulfiller_id, fulfillment_due_at, fulfillment_deadline_hours"
         )

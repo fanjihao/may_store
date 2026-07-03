@@ -707,7 +707,7 @@ pub async fn list_group_wishes(
                 r#"SELECT
                       COUNT(*)::BIGINT AS total,
                       COUNT(*) FILTER (WHERE w.status = 'NEGOTIATING'::wish_status_enum)::BIGINT AS negotiating,
-                      COUNT(*) FILTER (WHERE w.status = 'CREATED'::order_status_enum)::BIGINT AS unlocked,
+                      COUNT(*) FILTER (WHERE w.status = 'CREATED'::wish_status_enum)::BIGINT AS unlocked,
                       COUNT(*) FILTER (WHERE w.status = 'CLAIMED'::wish_status_enum)::BIGINT AS claimed,
                       COUNT(*) FILTER (WHERE w.status = 'FINISHED'::wish_status_enum)::BIGINT AS finished,
                       COUNT(*) FILTER (WHERE w.status IN ('EXPIRED'::wish_status_enum,'CLOSED'::wish_status_enum))::BIGINT AS closed
@@ -724,7 +724,7 @@ pub async fn list_group_wishes(
             r#"SELECT
                   COUNT(*)::BIGINT AS total,
                   COUNT(*) FILTER (WHERE w.status = 'NEGOTIATING'::wish_status_enum)::BIGINT AS negotiating,
-                  COUNT(*) FILTER (WHERE w.status = 'CREATED'::order_status_enum)::BIGINT AS unlocked,
+                  COUNT(*) FILTER (WHERE w.status = 'CREATED'::wish_status_enum)::BIGINT AS unlocked,
                   COUNT(*) FILTER (WHERE w.status = 'CLAIMED'::wish_status_enum)::BIGINT AS claimed,
                   COUNT(*) FILTER (WHERE w.status = 'FINISHED'::wish_status_enum)::BIGINT AS finished,
                   COUNT(*) FILTER (WHERE w.status IN ('EXPIRED'::wish_status_enum,'CLOSED'::wish_status_enum))::BIGINT AS closed
@@ -740,7 +740,7 @@ pub async fn list_group_wishes(
                 r#"SELECT
                       COUNT(*)::BIGINT AS total,
                       COUNT(*) FILTER (WHERE w.status = 'NEGOTIATING'::wish_status_enum)::BIGINT AS negotiating,
-                      COUNT(*) FILTER (WHERE w.status = 'CREATED'::order_status_enum)::BIGINT AS unlocked,
+                      COUNT(*) FILTER (WHERE w.status = 'CREATED'::wish_status_enum)::BIGINT AS unlocked,
                       COUNT(*) FILTER (WHERE w.status = 'CLAIMED'::wish_status_enum)::BIGINT AS claimed,
                       COUNT(*) FILTER (WHERE w.status = 'FINISHED'::wish_status_enum)::BIGINT AS finished,
                       COUNT(*) FILTER (WHERE w.status IN ('EXPIRED'::wish_status_enum,'CLOSED'::wish_status_enum))::BIGINT AS closed
@@ -757,7 +757,7 @@ pub async fn list_group_wishes(
             r#"SELECT
                   COUNT(*)::BIGINT AS total,
                   COUNT(*) FILTER (WHERE w.status = 'NEGOTIATING'::wish_status_enum)::BIGINT AS negotiating,
-                  COUNT(*) FILTER (WHERE w.status = 'CREATED'::order_status_enum)::BIGINT AS unlocked,
+                  COUNT(*) FILTER (WHERE w.status = 'CREATED'::wish_status_enum)::BIGINT AS unlocked,
                   COUNT(*) FILTER (WHERE w.status = 'CLAIMED'::wish_status_enum)::BIGINT AS claimed,
                   COUNT(*) FILTER (WHERE w.status = 'FINISHED'::wish_status_enum)::BIGINT AS finished,
                   COUNT(*) FILTER (WHERE w.status IN ('EXPIRED'::wish_status_enum,'CLOSED'::wish_status_enum))::BIGINT AS closed
@@ -773,7 +773,7 @@ pub async fn list_group_wishes(
                 r#"SELECT
                       COUNT(*)::BIGINT AS total,
                       COUNT(*) FILTER (WHERE w.status = 'NEGOTIATING'::wish_status_enum)::BIGINT AS negotiating,
-                      COUNT(*) FILTER (WHERE w.status = 'CREATED'::order_status_enum)::BIGINT AS unlocked,
+                      COUNT(*) FILTER (WHERE w.status = 'CREATED'::wish_status_enum)::BIGINT AS unlocked,
                       COUNT(*) FILTER (WHERE w.status = 'CLAIMED'::wish_status_enum)::BIGINT AS claimed,
                       COUNT(*) FILTER (WHERE w.status = 'FINISHED'::wish_status_enum)::BIGINT AS finished,
                       COUNT(*) FILTER (WHERE w.status IN ('EXPIRED'::wish_status_enum,'CLOSED'::wish_status_enum))::BIGINT AS closed
@@ -789,7 +789,7 @@ pub async fn list_group_wishes(
             r#"SELECT
                   COUNT(*)::BIGINT AS total,
                   COUNT(*) FILTER (WHERE w.status = 'NEGOTIATING'::wish_status_enum)::BIGINT AS negotiating,
-                  COUNT(*) FILTER (WHERE w.status = 'CREATED'::order_status_enum)::BIGINT AS unlocked,
+                  COUNT(*) FILTER (WHERE w.status = 'CREATED'::wish_status_enum)::BIGINT AS unlocked,
                   COUNT(*) FILTER (WHERE w.status = 'CLAIMED'::wish_status_enum)::BIGINT AS claimed,
                   COUNT(*) FILTER (WHERE w.status = 'FINISHED'::wish_status_enum)::BIGINT AS finished,
                   COUNT(*) FILTER (WHERE w.status IN ('EXPIRED'::wish_status_enum,'CLOSED'::wish_status_enum))::BIGINT AS closed
@@ -804,7 +804,7 @@ pub async fn list_group_wishes(
                 r#"SELECT
                       COUNT(*)::BIGINT AS total,
                       COUNT(*) FILTER (WHERE w.status = 'NEGOTIATING'::wish_status_enum)::BIGINT AS negotiating,
-                      COUNT(*) FILTER (WHERE w.status = 'CREATED'::order_status_enum)::BIGINT AS unlocked,
+                      COUNT(*) FILTER (WHERE w.status = 'CREATED'::wish_status_enum)::BIGINT AS unlocked,
                       COUNT(*) FILTER (WHERE w.status = 'CLAIMED'::wish_status_enum)::BIGINT AS claimed,
                       COUNT(*) FILTER (WHERE w.status = 'FINISHED'::wish_status_enum)::BIGINT AS finished,
                       COUNT(*) FILTER (WHERE w.status IN ('EXPIRED'::wish_status_enum,'CLOSED'::wish_status_enum))::BIGINT AS closed
@@ -820,7 +820,7 @@ pub async fn list_group_wishes(
             r#"SELECT
                   COUNT(*)::BIGINT AS total,
                   COUNT(*) FILTER (WHERE w.status = 'NEGOTIATING'::wish_status_enum)::BIGINT AS negotiating,
-                  COUNT(*) FILTER (WHERE w.status = 'CREATED'::order_status_enum)::BIGINT AS unlocked,
+                  COUNT(*) FILTER (WHERE w.status = 'CREATED'::wish_status_enum)::BIGINT AS unlocked,
                   COUNT(*) FILTER (WHERE w.status = 'CLAIMED'::wish_status_enum)::BIGINT AS claimed,
                   COUNT(*) FILTER (WHERE w.status = 'FINISHED'::wish_status_enum)::BIGINT AS finished,
                   COUNT(*) FILTER (WHERE w.status IN ('EXPIRED'::wish_status_enum,'CLOSED'::wish_status_enum))::BIGINT AS closed
