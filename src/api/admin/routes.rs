@@ -12,6 +12,7 @@ use std::sync::Arc;
 use utoipa::ToSchema;
 
 use crate::api::admin::auth;
+use crate::api::admin::footprint_groups;
 use crate::api::admin::group_levels;
 use crate::config::AppState;
 use crate::errors::CustomError;
@@ -24,6 +25,13 @@ const CONFIG_ENTRIES: &[(&str, i64, i64, &str)] = &[
     ("orderPointPercent", 1, 200, "ORDER"),
     ("diamondUnlockCost", 10, 10000, "REWARDS"),
     ("defaultFootprintCapacity", 10, 1000, "GENERAL"),
+    ("footprintExpandDiamondCost", 1, 1000, "REWARDS"),
+    ("orderCompleteExp", 0, 10000, "ORDER"),
+    // 2026-07-06 新增: 每日奖励上限 (基础值 + 等级增量)
+    ("dailyGroupExpLimit", 0, 100000, "ORDER"),
+    ("dailyGroupExpLimitLevelStep", 0, 10000, "ORDER"),
+    ("dailyLovePointLimit", 0, 100000, "ORDER"),
+    ("dailyLovePointLimitLevelStep", 0, 10000, "ORDER"),
     ("fullTeamBonusAmt", 0, 100, "SIGN_IN"),
     ("confirmedFinishedPoints", -1000, 1000, "ORDER"),
     ("confirmedUnfinishedPoints", -1000, 1000, "ORDER"),
@@ -91,6 +99,8 @@ pub fn configure(cfg: &mut ServiceConfig) {
     auth::configure(cfg);
     // 组等级配置 (独立的 scope, 跟 /groups 平行)
     group_levels::configure(cfg);
+    // 足迹分组管理 (独立的 scope) - multi-admin 维护公用足迹分组
+    footprint_groups::configure(cfg);
 
     // 所有路由放主 scope /api/admin 下,避免 sub-scope shadow 父 scope 的 bare GET
     // (T2/T6 教训:把 PATCH /users/{user_id} 放独立 sub-scope 会让 GET /users 返 404)
@@ -189,6 +199,18 @@ pub struct ConfigResponse {
     pub order_point_percent: i32,
     pub diamond_unlock_cost: i32,
     pub default_footprint_capacity: i32,
+    /// 足迹扩容每格的钻石单价 (扩 N 格 = N * 该值)
+    pub footprint_expand_diamond_cost: i32,
+    /// 订单确认完成后奖励的组经验值 (orders.exp_grant_status 防重发)
+    pub order_complete_exp: i32,
+    /// 每日组经验获取上限基础值 (实际 = base + level * level_step)
+    pub daily_group_exp_limit: i32,
+    /// 每日组经验上限每级增量
+    pub daily_group_exp_limit_level_step: i32,
+    /// 每日爱心积分获取上限基础值 (实际 = base + level * level_step)
+    pub daily_love_point_limit: i32,
+    /// 每日爱心积分上限每级增量
+    pub daily_love_point_limit_level_step: i32,
     /// 全组满签时最后签到用户获得的组钻石数
     pub full_team_bonus_amt: i32,
     /// 订单确认完成后奖励的爱心积分（可正可负）
@@ -390,6 +412,13 @@ pub async fn get_config(
     let default_order_point_percent: i32 = 100;
     let default_diamond_unlock_cost: i32 = 100;
     let default_footprint_capacity: i32 = 50;
+    let default_footprint_expand_diamond_cost: i32 = 5;
+    let default_order_complete_exp: i32 = 10;
+    // 2026-07-06 新增: 每日奖励上限默认值
+    let default_daily_group_exp_limit: i32 = 200;
+    let default_daily_group_exp_limit_level_step: i32 = 20;
+    let default_daily_love_point_limit: i32 = 100;
+    let default_daily_love_point_limit_level_step: i32 = 10;
     let default_full_team_bonus_amt: i32 = 10;
     let default_confirmed_finished_points: i32 = 10;
     let default_confirmed_unfinished_points: i32 = -5;
@@ -433,6 +462,12 @@ pub async fn get_config(
         order_point_percent: read_int(db, "orderPointPercent", default_order_point_percent).await,
         diamond_unlock_cost: read_int(db, "diamondUnlockCost", default_diamond_unlock_cost).await,
         default_footprint_capacity: read_int(db, "defaultFootprintCapacity", default_footprint_capacity).await,
+        footprint_expand_diamond_cost: read_int(db, "footprintExpandDiamondCost", default_footprint_expand_diamond_cost).await,
+        order_complete_exp: read_int(db, "orderCompleteExp", default_order_complete_exp).await,
+        daily_group_exp_limit: read_int(db, "dailyGroupExpLimit", default_daily_group_exp_limit).await,
+        daily_group_exp_limit_level_step: read_int(db, "dailyGroupExpLimitLevelStep", default_daily_group_exp_limit_level_step).await,
+        daily_love_point_limit: read_int(db, "dailyLovePointLimit", default_daily_love_point_limit).await,
+        daily_love_point_limit_level_step: read_int(db, "dailyLovePointLimitLevelStep", default_daily_love_point_limit_level_step).await,
         full_team_bonus_amt: read_int(db, "fullTeamBonusAmt", default_full_team_bonus_amt).await,
         confirmed_finished_points: read_int(db, "confirmedFinishedPoints", default_confirmed_finished_points).await,
         confirmed_unfinished_points: read_int(db, "confirmedUnfinishedPoints", default_confirmed_unfinished_points).await,
@@ -662,7 +697,7 @@ pub async fn wish_quality_reward(
 )]
 pub async fn order_reward_review(
     state: State<Arc<AppState>>,
-    admin: AdminToken,
+    _: AdminToken,
     path: Path<i64>,
     body: Json<OrderRewardReviewInput>,
 ) -> Result<impl web::Responder, CustomError> {
@@ -744,7 +779,7 @@ pub async fn order_reward_review(
 )]
 pub async fn get_pending_review_orders(
     state: State<Arc<AppState>>,
-    admin: AdminToken,
+    _: AdminToken,
     query: Query<PendingReviewQuery>,
 ) -> Result<impl Responder, CustomError> {
 
@@ -819,7 +854,7 @@ pub struct ReviewOrderInput {
 )]
 pub async fn review_order(
     state: State<Arc<AppState>>,
-    admin: AdminToken,
+    _: AdminToken,
     path: Path<i64>,
     body: Json<ReviewOrderInput>,
 ) -> Result<impl Responder, CustomError> {
@@ -907,7 +942,7 @@ pub struct AuditLogQuery {
 )]
 pub async fn get_audit_logs(
     state: State<Arc<AppState>>,
-    admin: AdminToken,
+    _: AdminToken,
     query: Query<AuditLogQuery>,
 ) -> Result<impl Responder, CustomError> {
 
@@ -982,7 +1017,7 @@ pub struct UpdateGroupConfigsInput {
 )]
 pub async fn update_group_configs(
     state: State<Arc<AppState>>,
-    admin: AdminToken,
+    _: AdminToken,
     path: Path<i64>,
     body: Json<UpdateGroupConfigsInput>,
 ) -> Result<impl Responder, CustomError> {
@@ -1076,7 +1111,7 @@ pub struct CompensatePointsInput {
 )]
 pub async fn compensate_points(
     state: State<Arc<AppState>>,
-    admin: AdminToken,
+    _: AdminToken,
     path: Path<i64>,
     body: Json<CompensatePointsInput>,
 ) -> Result<impl Responder, CustomError> {
@@ -1171,7 +1206,7 @@ pub struct CompensateDiamondsInput {
 )]
 pub async fn compensate_diamonds(
     state: State<Arc<AppState>>,
-    admin: AdminToken,
+    _: AdminToken,
     path: Path<i64>,
     body: Json<CompensateDiamondsInput>,
 ) -> Result<impl Responder, CustomError> {
