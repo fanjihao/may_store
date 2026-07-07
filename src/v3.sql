@@ -970,20 +970,33 @@ CREATE INDEX idx_wst_active ON wx_subscription_templates(is_active);
 -- ================= DIAMOND FLOW (legacy) =================
 -- ================= GROUP DIAMOND FLOW =================
 -- ================= RECORD GROUP =================
+-- 2026-07-06 改造: 加 is_global BOOLEAN, group_id 改 nullable
+--   - is_global=true  时 group_id 必须为 NULL, 由 multi-admin 全局维护 (当前阶段)
+--   - is_global=false 时 group_id 必须非空, 由组内自己创建 (后续阶段扩展)
+--   - UNIQUE(group_id, group_name) 拆分: global 用 group_name 唯一, group 内仍按 (group_id, group_name) 唯一
 CREATE TABLE record_group (
     id BIGSERIAL PRIMARY KEY,
-    group_id BIGINT NOT NULL REFERENCES association_groups(group_id) ON DELETE CASCADE,
+    group_id BIGINT REFERENCES association_groups(group_id) ON DELETE CASCADE,
     group_name VARCHAR(50) NOT NULL,
     group_type SMALLINT NOT NULL,
     max_capacity INT NOT NULL DEFAULT 50,
     current_count INT NOT NULL DEFAULT 0,
     status SMALLINT NOT NULL DEFAULT 1,
+    is_global BOOLEAN NOT NULL DEFAULT FALSE,
     create_time TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     update_time TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    UNIQUE(group_id, group_name)
+    -- is_global=true 时 group_id 必须为 NULL
+    CONSTRAINT record_group_global_check CHECK (
+        (is_global = TRUE  AND group_id IS NULL) OR
+        (is_global = FALSE AND group_id IS NOT NULL)
+    )
 );
-COMMENT ON TABLE record_group IS '足迹记录分组表';
-CREATE INDEX idx_record_group_group_id ON record_group(group_id);
+COMMENT ON TABLE record_group IS '足迹记录分组表 (支持 global 共用 + 组内自建)';
+COMMENT ON COLUMN record_group.is_global IS 'TRUE=multi-admin 全局维护 / FALSE=组内自建';
+COMMENT ON COLUMN record_group.group_id IS 'is_global=TRUE 时为 NULL, FALSE 时必填';
+CREATE UNIQUE INDEX uniq_record_group_global_name ON record_group(group_name) WHERE is_global = TRUE;
+CREATE UNIQUE INDEX uniq_record_group_per_group_name ON record_group(group_id, group_name) WHERE is_global = FALSE;
+CREATE INDEX idx_record_group_group_id ON record_group(group_id) WHERE group_id IS NOT NULL;
 
 -- ================= USER RECORD =================
 -- ================= COMMENTS & LIKES (V2.0 暂缓) =================
@@ -1232,7 +1245,16 @@ INSERT INTO global_configs (config_key, config_value, category, description) VAL
     ('signInRewards7Days', '[5, 6, 7, 8, 9, 10, 20]'::jsonb, 'SIGN_IN', '7 天轮回签到奖励(数组下标 1~7)'),
     ('orderPointPercent', '100'::jsonb, 'ORDER', '订单积分百分比'),
     ('diamondUnlockCost', '100'::jsonb, 'REWARDS', '钻石解锁价格'),
-    ('defaultFootprintCapacity', '50'::jsonb, 'GENERAL', '默认足迹容量'),
+    ('defaultFootprintCapacity', '50'::jsonb, 'GENERAL', '默认足迹容量 (每个组创建时初始化 footprint_capacity)'),
+    ('footprintExpandDiamondCost', '5'::jsonb, 'REWARDS', '足迹扩容每格的钻石单价 (扩 N 格 = N * 该值)'),
+    ('orderCompleteExp', '10'::jsonb, 'ORDER', '订单确认完成后奖励的组经验 (orders.exp_grant_status 防重发)'),
+    -- 2026-07-06 新增: 每日奖励上限 (基础值 + 等级系数 = 实际上限)
+    -- 公式: actual_cap = base + level * level_step (向下取整, 至少等于 base)
+    -- 举例 base=200, level=1 时 cap=201; level=5 时 cap=300
+    ('dailyGroupExpLimit', '200'::jsonb, 'ORDER', '每日组经验获取上限基础值 (每升 1 级 +dailyGroupExpLimitLevelStep)'),
+    ('dailyGroupExpLimitLevelStep', '20'::jsonb, 'ORDER', '每日组经验上限每级增量 (cap = base + level * step)'),
+    ('dailyLovePointLimit', '100'::jsonb, 'ORDER', '每日爱心积分获取上限基础值 (每升 1 级 +dailyLovePointLimitLevelStep)'),
+    ('dailyLovePointLimitLevelStep', '10'::jsonb, 'ORDER', '每日爱心积分上限每级增量 (cap = base + level * step)'),
     ('fullTeamBonusAmt', '10'::jsonb, 'SIGN_IN', '全组满签时最后签到用户获得的组钻石数'),
     ('confirmedFinishedPoints', '10'::jsonb, 'ORDER', '订单确认完成后奖励的爱心积分'),
     ('confirmedUnfinishedPoints', '-5'::jsonb, 'ORDER', '订单确认未完成扣减的爱心积分'),
