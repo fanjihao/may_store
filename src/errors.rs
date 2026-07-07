@@ -64,6 +64,8 @@ pub enum FsdErrorCode {
     InviteCodeUsed,
     #[serde(rename = "INVITE_USER_MISMATCH")]
     InviteUserMismatch,
+    #[serde(rename = "INVITER_HAS_PARTNER")]
+    InviterHasPartner,
     // ===== Role (4) =====
     #[serde(rename = "ROLE_SWAP_BLOCKED_BY_ORDER")]
     RoleSwapBlockedByOrder,
@@ -152,6 +154,7 @@ impl FsdErrorCode {
             Self::InviteCodeInvalid => "INVITE_CODE_INVALID",
             Self::InviteCodeUsed => "INVITE_CODE_USED",
             Self::InviteUserMismatch => "INVITE_USER_MISMATCH",
+            Self::InviterHasPartner => "INVITER_HAS_PARTNER",
             Self::RoleSwapBlockedByOrder => "ROLE_SWAP_BLOCKED_BY_ORDER",
             Self::RoleSwapBlockedByWish => "ROLE_SWAP_BLOCKED_BY_WISH",
             Self::PermissionDenied => "PERMISSION_DENIED",
@@ -194,7 +197,8 @@ impl FsdErrorCode {
             Self::PermissionDenied
             | Self::RoleNotAllowed
             | Self::UploadPermissionDenied
-            | Self::UserNotInGroup => StatusCode::FORBIDDEN,
+            | Self::UserNotInGroup
+            | Self::InviterHasPartner => StatusCode::FORBIDDEN,
             Self::UserNotFound
             | Self::GroupNotFound
             | Self::FoodNotFound
@@ -289,6 +293,7 @@ pub enum CustomError {
     InviteCodeInvalid(String),
     InviteCodeUsed(String),
     InviteUserMismatch(String),
+    InviterHasPartner(String),
     // Role
     RoleSwapBlockedByOrder(String),
     RoleSwapBlockedByWish(String),
@@ -379,6 +384,7 @@ impl CustomError {
     pub fn invite_code_invalid<S: Into<String>>(msg: S) -> Self { Self::InviteCodeInvalid(msg.into()) }
     pub fn invite_code_used<S: Into<String>>(msg: S) -> Self { Self::InviteCodeUsed(msg.into()) }
     pub fn invite_user_mismatch<S: Into<String>>(msg: S) -> Self { Self::InviteUserMismatch(msg.into()) }
+    pub fn inviter_has_partner<S: Into<String>>(msg: S) -> Self { Self::InviterHasPartner(msg.into()) }
     // Role
     pub fn role_swap_blocked_by_order<S: Into<String>>(msg: S) -> Self { Self::RoleSwapBlockedByOrder(msg.into()) }
     pub fn role_swap_blocked_by_wish<S: Into<String>>(msg: S) -> Self { Self::RoleSwapBlockedByWish(msg.into()) }
@@ -447,6 +453,7 @@ impl CustomError {
             Self::InviteCodeInvalid(_) => FsdErrorCode::InviteCodeInvalid,
             Self::InviteCodeUsed(_) => FsdErrorCode::InviteCodeUsed,
             Self::InviteUserMismatch(_) => FsdErrorCode::InviteUserMismatch,
+            Self::InviterHasPartner(_) => FsdErrorCode::InviterHasPartner,
             Self::RoleSwapBlockedByOrder(_) => FsdErrorCode::RoleSwapBlockedByOrder,
             Self::RoleSwapBlockedByWish(_) => FsdErrorCode::RoleSwapBlockedByWish,
             Self::PermissionDenied(_) => FsdErrorCode::PermissionDenied,
@@ -498,7 +505,7 @@ impl CustomError {
             | Self::GroupNotFound(m) | Self::GroupMemberLimitExceeded(m)
             | Self::GroupExitSettlementRequired(m)
             | Self::InviteCodeInvalid(m) | Self::InviteCodeUsed(m)
-            | Self::InviteUserMismatch(m)
+            | Self::InviteUserMismatch(m) | Self::InviterHasPartner(m)
             | Self::RoleSwapBlockedByOrder(m) | Self::RoleSwapBlockedByWish(m)
             | Self::PermissionDenied(m) | Self::RoleNotAllowed(m)
             | Self::FoodNotFound(m) | Self::FoodCapacityExceeded(m)

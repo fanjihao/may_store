@@ -19,7 +19,7 @@ use crate::api::ws::messages::{
 };
 use crate::config::AppState;
 use crate::domain::group::entities::{
-    FulfillmentStats, GroupDetailInfo, GroupRecord, SettlementCheckResult,
+    FulfillmentStats, GroupDetailInfo, SettlementCheckResult,
 };
 use crate::errors::CustomError;
 use crate::middlewares::auth::UserToken;
@@ -61,10 +61,6 @@ pub fn configure(cfg: &mut ServiceConfig) {
             .route(web::post().to(join_group)),
     );
     cfg.service(
-        web::resource("/api/groups")
-            .route(web::post().to(create_group)),
-    );
-    cfg.service(
         web::resource("/api/groups/{group_id}")
             .guard(group_id_is_numeric())
             .route(web::get().to(get_group))
@@ -101,10 +97,6 @@ pub fn configure(cfg: &mut ServiceConfig) {
             .route(web::get().to(fulfillment_stats)),
     );
     cfg.service(
-        web::resource("/api/groups/{group_id}/invite")
-            .route(web::post().to(create_invite)),
-    );
-    cfg.service(
         web::resource("/api/groups/{group_id}/orders")
             .route(web::post().to(create_group_order)),
     );
@@ -118,104 +110,6 @@ pub fn configure(cfg: &mut ServiceConfig) {
             .route(web::patch().to(update_group_name)),
     );
     // 注:/api/groups/{group_id}/wishes 由 wishes 模块负责(POST + GET 都有)
-}
-
-/// 创建双人组
-/// POST /api/groups
-/// 创建双人组响应
-#[derive(Debug, Serialize, ToSchema)]
-#[serde(rename_all = "camelCase")]
-pub struct CreateGroupResponse {
-    pub group_id: i64,
-    pub invite_code: String,
-    pub status: String,
-}
-
-#[utoipa::path(
-    post,
-    path = "/api/groups",
-    tag = "双人组",
-    responses(
-        (status = 201, description = "创建成功", body = CreateGroupResponse),
-        (status = 400, description = "已在组中或其他错误"),
-        (status = 401, description = "未登录")
-    ),
-    security(("bearer_auth" = []))
-)]
-async fn create_group(
-    token: UserToken,
-    state: State<Arc<AppState>>,
-) -> Result<HttpResponse, CustomError> {
-    let db = &state.db_pool;
-
-    // 检查用户是否已在组中
-    // 注意:is_primary 是 smallint(0/1),不能用 true/false
-    // 必须同时过滤 member_status = 'ACTIVE'::group_member_status_enum,否则 LEFT 状态的旧记录也会被算成"已在组中"
-    let existing: Option<(i64,)> = sqlx::query_as(
-        "SELECT group_id FROM association_group_members WHERE user_id = $1 AND is_primary = 1 AND member_status = 'ACTIVE'::group_member_status_enum",
-    )
-    .bind(token.user_id)
-    .fetch_optional(db)
-    .await?;
-
-    if existing.is_some() {
-        return Err(CustomError::BadRequest("您已在组中".into()));
-    }
-
-    let mut tx = db.begin().await?;
-
-    // 创建组
-    // group_type / status 是 PG 自定义枚举,RETURNING 必须 ::text 强转,否则 sqlx 解不出
-    // seller_user_id 留空:双人组是创建者+受邀者两人,创建者为 buyer,seller 位置等受邀者
-    // 通过邀请码加入 (POST /api/groups/join) 时再填上
-    let invite_code = format!("{:08x}", rand::random::<u32>());
-    let group: GroupRecord = sqlx::query_as::<_, GroupRecord>(
-        r#"INSERT INTO association_groups (group_name, group_type, status, invite_code, diamond, footprint_capacity, footprint_count, buyer_user_id, seller_user_id, level, exp, created_at, updated_at)
-           VALUES ($1, 'PAIR'::group_type_enum, 'ACTIVE'::user_status_enum, $2, 0, 50, 0, $3, NULL, 1, 0, $4, $4)
-           RETURNING group_id, group_name, group_type::text AS group_type, status::text AS status, invite_code, diamond, footprint_capacity, footprint_count, created_at, updated_at,
-                     buyer_user_id, seller_user_id, level, exp, settings"#
-    )
-    .bind(format!("{}的组", token.user.as_ref().map(|u| u.username.as_str()).unwrap_or("用户")))
-    .bind(&invite_code)
-    .bind(token.user_id) // 创建者填入 buyer 位置
-    .bind(Utc::now())
-    .fetch_one(&mut *tx)
-    .await?;
-
-    // 将创建者加为组成员(is_primary 是 smallint,这里写 1 不用 true)
-    sqlx::query(
-        r#"INSERT INTO association_group_members (user_id, group_id, role_in_group, is_primary, joined_at)
-           VALUES ($1, $2, 'ORDERING'::group_member_role_enum, 1, $3)"#
-    )
-    .bind(token.user_id)
-    .bind(group.group_id)
-    .bind(Utc::now())
-    .execute(&mut *tx)
-    .await?;
-
-    // 同步更新 users.role 为 ORDERING, 保证前端 userInfo.role 立即反映
-    sqlx::query(
-        "UPDATE users SET role='ORDERING'::user_role_enum, last_role_switch_at=NOW() WHERE user_id=$1"
-    )
-    .bind(token.user_id)
-    .execute(&mut *tx)
-    .await?;
-
-    tx.commit().await?;
-
-    // 关键: 失效该用户的 UserPublic Redis 缓存,否则下一次请求 RequireGroup
-    // 还会读到旧 group_id=None,继续返回 USER_NOT_IN_GROUP。
-    // create_group 也是"是否在组里"状态的翻转点,必须清缓存。
-    let _ = state.redis_cache
-        .delete_user(&token.user_id.to_string())
-        .await
-        .map_err(|e| log::warn!("[create_group] failed to invalidate user cache: {}", e));
-
-    Ok(ApiResponse::success(serde_json::json!({
-        "groupId": group.group_id,
-        "inviteCode": invite_code,
-        "status": "ok"
-    })))
 }
 
 /// 获取组信息
@@ -300,6 +194,8 @@ async fn get_group(
             )
             .await?,
         ),
+        // 好友做客邀请码:前端用这个拼分享链接 ?inviteCode=xxx&groupId=yyy
+        invite_code: row.get("invite_code"),
     };
 
     Ok(ApiResponse::success(detail))
@@ -734,89 +630,6 @@ pub struct FulfillmentStatsListResponse {
 
 // ============== FSD v2 额外端点 ==============
 
-/// 创建邀请响应
-#[derive(Debug, Serialize, ToSchema)]
-#[serde(rename_all = "camelCase")]
-pub struct CreateInviteResponse {
-    pub invite_code: String,
-    pub expires_at: chrono::DateTime<chrono::Utc>,
-    pub status: String,
-}
-
-/// 创建邀请链接
-/// POST /api/groups/{group_id}/invite
-///
-/// 生成邀请码，供受邀用户加入组
-#[utoipa::path(
-    post,
-    path = "/api/groups/{group_id}/invite",
-    tag = "双人组",
-    params(
-        ("group_id" = i64, Path, description = "组ID")
-    ),
-    responses(
-        (status = 201, description = "创建成功", body = CreateInviteResponse),
-        (status = 400, description = "组已满2人"),
-        (status = 403, description = "无权访问该组")
-    ),
-    security(("bearer_auth" = []))
-)]
-async fn create_invite(
-    token: UserToken,
-    _require: RequireGroup,
-    state: State<Arc<AppState>>,
-    group_id: Path<i64>,
-) -> Result<HttpResponse, CustomError> {
-    let db = &state.db_pool;
-    let gid = group_id.into_inner();
-
-    // 检查用户是否是组成员
-    let is_member: bool = sqlx::query_scalar::<_, bool>(
-        "SELECT EXISTS(SELECT 1 FROM association_group_members WHERE group_id=$1 AND user_id=$2)",
-    )
-    .bind(gid)
-    .bind(token.user_id)
-    .fetch_one(db)
-    .await?;
-
-    if !is_member {
-        return Err(CustomError::Forbidden("无权访问该组".into()));
-    }
-
-    // 检查组是否已满2人
-    let member_count: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM association_group_members WHERE group_id=$1 AND member_status = 'ACTIVE'::group_member_status_enum"
-    )
-    .bind(gid)
-    .fetch_one(db)
-    .await?;
-
-    if member_count >= 2 {
-        return Err(CustomError::BadRequest("组已满2人，无法邀请新成员".into()));
-    }
-
-    // 生成邀请码
-    let invite_code = format!("{:08x}", rand::random::<u32>());
-    let expires_at = Utc::now() + chrono::Duration::days(7);
-
-    sqlx::query(
-        r#"INSERT INTO guest_invitations (group_id, invite_code, created_by, expires_at, max_uses, used_count, status)
-           VALUES ($1, $2, $3, $4, 1, 0, 'ACTIVE'::guest_invite_status_enum)"#
-    )
-    .bind(gid)
-    .bind(&invite_code)
-    .bind(token.user_id)
-    .bind(expires_at)
-    .execute(db)
-    .await?;
-
-    Ok(ApiResponse::success(serde_json::json!({
-        "inviteCode": invite_code,
-        "expiresAt": expires_at,
-        "status": "ok"
-    })))
-}
-
 /// 在组内创建订单响应
 #[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
@@ -1007,10 +820,15 @@ async fn create_group_wish(
 
 // ============== FSD v2 新增端点 ==============
 
-/// 通过邀请码加入组
+/// 通过邀请人用户 ID 加入组
 /// POST /api/groups/join
 ///
-/// 受邀者自动成为 Seller，加入后更新组的 seller_user_id
+/// B 点 A 分享的链接进入 → B 确认 → 调这个接口。
+/// 根据 A、B 各自"是否在组里"自动判断:
+/// - A 没组 + B 没组 → 服务端自动建一个新组(A 当 buyer, B 当 seller),两人都是成员
+/// - A 有组 + B 没组 + 组未满 → B 加进 A 的组(B 当 seller)
+/// - A 已满(2人) → 拒绝 (INVITER_HAS_PARTNER)
+/// - B 自己已在任何组 → 拒绝 (USER_ALREADY_IN_GROUP)
 #[utoipa::path(
     post,
     path = "/api/groups/join",
@@ -1018,9 +836,8 @@ async fn create_group_wish(
     request_body = JoinGroupInput,
     responses(
         (status = 200, description = "加入成功"),
-        (status = 400, description = "邀请码无效或已过期"),
-        (status = 400, description = "组已满2人"),
-        (status = 403, description = "已在其他组")
+        (status = 400, description = "已在其他组"),
+        (status = 403, description = "对方已经有厨房了")
     ),
     security(("bearer_auth" = []))
 )]
@@ -1031,180 +848,230 @@ async fn join_group(
 ) -> Result<HttpResponse, CustomError> {
     let db = &state.db_pool;
     let input = body.into_inner();
-    // DEBUG: 诊断 join 流程到底走没走到 handler
+    let inviter_id = input.invitee_user_id;
+    let joiner_id = token.user_id;
+
     log::info!(
-        "[join_group] ENTER user_id={} invite_code={} invite_link_group_id={:?}",
-        token.user_id, input.invite_code, input.group_id
+        "[join_group] ENTER inviter_id={} joiner_id={}",
+        inviter_id, joiner_id
     );
 
-    // 查找邀请码对应的邀请记录 (权威 group_id 来源)
-    let invite: Option<(i64, chrono::DateTime<chrono::Utc>, i32, i32)> = sqlx::query_as(
-        r#"SELECT group_id, expires_at, max_uses, used_count
-           FROM guest_invitations
-           WHERE invite_code = $1 AND status = 'ACTIVE'::user_status_enum"#
-    )
-    .bind(&input.invite_code)
-    .fetch_optional(db)
-    .await?;
-
-    let (group_id, expires_at, max_uses, used_count) = match invite {
-        Some(inv) => inv,
-        None => {
-            log::warn!("[join_group] REJECT: invite_code={} 未找到 ACTIVE 记录", input.invite_code);
-            return Err(CustomError::BadRequest("邀请码无效或已过期".into()));
-        }
-    };
-
-    // 可选防御: 链接里带的 group_id 必须跟 invite_code 反查的 group_id 一致,
-    // 不一致说明链接被篡改/拼接错, 直接拒绝。
-    if let Some(link_gid) = input.group_id {
-        if link_gid != group_id {
-            log::warn!(
-                "[join_group] REJECT: invite_link.group_id={} != invite_record.group_id={}",
-                link_gid, group_id
-            );
-            return Err(CustomError::BadRequest("邀请码与群信息不匹配".into()));
-        }
+    // 不能邀请自己
+    if inviter_id == joiner_id {
+        log::warn!("[join_group] REJECT: inviter_id == joiner_id == {}", joiner_id);
+        return Err(CustomError::BadRequest("不能邀请自己".into()));
     }
 
-    // 幂等: 用户已经在本 group 的 ACTIVE 成员里, 直接返回成功 (跳过 INSERT / 推送)
-    let same_group_existing: Option<(i64,)> = sqlx::query_as(
-        "SELECT group_id FROM association_group_members
-         WHERE user_id = $1 AND group_id = $2 AND member_status = 'ACTIVE'::group_member_status_enum"
-    )
-    .bind(token.user_id)
-    .bind(group_id)
-    .fetch_optional(db)
-    .await?;
-
-    if same_group_existing.is_some() {
-        log::info!(
-            "[join_group] IDEMPOTENT user_id={} 已在 group_id={}, 直接返回成功",
-            token.user_id, group_id
-        );
-        // 让前端拿到的 groupId 跟正常入群路径一致, 便于它清缓存/刷新
-        let _ = state.redis_cache
-            .delete_user(&token.user_id.to_string())
-            .await
-            .map_err(|e| log::warn!("[join_group] failed to invalidate user cache (idempotent): {}", e));
-        return Ok(ApiResponse::success(serde_json::json!({
-            "groupId": group_id,
-            "role": "SELLER",
-            "status": "ok"
-        })));
-    }
-
-    // 用户已经在别的 group 的 ACTIVE 成员里, 拒绝 (业务规则)
-    let other_group_existing: Option<(i64,)> = sqlx::query_as(
+    // 1) B 自己是否已在任何组(任意 ACTIVE 组)
+    let joiner_group: Option<(i64,)> = sqlx::query_as(
         "SELECT group_id FROM association_group_members
          WHERE user_id = $1 AND member_status = 'ACTIVE'::group_member_status_enum"
     )
-    .bind(token.user_id)
+    .bind(joiner_id)
     .fetch_optional(db)
     .await?;
 
-    if other_group_existing.is_some() {
+    if joiner_group.is_some() {
         log::warn!(
-            "[join_group] REJECT: user_id={} 已在其他组中 (existing={:?})",
-            token.user_id, other_group_existing
+            "[join_group] REJECT: joiner_id={} 已在组中 ({:?})",
+            joiner_id, joiner_group
         );
-        return Err(CustomError::BadRequest("您已在其他组中".into()));
+        return Err(CustomError::user_already_in_group("你已在其他组中"));
     }
 
-    // 检查是否过期
-    if Utc::now() > expires_at {
-        log::warn!("[join_group] REJECT: invite_code={} 已过期 (expires_at={})", input.invite_code, expires_at);
-        return Err(CustomError::BadRequest("邀请码已过期".into()));
-    }
-
-    // 检查使用次数
-    if used_count >= max_uses {
-        log::warn!("[join_group] REJECT: invite_code={} 已用满 (used={}/max={})", input.invite_code, used_count, max_uses);
-        return Err(CustomError::BadRequest("邀请码已使用".into()));
-    }
-
-    // 检查组是否已满
-    let member_count: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM association_group_members WHERE group_id=$1 AND member_status = 'ACTIVE'::group_member_status_enum"
+    // 2) 查 A 当前是否在组里(决定走"自动建组"还是"加成员")
+    let inviter_group: Option<(i64,)> = sqlx::query_as(
+        "SELECT group_id FROM association_group_members
+         WHERE user_id = $1 AND member_status = 'ACTIVE'::group_member_status_enum"
     )
-    .bind(group_id)
-    .fetch_one(db)
+    .bind(inviter_id)
+    .fetch_optional(db)
     .await?;
-
-    if member_count >= 2 {
-        log::warn!("[join_group] REJECT: group_id={} 已满 (member_count={})", group_id, member_count);
-        return Err(CustomError::BadRequest("组已满2人，无法加入".into()));
-    }
 
     let mut tx = db.begin().await?;
 
-    // 加入组成员(is_primary 是 smallint,这里写 0 不用 false)
-    sqlx::query(
-        r#"INSERT INTO association_group_members (user_id, group_id, role_in_group, is_primary, member_status, joined_at)
-           VALUES ($1, $2, 'RECEIVING'::group_member_role_enum, 0, 'ACTIVE'::group_member_status_enum, $3)"#
-    )
-    .bind(token.user_id)
-    .bind(group_id)
-    .bind(Utc::now())
-    .execute(&mut *tx)
-    .await?;
+    match inviter_group {
+        None => {
+            // ============ 分支 A: A 也没组 → 服务端自动建组 ============
+            log::info!(
+                "[join_group] AUTO_CREATE: inviter_id={} joiner_id={} 都无组",
+                inviter_id, joiner_id
+            );
 
-    // 更新组的 seller_user_id
-    sqlx::query(
-        "UPDATE association_groups SET seller_user_id=$1, updated_at=NOW() WHERE group_id=$2"
-    )
-    .bind(token.user_id)
-    .bind(group_id)
-    .execute(&mut *tx)
-    .await?;
+            // 邀请码字段表里 NOT NULL,自动建组时塞一个随机 8 位 hex 兜底
+            let placeholder_invite_code = format!("{:08x}", rand::random::<u32>());
+            let group_name = format!("{}和{}的厨房", inviter_id, joiner_id);
+            let now = Utc::now();
 
-    // 更新邀请码使用次数
-    sqlx::query(
-        "UPDATE guest_invitations SET used_count=used_count+1 WHERE invite_code=$1"
-    )
-    .bind(&input.invite_code)
-    .execute(&mut *tx)
-    .await?;
+            let new_group_id: i64 = sqlx::query_scalar(
+                r#"INSERT INTO association_groups
+                     (group_name, group_type, status, invite_code,
+                      diamond, footprint_capacity, footprint_count,
+                      buyer_user_id, seller_user_id,
+                      level, exp, created_at, updated_at)
+                   VALUES ($1, 'PAIR'::group_type_enum, 'ACTIVE'::user_status_enum, $2,
+                           0, 50, 0,
+                           $3, $4,
+                           1, 0, $5, $5)
+                   RETURNING group_id"#
+            )
+            .bind(&group_name)
+            .bind(&placeholder_invite_code)
+            .bind(inviter_id) // A 当 buyer
+            .bind(joiner_id)  // B 当 seller
+            .bind(now)
+            .fetch_one(&mut *tx)
+            .await?;
 
-    // 同步更新 users.role 为 RECEIVING, 保证前端 userInfo.role 立即反映
-    sqlx::query(
-        "UPDATE users SET role='RECEIVING'::user_role_enum, last_role_switch_at=NOW() WHERE user_id=$1"
-    )
-    .bind(token.user_id)
-    .execute(&mut *tx)
-    .await?;
+            // 加 A 为 member (buyer, is_primary=1)
+            sqlx::query(
+                r#"INSERT INTO association_group_members (user_id, group_id, role_in_group, is_primary, member_status, joined_at)
+                   VALUES ($1, $2, 'ORDERING'::group_member_role_enum, 1, 'ACTIVE'::group_member_status_enum, $3)"#
+            )
+            .bind(inviter_id)
+            .bind(new_group_id)
+            .bind(now)
+            .execute(&mut *tx)
+            .await?;
 
-    tx.commit().await?;
-    // DEBUG: 诊断日志
-    log::info!("[join_group] SUCCESS user_id={} joined group_id={}", token.user_id, group_id);
+            // 加 B 为 member (seller, is_primary=0)
+            sqlx::query(
+                r#"INSERT INTO association_group_members (user_id, group_id, role_in_group, is_primary, member_status, joined_at)
+                   VALUES ($1, $2, 'RECEIVING'::group_member_role_enum, 0, 'ACTIVE'::group_member_status_enum, $3)"#
+            )
+            .bind(joiner_id)
+            .bind(new_group_id)
+            .bind(now)
+            .execute(&mut *tx)
+            .await?;
 
-    // 关键: 失效该用户的 UserPublic Redis 缓存,否则下一次请求 RequireGroup
-    // 还会读到旧 group_id=None,继续返回 USER_NOT_IN_GROUP。
-    // join 是用户"是否在组里"状态的翻转点,必须清缓存。
-    let _ = state.redis_cache
-        .delete_user(&token.user_id.to_string())
-        .await
-        .map_err(|e| log::warn!("[join_group] failed to invalidate user cache: {}", e));
+            // 更新 A 的 role = ORDERING
+            sqlx::query(
+                "UPDATE users SET role='ORDERING'::user_role_enum, last_role_switch_at=NOW() WHERE user_id=$1"
+            )
+            .bind(inviter_id)
+            .execute(&mut *tx)
+            .await?;
 
-    // 通知 group 里所有 ACTIVE 成员 —— 有人加入了
-    // 推函数内部按 group_id 反查所有 ACTIVE 成员 (含 buyer + seller 双方),
-    // 这里不需要再手撸 target Vec, 也不需要兜底分支
-    // (tx 已 commit, association_group_members 已写入, 反查一定拿得到)
-    push_group_member_change_notice(
-        db,
-        group_id,
-        "joined",
-        token.user_id, // actor = 加入者
-        None,          // buyer 信息由 fetch_user_info_for_notice 按需查; 这里不强制带
-        Some(token.user_id), // seller = 加入者(自己)
-    )
-    .await;
+            // 更新 B 的 role = RECEIVING
+            sqlx::query(
+                "UPDATE users SET role='RECEIVING'::user_role_enum, last_role_switch_at=NOW() WHERE user_id=$1"
+            )
+            .bind(joiner_id)
+            .execute(&mut *tx)
+            .await?;
 
-    Ok(ApiResponse::success(serde_json::json!({
-        "groupId": group_id,
-        "role": "SELLER",
-        "status": "ok"
-    })))
+            tx.commit().await?;
+
+            // 双侧失效缓存(两人都是"是否在组里"状态翻转)
+            let _ = state.redis_cache
+                .delete_user(&inviter_id.to_string())
+                .await
+                .map_err(|e| log::warn!("[join_group] failed to invalidate inviter cache: {}", e));
+            let _ = state.redis_cache
+                .delete_user(&joiner_id.to_string())
+                .await
+                .map_err(|e| log::warn!("[join_group] failed to invalidate joiner cache: {}", e));
+
+            // 推 socket (B 入组通知)
+            push_group_member_change_notice(
+                db,
+                new_group_id,
+                "joined",
+                joiner_id,
+                None,
+                Some(joiner_id),
+            )
+            .await;
+
+            log::info!(
+                "[join_group] SUCCESS (auto-create) group_id={} inviter={} joiner={}",
+                new_group_id, inviter_id, joiner_id
+            );
+
+            Ok(ApiResponse::success(serde_json::json!({
+                "groupId": new_group_id,
+                "role": "RECEIVING",
+                "status": "ok"
+            })))
+        }
+        Some((inviter_gid,)) => {
+            // ============ 分支 B: A 有组 → 看是否已满 ============
+            let member_count: i64 = sqlx::query_scalar(
+                "SELECT COUNT(*) FROM association_group_members WHERE group_id=$1 AND member_status = 'ACTIVE'::group_member_status_enum"
+            )
+            .bind(inviter_gid)
+            .fetch_one(&mut *tx)
+            .await?;
+
+            if member_count >= 2 {
+                log::warn!(
+                    "[join_group] REJECT: inviter_id={} 组已满 group_id={} (member_count={})",
+                    inviter_id, inviter_gid, member_count
+                );
+                // tx 还没 commit, 直接 return Err, ntex 会 rollback
+                return Err(CustomError::inviter_has_partner("对方已经有厨房了"));
+            }
+
+            // A 组只有自己 → 把 B 加进去
+            sqlx::query(
+                r#"INSERT INTO association_group_members (user_id, group_id, role_in_group, is_primary, member_status, joined_at)
+                   VALUES ($1, $2, 'RECEIVING'::group_member_role_enum, 0, 'ACTIVE'::group_member_status_enum, $3)"#
+            )
+            .bind(joiner_id)
+            .bind(inviter_gid)
+            .bind(Utc::now())
+            .execute(&mut *tx)
+            .await?;
+
+            // 更新组的 seller_user_id
+            sqlx::query(
+                "UPDATE association_groups SET seller_user_id=$1, updated_at=NOW() WHERE group_id=$2"
+            )
+            .bind(joiner_id)
+            .bind(inviter_gid)
+            .execute(&mut *tx)
+            .await?;
+
+            // 更新 B 的 role
+            sqlx::query(
+                "UPDATE users SET role='RECEIVING'::user_role_enum, last_role_switch_at=NOW() WHERE user_id=$1"
+            )
+            .bind(joiner_id)
+            .execute(&mut *tx)
+            .await?;
+
+            tx.commit().await?;
+
+            // 失效 B 的缓存
+            let _ = state.redis_cache
+                .delete_user(&joiner_id.to_string())
+                .await
+                .map_err(|e| log::warn!("[join_group] failed to invalidate joiner cache: {}", e));
+
+            // 推 socket (B 入组通知)
+            push_group_member_change_notice(
+                db,
+                inviter_gid,
+                "joined",
+                joiner_id,
+                None,
+                Some(joiner_id),
+            )
+            .await;
+
+            log::info!(
+                "[join_group] SUCCESS (join existing) group_id={} inviter={} joiner={}",
+                inviter_gid, inviter_id, joiner_id
+            );
+
+            Ok(ApiResponse::success(serde_json::json!({
+                "groupId": inviter_gid,
+                "role": "RECEIVING",
+                "status": "ok"
+            })))
+        }
+    }
 }
 
 /// 退出双人组
@@ -1494,12 +1361,12 @@ pub struct GroupWishInput {
 /// `group_id` 来自邀请链接 (前端拼链接时带上), 后端仍以 invite_code 反查的
 /// group_id 为准; group_id 仅用于日志/审计, 以及让前端"已在同群"幂等判断
 /// 时的请求语义自洽。
+/// 通过邀请人用户 ID 加入组的入参
+/// invitee_user_id = A 的 user_id(分享链接的人)
 #[derive(Debug, Deserialize, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct JoinGroupInput {
-    pub invite_code: String,
-    #[serde(default)]
-    pub group_id: Option<i64>,
+    pub invitee_user_id: i64,
 }
 
 // 注: GroupPointConfigResponse / GroupPointConfigUpdateRequest 已被删除

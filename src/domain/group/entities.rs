@@ -86,6 +86,10 @@ pub struct GroupDetailInfo {
     /// 组升级进度 (按 group_level_configs 算, 每次 get_group 实时算)
     /// 前端用这个画经验条: expInCurrentLevel / (nextLevelRequiredExp - currentLevelRequiredExp)
     pub level_progress: Option<GroupLevelProgress>,
+    /// 组做客邀请码 (访客通过 ?inviteCode=xxx 链接进入主人厨房选菜下单用)
+    /// 表里 NOT NULL, 自动建组时会填一个随机 8 位 hex 兜底
+    #[serde(default)]
+    pub invite_code: Option<String>,
 }
 
 /// 组升级进度 (用于画经验条)
