@@ -974,13 +974,15 @@ CREATE INDEX idx_wst_active ON wx_subscription_templates(is_active);
 --   - is_global=true  时 group_id 必须为 NULL, 由 multi-admin 全局维护 (当前阶段)
 --   - is_global=false 时 group_id 必须非空, 由组内自己创建 (后续阶段扩展)
 --   - UNIQUE(group_id, group_name) 拆分: global 用 group_name 唯一, group 内仍按 (group_id, group_name) 唯一
+-- 2026-07-07 改造: 删除 max_capacity / current_count
+--   - 业务上 record_group 是「类别」(周末探店/节日惊喜), 类别本身不该有上限
+--   - 整体足迹容量由 association_groups.footprint_capacity 控制 (用户级配额)
+--   - 类别不需要 current_count, 想要计数查 COUNT(footprints WHERE record_group_id=?)
 CREATE TABLE record_group (
     id BIGSERIAL PRIMARY KEY,
     group_id BIGINT REFERENCES association_groups(group_id) ON DELETE CASCADE,
     group_name VARCHAR(50) NOT NULL,
     group_type SMALLINT NOT NULL,
-    max_capacity INT NOT NULL DEFAULT 50,
-    current_count INT NOT NULL DEFAULT 0,
     status SMALLINT NOT NULL DEFAULT 1,
     is_global BOOLEAN NOT NULL DEFAULT FALSE,
     create_time TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -991,9 +993,10 @@ CREATE TABLE record_group (
         (is_global = FALSE AND group_id IS NOT NULL)
     )
 );
-COMMENT ON TABLE record_group IS '足迹记录分组表 (支持 global 共用 + 组内自建)';
+COMMENT ON TABLE record_group IS '足迹分组/类别表 (类别本身无容量上限, 整体容量由 association_groups.footprint_capacity 控制)';
 COMMENT ON COLUMN record_group.is_global IS 'TRUE=multi-admin 全局维护 / FALSE=组内自建';
 COMMENT ON COLUMN record_group.group_id IS 'is_global=TRUE 时为 NULL, FALSE 时必填';
+COMMENT ON COLUMN record_group.group_type IS '业务分类: 0=美食 1=约会 2=旅行 3=纪念日 4=其他';
 CREATE UNIQUE INDEX uniq_record_group_global_name ON record_group(group_name) WHERE is_global = TRUE;
 CREATE UNIQUE INDEX uniq_record_group_per_group_name ON record_group(group_id, group_name) WHERE is_global = FALSE;
 CREATE INDEX idx_record_group_group_id ON record_group(group_id) WHERE group_id IS NOT NULL;

@@ -238,11 +238,12 @@ pub async fn create_footprint(
         }
     }
 
-    // 将 images 序列化为 JSON 字符串
-    let images_json = input
+    // images 字段转 serde_json::Value 即可, sqlx + PostgreSQL 自动序列化为 jsonb
+    // (之前先 to_string 再 bind 会报 "字段类型 jsonb 但表达式为 text", 必须显式 ::jsonb 强转)
+    let images_value: Option<serde_json::Value> = input
         .images
         .as_ref()
-        .map(|imgs| serde_json::to_string(imgs).unwrap_or_else(|_| "[]".to_string()));
+        .map(|imgs| serde_json::to_value(imgs).unwrap_or_else(|_| serde_json::json!([])));
 
     // 2026-07-06: 如果传了 record_group_id, 校验它存在 + 状态正常
     //   - is_global=true 时 group_id=NULL, 任何组都能用
@@ -283,7 +284,7 @@ pub async fn create_footprint(
     .bind(user_id)
     .bind(&input.content)
     .bind(&input.location)
-    .bind(&images_json)
+    .bind(images_value)
     .bind(input.related_order_id)
     .bind(input.related_wish_id)
     .bind(input.record_group_id)

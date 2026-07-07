@@ -35,8 +35,6 @@ pub struct FootprintGroupAdminOut {
     pub group_id: Option<i64>,
     pub group_name: String,
     pub group_type: i16,
-    pub max_capacity: i32,
-    pub current_count: i32,
     pub status: i16,
     pub is_global: bool,
     pub create_time: chrono::DateTime<chrono::Utc>,
@@ -48,7 +46,6 @@ pub struct FootprintGroupAdminOut {
 pub struct CreateFootprintGroupInput {
     pub group_name: String,
     pub group_type: i16,
-    pub max_capacity: i32,
     pub is_global: bool,
 }
 
@@ -57,7 +54,6 @@ pub struct CreateFootprintGroupInput {
 pub struct UpdateFootprintGroupInput {
     pub group_name: Option<String>,
     pub group_type: Option<i16>,
-    pub max_capacity: Option<i32>,
     pub status: Option<i16>,
 }
 
@@ -86,7 +82,7 @@ async fn list_groups(
     };
 
     let sql = format!(
-        "SELECT id, group_id, group_name, group_type, max_capacity, current_count, status, is_global, create_time, update_time \
+        "SELECT id, group_id, group_name, group_type, status, is_global, create_time, update_time \
          FROM record_group {where_clause} ORDER BY is_global DESC, id ASC"
     );
 
@@ -98,8 +94,6 @@ async fn list_groups(
             group_id: r.get("group_id"),
             group_name: r.get("group_name"),
             group_type: r.get("group_type"),
-            max_capacity: r.get("max_capacity"),
-            current_count: r.get("current_count"),
             status: r.get("status"),
             is_global: r.get("is_global"),
             create_time: r.get("create_time"),
@@ -121,9 +115,6 @@ async fn create_group(
     if input.group_name.trim().is_empty() {
         return Err(CustomError::BadRequest("分组名不能为空".into()));
     }
-    if input.max_capacity < 1 {
-        return Err(CustomError::BadRequest("容量必须 ≥ 1".into()));
-    }
 
     // is_global=true → group_id=NULL; is_global=false → 需要后续由组端 API 传入 group_id
     // 当前阶段 multi-admin 只用 global=true 路径, is_global=false 由 admin 校验拒绝
@@ -134,13 +125,12 @@ async fn create_group(
     }
 
     let row = sqlx::query(
-        r#"INSERT INTO record_group (group_id, group_name, group_type, max_capacity, is_global)
-           VALUES (NULL, $1, $2, $3, TRUE)
-           RETURNING id, group_id, group_name, group_type, max_capacity, current_count, status, is_global, create_time, update_time"#,
+        r#"INSERT INTO record_group (group_id, group_name, group_type, is_global)
+           VALUES (NULL, $1, $2, TRUE)
+           RETURNING id, group_id, group_name, group_type, status, is_global, create_time, update_time"#,
     )
     .bind(&input.group_name)
     .bind(input.group_type)
-    .bind(input.max_capacity)
     .fetch_one(db)
     .await
     .map_err(|e| match e {
@@ -155,8 +145,6 @@ async fn create_group(
         group_id: row.get("group_id"),
         group_name: row.get("group_name"),
         group_type: row.get("group_type"),
-        max_capacity: row.get("max_capacity"),
-        current_count: row.get("current_count"),
         status: row.get("status"),
         is_global: row.get("is_global"),
         create_time: row.get("create_time"),
@@ -176,7 +164,7 @@ async fn create_group(
     Ok(ApiResponse::success(out))
 }
 
-/// 更新分组 (改名字/类型/容量/启停)
+/// 更新分组 (改名字/类型/启停)
 async fn update_group(
     state: State<Arc<AppState>>,
     admin: AdminToken,
@@ -191,16 +179,14 @@ async fn update_group(
         r#"UPDATE record_group
            SET group_name   = COALESCE($2, group_name),
                group_type   = COALESCE($3, group_type),
-               max_capacity = COALESCE($4, max_capacity),
-               status       = COALESCE($5, status),
+               status       = COALESCE($4, status),
                update_time  = NOW()
            WHERE id = $1
-           RETURNING id, group_id, group_name, group_type, max_capacity, current_count, status, is_global, create_time, update_time"#,
+           RETURNING id, group_id, group_name, group_type, status, is_global, create_time, update_time"#,
     )
     .bind(id)
     .bind(&input.group_name)
     .bind(input.group_type)
-    .bind(input.max_capacity)
     .bind(input.status)
     .fetch_optional(db)
     .await?
@@ -211,8 +197,6 @@ async fn update_group(
         group_id: row.get("group_id"),
         group_name: row.get("group_name"),
         group_type: row.get("group_type"),
-        max_capacity: row.get("max_capacity"),
-        current_count: row.get("current_count"),
         status: row.get("status"),
         is_global: row.get("is_global"),
         create_time: row.get("create_time"),

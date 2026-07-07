@@ -24,7 +24,7 @@ use crate::utils::response::ApiResponse;
 const CONFIG_ENTRIES: &[(&str, i64, i64, &str)] = &[
     ("orderPointPercent", 1, 200, "ORDER"),
     ("diamondUnlockCost", 10, 10000, "REWARDS"),
-    ("defaultFootprintCapacity", 10, 1000, "GENERAL"),
+    ("defaultFootprintCapacity", 1, 1000, "GENERAL"),
     ("footprintExpandDiamondCost", 1, 1000, "REWARDS"),
     ("orderCompleteExp", 0, 10000, "ORDER"),
     // 2026-07-06 新增: 每日奖励上限 (基础值 + 等级增量)

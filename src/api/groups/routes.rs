@@ -801,7 +801,7 @@ async fn create_invite(
 
     sqlx::query(
         r#"INSERT INTO guest_invitations (group_id, invite_code, created_by, expires_at, max_uses, used_count, status)
-           VALUES ($1, $2, $3, $4, 1, 0, 'ACTIVE'::user_status_enum)"#
+           VALUES ($1, $2, $3, $4, 1, 0, 'ACTIVE'::guest_invite_status_enum)"#
     )
     .bind(gid)
     .bind(&invite_code)
