@@ -7,7 +7,7 @@ use sqlx::types::Json;
 use sqlx::{PgPool, Row};
 
 use crate::domain::event::{
-    EventType, WishAgreementConfirmedPayload, WishClosedPayload, WishFulfilledPayload,
+    EventType, WishAgreementConfirmedPayload, WishClosedPayload,
     WishNegotiatingPayload, WishSelectedPayload,
 };
 use crate::domain::wish::{

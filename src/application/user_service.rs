@@ -5,7 +5,7 @@ use crate::config::AppState;
 use crate::domain::user::entities::UserRecord;
 use crate::domain::user::{
     BindUserDirectlyInput, ConfirmInvitationInput, Gender, GroupInfoOut, GroupUpdateInput,
-    InvitationListOut, InvitationRequestOut, IsRegisterResponse, LoginInput, LoginMethod,
+    InvitationListOut, IsRegisterResponse, LoginInput, LoginMethod,
     LoginResponse, NewInvitationInput, ProfileUpdateInput, RegisterInput, RoleSwitchInput,
     RoleSwitchResult, UnbindRequestInput, UserInfoResponse, UserPublic, UserRole,
 };
@@ -456,7 +456,7 @@ impl GroupService {
     /// 解绑请求
     pub async fn unbind_request(
         user_id: i64,
-        input: UnbindRequestInput,
+        _: UnbindRequestInput,
         state: &Arc<AppState>,
     ) -> Result<(), CustomError> {
         let db = &state.db_pool;

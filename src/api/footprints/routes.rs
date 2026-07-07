@@ -4,8 +4,7 @@
 
 use ntex::web::{
     self,
-    types::{Json, Path, Query, State},
-    HttpResponse, Responder, ServiceConfig,
+    types::{Json, Path, Query, State}, Responder, ServiceConfig,
 };
 use serde::{Deserialize, Serialize};
 use sqlx::Row;
@@ -17,6 +16,28 @@ use crate::errors::CustomError;
 use crate::middlewares::auth::UserToken;
 use crate::middlewares::require_group::RequireGroup;
 use crate::utils::response::ApiResponse;
+
+/// 从 global_configs 读整数配置
+///
+/// 读不到 (DB 无记录 / 配置值不是整数) 时返回传入的默认值。
+/// 与 admin/routes.rs::read_int 行为对齐, 但每请求走一次, 没有缓存。
+async fn read_global_int(
+    db: &sqlx::PgPool,
+    key: &str,
+    default: i32,
+) -> i32 {
+    sqlx::query_as::<_, (Option<serde_json::Value>,)>(
+        "SELECT config_value FROM global_configs WHERE config_key = $1",
+    )
+    .bind(key)
+    .fetch_optional(db)
+    .await
+    .ok()
+    .flatten()
+    .and_then(|(v,)| v)
+    .and_then(|v| v.as_i64().map(|n| n as i32))
+    .unwrap_or(default)
+}
 
 /// 配置足迹路由
 /// FSD v2: 路径为 /api/groups/{group_id}/footprints
@@ -33,6 +54,11 @@ pub fn configure(cfg: &mut ServiceConfig) {
     cfg.service(
         web::resource("/api/groups/{group_id}/footprints/capacity/expand")
             .route(web::post().to(expand_capacity)),
+    );
+    // 2026-07-06 新增: 列出"本组可选的足迹分组" (公用分组 + 本组自建)
+    cfg.service(
+        web::resource("/api/groups/{group_id}/footprint-groups")
+            .route(web::get().to(list_available_groups)),
     );
 }
 
@@ -101,6 +127,8 @@ pub struct CreateFootprintRequest {
     pub images: Option<Vec<ImageItem>>,
     pub related_order_id: Option<i64>,
     pub related_wish_id: Option<i64>,
+    /// 2026-07-06 新增: 所属足迹分组 (公用 = is_global, 或后续组内自建)
+    pub record_group_id: Option<i64>,
     pub idempotency_key: String,
 }
 
@@ -177,10 +205,17 @@ pub async fn create_footprint(
     }
 
     // 检查容量
+    // - 当前足迹总数 (用子查询避免 LEFT JOIN + COUNT 的 GROUP BY 报错)
+    // - 组容量: 先看 association_groups.footprint_capacity, 没设就用 global_configs.defaultFootprintCapacity
     let (current_count, capacity): (i64, i32) = sqlx::query_as(
-        r#"SELECT COUNT(*), COALESCE(g.footprint_capacity, 50)
+        r#"SELECT
+              (SELECT COUNT(*) FROM footprints WHERE group_id = $1) AS total,
+              COALESCE(
+                  g.footprint_capacity,
+                  (SELECT (config_value #>> '{}')::int FROM global_configs WHERE config_key='defaultFootprintCapacity'),
+                  50
+              ) AS capacity
            FROM association_groups g
-           LEFT JOIN footprints f ON f.group_id = g.group_id
            WHERE g.group_id = $1"#,
     )
     .bind(gid)
@@ -209,12 +244,38 @@ pub async fn create_footprint(
         .as_ref()
         .map(|imgs| serde_json::to_string(imgs).unwrap_or_else(|_| "[]".to_string()));
 
+    // 2026-07-06: 如果传了 record_group_id, 校验它存在 + 状态正常
+    //   - is_global=true 时 group_id=NULL, 任何组都能用
+    //   - is_global=false 时 group_id 必须等于本组的 gid
+    if let Some(rg_id) = input.record_group_id {
+        let row: Option<(bool, Option<i64>, i16)> = sqlx::query_as(
+            "SELECT is_global, group_id, status FROM record_group WHERE id=$1"
+        )
+        .bind(rg_id)
+        .fetch_optional(db)
+        .await?;
+
+        match row {
+            None => return Err(CustomError::BadRequest("足迹分组不存在".into())),
+            Some((true, _, 0)) => {
+                return Err(CustomError::BadRequest("该足迹分组已停用".into()));
+            }
+            Some((false, Some(rg_gid), 0)) if rg_gid == gid => {
+                return Err(CustomError::BadRequest("该足迹分组已停用".into()));
+            }
+            Some((false, Some(rg_gid), _) ) if rg_gid != gid => {
+                return Err(CustomError::BadRequest("该足迹分组不属于本组".into()));
+            }
+            _ => {} // OK
+        }
+    }
+
     // 插入足迹记录
     let footprint_id: i64 = sqlx::query_scalar(
         r#"
         INSERT INTO footprints (group_id, user_id, content, location, images,
-                               related_order_id, related_wish_id, idempotency_key, created_at)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())
+                               related_order_id, related_wish_id, record_group_id, idempotency_key, created_at)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW())
         RETURNING footprint_id
         "#,
     )
@@ -225,6 +286,7 @@ pub async fn create_footprint(
     .bind(&images_json)
     .bind(input.related_order_id)
     .bind(input.related_wish_id)
+    .bind(input.record_group_id)
     .bind(&input.idempotency_key)
     .fetch_one(db)
     .await?;
@@ -405,11 +467,19 @@ pub async fn list_footprints(
     };
 
     // 获取总数和容量
-    // count 是 BIGINT,footprint_capacity 是 INT —— ::INT 强转保持 i32 类型
+    // - count 走单表 COUNT (避免 LEFT JOIN + COUNT 的 GROUP BY 报错)
+    // - capacity 优先读 association_groups.footprint_capacity, 没设就 fallback 到
+    //   global_configs.defaultFootprintCapacity, 最后兜底 50
+    //   - count 是 BIGINT,footprint_capacity 是 INT —— ::INT 强转保持 i32 类型
     let (total_count, capacity): (i64, i32) = sqlx::query_as(
-        r#"SELECT COUNT(*)::BIGINT, COALESCE(g.footprint_capacity, 50)::INT
+        r#"SELECT
+              (SELECT COUNT(*)::BIGINT FROM footprints WHERE group_id = $1) AS total_count,
+              COALESCE(
+                  g.footprint_capacity,
+                  (SELECT (config_value #>> '{}')::int FROM global_configs WHERE config_key='defaultFootprintCapacity'),
+                  50
+              )::INT AS capacity
            FROM association_groups g
-           LEFT JOIN footprints f ON f.group_id = g.group_id
            WHERE g.group_id = $1"#,
     )
     .bind(gid)
@@ -545,17 +615,25 @@ pub async fn expand_capacity(
         return Err(CustomError::Forbidden("非组成员".into()));
     }
 
-    // 获取组当前钻石和容量
+    // 获取组当前钻石和容量 (容量 fallback 同 create/list)
     let (current_diamond, current_capacity): (i32, i32) = sqlx::query_as(
-        "SELECT diamond, COALESCE(footprint_capacity, 50) FROM association_groups WHERE group_id = $1"
+        r#"SELECT diamond,
+                  COALESCE(
+                      footprint_capacity,
+                      (SELECT (config_value #>> '{}')::int FROM global_configs WHERE config_key='defaultFootprintCapacity'),
+                      50
+                  ) AS capacity
+           FROM association_groups WHERE group_id = $1"#
     )
     .bind(gid)
     .fetch_optional(db)
     .await?
     .unwrap_or((0, 50));
 
-    // 简化：每扩容1个容量需要1钻石
-    let diamond_cost = input.expand_by;
+    // 钻石单价从 global_configs.footprintExpandDiamondCost 读 (默认 5)
+    // 总花费 = expand_by * 单价
+    let cost_per_slot: i32 = read_global_int(db, "footprintExpandDiamondCost", 5).await;
+    let diamond_cost = input.expand_by * cost_per_slot;
     let new_capacity = current_capacity + input.expand_by;
 
     if current_diamond < diamond_cost {
@@ -596,4 +674,73 @@ pub async fn expand_capacity(
         diamond_cost,
         diamond_balance_after: current_diamond - diamond_cost,
     }))
+}
+
+/// 足迹分组项 (用户端可见版本)
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct FootprintGroupItem {
+    pub id: i64,
+    pub group_name: String,
+    pub group_type: i16,
+    pub is_global: bool,
+}
+
+/// 列出本组可选的足迹分组
+/// GET /api/groups/{group_id}/footprint-groups
+///
+/// 用户发布足迹时, 从这个接口拉可选分组下拉框:
+/// - 公用分组 (is_global=true, group_id=NULL)
+/// - 本组自建分组 (is_global=false, group_id=gid, 后续阶段启用)
+/// - 仅返回 status=1 (启用中)
+async fn list_available_groups(
+    state: State<Arc<AppState>>,
+    token: UserToken,
+    _require: RequireGroup,
+    group_id: Path<i64>,
+) -> Result<impl Responder, CustomError> {
+    let gid = *group_id;
+    let user_id = token.user_id;
+    let db = &state.db_pool;
+
+    // 检查组成员
+    let is_member: bool = sqlx::query_scalar::<_, bool>(
+        "SELECT EXISTS(SELECT 1 FROM association_group_members WHERE group_id=$1 AND user_id=$2 AND member_status='ACTIVE'::group_member_status_enum)",
+    )
+    .bind(gid)
+    .bind(user_id)
+    .fetch_one(db)
+    .await?;
+
+    if !is_member {
+        return Err(CustomError::Forbidden("非组成员".into()));
+    }
+
+    // 公用分组 (is_global=true) + 本组自建分组 (is_global=false AND group_id=gid)
+    // 按"公用在前, 自建在后"排序
+    let rows = sqlx::query(
+        r#"SELECT id, group_name, group_type, is_global
+           FROM record_group
+           WHERE status = 1
+             AND (
+                 is_global = TRUE
+                 OR (is_global = FALSE AND group_id = $1)
+             )
+           ORDER BY is_global DESC, id ASC"#,
+    )
+    .bind(gid)
+    .fetch_all(db)
+    .await?;
+
+    let items: Vec<FootprintGroupItem> = rows
+        .into_iter()
+        .map(|r| FootprintGroupItem {
+            id: r.get("id"),
+            group_name: r.get("group_name"),
+            group_type: r.get("group_type"),
+            is_global: r.get("is_global"),
+        })
+        .collect();
+
+    Ok(ApiResponse::success(items))
 }

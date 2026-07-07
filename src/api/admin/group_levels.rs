@@ -13,7 +13,6 @@ use ntex::web::{
     Responder, ServiceConfig,
 };
 use serde::{Deserialize, Serialize};
-use sqlx::Row;
 use std::sync::Arc;
 use utoipa::ToSchema;
 

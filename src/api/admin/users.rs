@@ -3,10 +3,9 @@
 use ntex::web::{
     self,
     types::{Json, Path, State},
-    HttpResponse, Responder, ServiceConfig,
+    Responder, ServiceConfig,
 };
 use serde::{Deserialize, Serialize};
-use sqlx::Row;
 use std::sync::Arc;
 use utoipa::ToSchema;
 
@@ -57,9 +56,7 @@ pub fn validate_user_update(input: &UserUpdateInput) -> Result<(), CustomError> 
         && input.role.is_none()
         && input.status.is_none()
     {
-        return Err(CustomError::BadRequest(
-            "至少需要更新一个字段".into(),
-        ));
+        return Err(CustomError::BadRequest("至少需要更新一个字段".into()));
     }
 
     if let Some(ref u) = input.username {
@@ -109,10 +106,7 @@ pub fn validate_user_update(input: &UserUpdateInput) -> Result<(), CustomError> 
 
 /// 配置路由(在 admin::routes::configure 里被调)
 pub fn configure(cfg: &mut ServiceConfig) {
-    cfg.service(
-        web::scope("/api/admin/users")
-            .route("/{user_id}", web::patch().to(update_user)),
-    );
+    cfg.service(web::scope("/api/admin/users").route("/{user_id}", web::patch().to(update_user)));
 }
 
 /// PATCH /api/admin/users/{user_id}
@@ -176,7 +170,10 @@ pub async fn update_user(
         }
     }
 
-    let new_username = input.username.clone().unwrap_or_else(|| old_username.clone());
+    let new_username = input
+        .username
+        .clone()
+        .unwrap_or_else(|| old_username.clone());
     let new_nick_name = input.nick_name.clone().or_else(|| old_nick_name.clone());
     let new_role = input.role.clone().unwrap_or_else(|| old_role.clone());
     let new_status = input.status.clone().unwrap_or_else(|| old_status.clone());

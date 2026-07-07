@@ -7,9 +7,9 @@ use sqlx::{PgPool, Row};
 
 use crate::domain::event::{types::*, EventType};
 use crate::domain::order::{
-    GroupInfoSimple, OrderCreateInput, OrderCursor, OrderItemOut, OrderItemRecord, OrderOutNew,
-    OrderQuery, OrderRatingCreateInput, OrderRatingOut, OrderRecord, OrderStatistics, OrderStatus,
-    OrderStatusHistoryOut, OrderStatusUpdateInput, TeamTodayOrdersQuery,
+    ExpGrantStatus, GroupInfoSimple, OrderCreateInput, OrderCursor, OrderItemOut, OrderItemRecord,
+    OrderOutNew, OrderQuery, OrderRatingCreateInput, OrderRatingOut, OrderRecord, OrderStatistics,
+    OrderStatus, OrderStatusHistoryOut, OrderStatusUpdateInput, TeamTodayOrdersQuery,
 };
 use crate::errors::CustomError;
 use crate::infrastructure::event::publisher::EventPublisher;
@@ -17,6 +17,71 @@ use crate::models::pagination::{decode_cursor, encode_cursor, CursorPage};
 
 /// 订单应用服务
 pub struct OrderService;
+
+/// 从 global_configs 读整数配置
+///
+/// 跟 admin/routes.rs::read_int / footprints/routes.rs::read_global_int 行为一致:
+/// 读不到时返回传入的 default。
+async fn read_global_int(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    key: &str,
+    default: i32,
+) -> i32 {
+    sqlx::query_as::<_, (Option<serde_json::Value>,)>(
+        "SELECT config_value FROM global_configs WHERE config_key = $1",
+    )
+    .bind(key)
+    .fetch_optional(&mut **tx)
+    .await
+    .ok()
+    .flatten()
+    .and_then(|(v,)| v)
+    .and_then(|v| v.as_i64().map(|n| n as i32))
+    .unwrap_or(default)
+}
+
+/// 当日 (UTC 日期) 该组某用户在 love_point_transactions 表里的累计变动 (正值 = 获得)
+async fn sum_today_love_point_earned(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    user_id: i64,
+    group_id: i64,
+) -> i64 {
+    // 仅 EARN 类型, 当日 0 点到次日 0 点 (按 UTC 切日 - 后续可改成组时区)
+    let row: (Option<i64>,) = sqlx::query_as(
+        r#"SELECT COALESCE(SUM(amount), 0)::BIGINT
+           FROM love_point_transactions
+           WHERE user_id=$1 AND group_id=$2
+             AND type='EARN'::love_point_tx_type_enum
+             AND created_at >= date_trunc('day', NOW() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'
+             AND created_at <  date_trunc('day', NOW() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC' + INTERVAL '1 day'"#,
+    )
+    .bind(user_id)
+    .bind(group_id)
+    .fetch_one(&mut **tx)
+    .await
+    .unwrap_or((None,));
+    row.0.unwrap_or(0)
+}
+
+/// 当日 (UTC 日期) 该组已发放的组经验 (EARN 类型)
+async fn sum_today_group_exp_earned(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    group_id: i64,
+) -> i64 {
+    let row: (Option<i64>,) = sqlx::query_as(
+        r#"SELECT COALESCE(SUM(amount), 0)::BIGINT
+           FROM group_exp_transactions
+           WHERE group_id=$1
+             AND type='EARN'::group_exp_tx_type_enum
+             AND created_at >= date_trunc('day', NOW() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'
+             AND created_at <  date_trunc('day', NOW() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC' + INTERVAL '1 day'"#,
+    )
+    .bind(group_id)
+    .fetch_one(&mut **tx)
+    .await
+    .unwrap_or((None,));
+    row.0.unwrap_or(0)
+}
 
 impl OrderService {
     /// 创建订单
@@ -759,7 +824,7 @@ impl OrderService {
         let mut tx = db.begin().await?;
 
         let current: Option<OrderRecord> = sqlx::query_as::<_, OrderRecord>(
-            "SELECT order_id, user_id, is_guest, guest_user_id AS guest_id, group_id, status, goal_time, remark, points_reward, cancel_reason, reject_reason, last_status_change_at, created_at, updated_at FROM orders WHERE order_id=$1 FOR UPDATE"
+            "SELECT order_id, user_id, is_guest, guest_user_id AS guest_id, group_id, status, goal_time, remark, points_reward, cancel_reason, reject_reason, last_status_change_at, exp_grant_status, created_at, updated_at FROM orders WHERE order_id=$1 FOR UPDATE"
         )
         .bind(input.order_id)
         .fetch_optional(&mut *tx)
@@ -875,40 +940,175 @@ impl OrderService {
                     _ => return Err(CustomError::BadRequest("未找到接单用户".into())),
                 };
 
-                if let Ok(user_row) =
-                    sqlx::query("SELECT love_point FROM users WHERE user_id=$1 FOR UPDATE")
-                        .bind(receiver_user_id)
-                        .fetch_one(&mut *tx)
-                        .await
-                {
-                    let current_lp: i32 = user_row.get("love_point");
-                    let balance_after = current_lp + delta;
-                    // love_point_tx_type_enum 合法值: EARN / FREEZE / UNFREEZE / DEDUCT / ADJUST
-                    // 订单完成: 正值用 EARN, 负值用 DEDUCT
-                    // 字符串到自定义 enum PG 不会隐式转换, 必须 ::love_point_tx_type_enum
-                    let tx_type = if delta >= 0 { "EARN" } else { "DEDUCT" };
-                    sqlx::query(
-                        r#"INSERT INTO love_point_transactions
-                           (user_id, group_id, type, amount, available_before, available_after, frozen_before, frozen_after, biz_type, biz_id)
-                           VALUES ($1, $2, $7::love_point_tx_type_enum, $3, $4, $5, 0, 0, 'ORDER', $6)"#
+                // 2026-07-06 防刷单: 每日积分上限
+                //   cap = base + level * level_step (基础值 + 等级增量)
+                //   仅对正向奖励 (delta > 0) 生效; 扣分 (delta < 0) 不受上限影响
+                //   超额部分直接截断, 不报错 (订单流程照常)
+                let mut effective_delta = delta;
+                if delta > 0 {
+                    let base_cap = read_global_int(&mut tx, "dailyLovePointLimit", 100).await;
+                    let level_step =
+                        read_global_int(&mut tx, "dailyLovePointLimitLevelStep", 10).await;
+                    let group_level: i32 = sqlx::query_as::<_, (i32,)>(
+                        "SELECT level FROM association_groups WHERE group_id=$1",
                     )
-                        .bind(receiver_user_id)
-                        .bind(group_id)
-                        .bind(delta)
-                        .bind(current_lp as i64)
-                        .bind(balance_after as i64)
-                        .bind(order.order_id)
-                        .bind(tx_type)
-                        .execute(&mut *tx)
-                        .await?;
-                    sqlx::query("UPDATE users SET love_point=$2 WHERE user_id=$1")
-                        .bind(receiver_user_id)
-                        .bind(balance_after)
-                        .execute(&mut *tx)
-                        .await?;
-                    if delta > 0 {
-                        order.points_reward = delta;
+                    .bind(group_id)
+                    .fetch_one(&mut *tx)
+                    .await
+                    .map(|(l,)| l)
+                    .unwrap_or(1);
+                    let actual_cap = base_cap + (group_level - 1).max(0) * level_step;
+                    let already_earned =
+                        sum_today_love_point_earned(&mut tx, receiver_user_id, group_id).await;
+                    let room_left = (actual_cap as i64 - already_earned).max(0);
+                    if room_left == 0 {
+                        // 今天已经满额, 此次不发放
+                        effective_delta = 0;
+                    } else if (delta as i64) > room_left {
+                        // 部分超出, 只发剩下的额度
+                        effective_delta = room_left as i32;
                     }
+                }
+
+                if effective_delta != 0 {
+                    if let Ok(user_row) =
+                        sqlx::query("SELECT love_point FROM users WHERE user_id=$1 FOR UPDATE")
+                            .bind(receiver_user_id)
+                            .fetch_one(&mut *tx)
+                            .await
+                    {
+                        let current_lp: i32 = user_row.get("love_point");
+                        let balance_after = current_lp + effective_delta;
+                        // love_point_tx_type_enum 合法值: EARN / FREEZE / UNFREEZE / DEDUCT / ADJUST
+                        // 订单完成: 正值用 EARN, 负值用 DEDUCT
+                        // 字符串到自定义 enum PG 不会隐式转换, 必须 ::love_point_tx_type_enum
+                        let tx_type = if effective_delta >= 0 { "EARN" } else { "DEDUCT" };
+                        sqlx::query(
+                            r#"INSERT INTO love_point_transactions
+                               (user_id, group_id, type, amount, available_before, available_after, frozen_before, frozen_after, biz_type, biz_id)
+                               VALUES ($1, $2, $7::love_point_tx_type_enum, $3, $4, $5, 0, 0, 'ORDER', $6)"#
+                        )
+                            .bind(receiver_user_id)
+                            .bind(group_id)
+                            .bind(effective_delta)
+                            .bind(current_lp as i64)
+                            .bind(balance_after as i64)
+                            .bind(order.order_id)
+                            .bind(tx_type)
+                            .execute(&mut *tx)
+                            .await?;
+                        sqlx::query("UPDATE users SET love_point=$2 WHERE user_id=$1")
+                            .bind(receiver_user_id)
+                            .bind(balance_after)
+                            .execute(&mut *tx)
+                            .await?;
+                        if effective_delta > 0 {
+                            order.points_reward = effective_delta;
+                        }
+                    }
+                }
+            }
+        }
+
+        // 组经验发放 (订单完成 → association_groups.exp + 流水 + 防重发)
+        // - 触发: 仅 ConfirmedCompleted 且 orders.exp_grant_status = NONE
+        // - 经验值: 读 global_configs.orderCompleteExp (默认 10), 没读到 → 0 (跳过发放)
+        // - 防重发: 成功后把 exp_grant_status 设为 GRANTED
+        // - 幂等: group_exp_transactions.idempotency_key 用 order:{order_id}:exp, 唯一索引兜底
+        if matches!(input.to_status, OrderStatus::ConfirmedCompleted)
+            && order.exp_grant_status != Some(ExpGrantStatus::Granted)
+        {
+            if let Some(group_id) = order.group_id {
+                // 1) 读配置
+                let exp_grant: i32 = read_global_int(&mut tx, "orderCompleteExp", 10).await;
+
+                if exp_grant > 0 {
+                    // 2) 锁住组行, 读当前 exp 和 level
+                    let (current_exp, current_level): (i64, i32) = sqlx::query_as(
+                        "SELECT exp, level FROM association_groups WHERE group_id=$1 FOR UPDATE"
+                    )
+                    .bind(group_id)
+                    .fetch_one(&mut *tx)
+                    .await?;
+
+                    // 2026-07-06 防刷单: 每日经验上限
+                    //   cap = base + (level - 1) * level_step (升级加量)
+                    //   仅 EARN 类型; 已超额的订单直接截断, exp_grant_status 标 REJECTED_LIMIT
+                    let base_exp_cap = read_global_int(&mut tx, "dailyGroupExpLimit", 200).await;
+                    let exp_level_step =
+                        read_global_int(&mut tx, "dailyGroupExpLimitLevelStep", 20).await;
+                    let actual_exp_cap =
+                        base_exp_cap + (current_level - 1).max(0) * exp_level_step;
+                    let already_earned_today = sum_today_group_exp_earned(&mut tx, group_id).await;
+                    let exp_room_left = (actual_exp_cap as i64 - already_earned_today).max(0);
+
+                    let effective_exp_grant: i64 = if exp_room_left == 0 {
+                        0
+                    } else {
+                        (exp_grant as i64).min(exp_room_left)
+                    };
+
+                    if effective_exp_grant > 0 {
+                        let new_exp = current_exp + effective_exp_grant;
+
+                        // 3) 重算等级 (从阶梯表找最大 level where required_exp <= new_exp)
+                        let levels: Vec<(i32, i64)> = sqlx::query_as(
+                            "SELECT level, required_exp FROM group_level_configs ORDER BY level ASC"
+                        )
+                        .fetch_all(&mut *tx)
+                        .await?;
+                        let new_level = levels
+                            .iter()
+                            .rev()
+                            .find(|(_, req)| *req <= new_exp)
+                            .map(|(lv, _)| *lv)
+                            .unwrap_or(levels.first().map(|(lv, _)| *lv).unwrap_or(1));
+
+                        // 4) 写流水 (幂等键防重)
+                        let idem_key = format!("order:{}:exp", order.order_id);
+                        sqlx::query(
+                            r#"INSERT INTO group_exp_transactions
+                               (group_id, type, amount, exp_before, exp_after, level_before, level_after, biz_type, biz_id, idempotency_key)
+                               VALUES ($1, 'EARN'::group_exp_tx_type_enum, $2, $3, $4, $5, $6, 'ORDER', $7, $8)
+                               ON CONFLICT (idempotency_key) DO NOTHING"#,
+                        )
+                        .bind(group_id)
+                        .bind(effective_exp_grant)
+                        .bind(current_exp)
+                        .bind(new_exp)
+                        .bind(current_level)
+                        .bind(new_level)
+                        .bind(order.order_id)
+                        .bind(&idem_key)
+                        .execute(&mut *tx)
+                        .await?;
+
+                        // 5) 更新组的 exp + level 缓存
+                        sqlx::query(
+                            "UPDATE association_groups SET exp=$2, level=$3, updated_at=NOW() WHERE group_id=$1"
+                        )
+                        .bind(group_id)
+                        .bind(new_exp)
+                        .bind(new_level)
+                        .execute(&mut *tx)
+                        .await?;
+                    }
+
+                    // 6) 标记订单 exp_grant_status
+                    //   - 全部发完 (effective == exp_grant) → GRANTED
+                    //   - 部分发了 / 完全没发 → REJECTED_LIMIT, 防重发但保留审计
+                    let final_status = if effective_exp_grant as i32 == exp_grant {
+                        "GRANTED"
+                    } else {
+                        "REJECTED_LIMIT"
+                    };
+                    sqlx::query(
+                        "UPDATE orders SET exp_grant_status=$2::exp_grant_status_enum, updated_at=NOW() WHERE order_id=$1"
+                    )
+                    .bind(order.order_id)
+                    .bind(final_status)
+                    .execute(&mut *tx)
+                    .await?;
                 }
             }
         }
