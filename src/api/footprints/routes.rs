@@ -93,6 +93,10 @@ pub struct FootprintsListResponse {
     /// 不用 skip_serializing_if: 该字段后端必返回 (Some), 让前端始终拿到字段
     #[serde(rename = "costPerSlot")]
     pub cost_per_slot: Option<i32>,
+    /// 2026-07-08 新增: 组钻石余额 (扩容量要用)
+    /// 之前 `loadOverview` 写的是 hardcoded 0, 导致扩容按钮永远显示 0 钻石
+    #[serde(rename = "diamondBalance")]
+    pub diamond_balance: Option<i64>,
 }
 
 /// 发布足迹响应 (FSD v2 10.1)
@@ -496,6 +500,18 @@ pub async fn list_footprints(
     // 前端在容量条上显示 + 点扩容按钮时也会再拉一次拿最新值
     let cost_per_slot: i32 = read_global_int(db, "footprintExpandDiamondCost", 5).await;
 
+    // 2026-07-08: 拿组钻石余额 (扩容量扣的就是这个)
+    // 之前前端 footprint 页的 loadOverview 写的是 hardcoded 0, 导致扩容按钮永远显示 0 钻石
+    let diamond_balance: i64 = sqlx::query_scalar(
+        "SELECT diamond::BIGINT FROM association_groups WHERE group_id = $1"
+    )
+    .bind(gid)
+    .fetch_optional(db)
+    .await
+    .ok()
+    .flatten()
+    .unwrap_or(0);
+
     Ok(ApiResponse::success(FootprintsListResponse {
         footprints,
         next_cursor,
@@ -503,6 +519,7 @@ pub async fn list_footprints(
         total_count: Some(total_count),
         capacity: Some(capacity),
         cost_per_slot: Some(cost_per_slot),
+        diamond_balance: Some(diamond_balance),
     }))
 }
 
