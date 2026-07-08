@@ -122,6 +122,52 @@ pub struct WsGroupDiamondChangeData {
     pub reason: String,
 }
 
+/// 用户爱心积分变化数据 (2026-07-08 新增)
+///
+/// 触发场景:
+/// - 订单完成 → 接单人 (RECEIVING) 收到 EARN
+/// - 订单取消 / 确认未完成 / 超时 → 接单人收到 DEDUCT
+///
+/// 只推给"积分变化的用户自己", 不推给全组 (积分是个人资产, 别人不关心)
+///
+/// delta > 0 = 获得, delta < 0 = 扣除
+#[allow(dead_code)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WsLovePointChangeData {
+    pub user_id: i64,
+    pub love_point: i32,
+    /// 本次变化的增量 (正=获得, 负=扣除)
+    pub delta: i32,
+    /// 触发来源 (业务码, 用于前端决定 toast 怎么提示)
+    /// - "order_completed": 订单完成, 获得积分
+    /// - "order_cancelled": 订单取消, 扣分
+    /// - "order_incomplete": 订单确认未完成, 扣分
+    /// - "order_timeout": 订单超时, 扣分
+    pub reason: String,
+    /// 关联订单 ID (用于前端跳转订单详情, 可选)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub order_id: Option<i64>,
+}
+
+/// 组经验变化数据 (2026-07-08 新增)
+///
+/// 触发场景:
+/// - 订单完成 → 组经验 +N
+///
+/// 推给全组 (跟 group_diamond_change 一致, 组经验是"组"的资产, 全员都该看到)
+#[allow(dead_code)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WsGroupExpChangeData {
+    pub group_id: i64,
+    pub exp: i64,
+    pub level: i32,
+    /// 触发本次经验变化的用户
+    pub user_id: i64,
+    pub reason: String,
+}
+
 /// 错误数据
 #[allow(dead_code)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -190,6 +236,22 @@ impl WsEnvelope {
     pub fn group_diamond_change(change: &WsGroupDiamondChangeData) -> Self {
         Self {
             msg_type: "group_diamond_change".to_string(),
+            data: serde_json::json!(change),
+        }
+    }
+
+    /// 创建用户爱心积分变化消息 (2026-07-08)
+    pub fn love_point_change(change: &WsLovePointChangeData) -> Self {
+        Self {
+            msg_type: "love_point_change".to_string(),
+            data: serde_json::json!(change),
+        }
+    }
+
+    /// 创建组经验变化消息 (2026-07-08)
+    pub fn group_exp_change(change: &WsGroupExpChangeData) -> Self {
+        Self {
+            msg_type: "group_exp_change".to_string(),
             data: serde_json::json!(change),
         }
     }

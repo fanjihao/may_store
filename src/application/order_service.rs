@@ -923,6 +923,19 @@ impl OrderService {
             _ => None,
         };
 
+        // 待 commit 后推送的 socket 事件 (2026-07-08)
+        // 用 Option 包住是因为只有积分/经验真的变动时才需要推
+        let mut push_love_point: Option<(i64, i32, String, Option<i64>)> = None;
+        let mut push_group_exp: Option<(i64, i64, String)> = None;
+        // 当前订单状态对应的积分事件 reason
+        let love_point_reason = match input.to_status {
+            OrderStatus::Cancelled => "order_cancelled",
+            OrderStatus::ConfirmedCompleted => "order_completed",
+            OrderStatus::ConfirmedIncomplete => "order_incomplete",
+            OrderStatus::Timeout => "order_timeout",
+            _ => "order_other",
+        };
+
         if let Some(delta) = points_delta {
             if delta != 0 {
                 let group_id = match order.group_id {
@@ -1005,6 +1018,14 @@ impl OrderService {
                         if effective_delta > 0 {
                             order.points_reward = effective_delta;
                         }
+
+                        // 2026-07-08: 记录待推送的 love_point 变化 (commit 后调用)
+                        push_love_point = Some((
+                            receiver_user_id,
+                            effective_delta,
+                            love_point_reason.to_string(),
+                            Some(order.order_id),
+                        ));
                     }
                 }
             }
@@ -1109,6 +1130,15 @@ impl OrderService {
                     .bind(final_status)
                     .execute(&mut *tx)
                     .await?;
+
+                    // 2026-07-08: 记录待推送的组经验变化 (commit 后调用)
+                    // 只推"实际发了经验"的情况, 没发的不打扰用户
+                    // (新值 new_exp/new_level 已写入 group, push 函数会自己查最新值)
+                    push_group_exp = Some((
+                        group_id,
+                        user_id,
+                        "order_completed".to_string(),
+                    ));
                 }
             }
         }
@@ -1169,6 +1199,21 @@ impl OrderService {
         .collect();
 
         tx.commit().await?;
+
+        // === 2026-07-08: 推送 socket 事件给前端, 让积分/经验数字实时更新 ===
+        // 注意: 必须在 commit 之后再推, 否则极端情况下"事务回滚但 socket 已推"会出 bug
+        if let Some((user_id, delta, reason, order_id)) = push_love_point {
+            crate::api::orders::broadcast::push_love_point_change_notice(
+                db, user_id, delta, &reason, order_id,
+            )
+            .await;
+        }
+        if let Some((group_id, user_id, reason)) = push_group_exp {
+            crate::api::orders::broadcast::push_group_exp_change_notice(
+                db, group_id, user_id, &reason,
+            )
+            .await;
+        }
 
         // 发布状态变更事件 (用于 /api/groups/{group_id}/activities 活动流)
         // 仅在 from != to 时发（防御性，正常情况前面已经拦截）
