@@ -88,6 +88,11 @@ pub struct FootprintsListResponse {
     pub has_more: bool,
     pub total_count: Option<i64>,
     pub capacity: Option<i32>,
+    /// 2026-07-08 新增: 扩容单价 (从 global_configs.footprintExpandDiamondCost 读)
+    /// 前端用这个显示"扩容 1 格 = X 钻石"; 用户点扩容按钮时会再拉一次拿最新值
+    /// 不用 skip_serializing_if: 该字段后端必返回 (Some), 让前端始终拿到字段
+    #[serde(rename = "costPerSlot")]
+    pub cost_per_slot: Option<i32>,
 }
 
 /// 发布足迹响应 (FSD v2 10.1)
@@ -487,12 +492,17 @@ pub async fn list_footprints(
     .fetch_one(db)
     .await?;
 
+    // 2026-07-08: 扩容单价从 global_configs.footprintExpandDiamondCost 读 (默认 5)
+    // 前端在容量条上显示 + 点扩容按钮时也会再拉一次拿最新值
+    let cost_per_slot: i32 = read_global_int(db, "footprintExpandDiamondCost", 5).await;
+
     Ok(ApiResponse::success(FootprintsListResponse {
         footprints,
         next_cursor,
         has_more,
         total_count: Some(total_count),
         capacity: Some(capacity),
+        cost_per_slot: Some(cost_per_slot),
     }))
 }
 
