@@ -27,6 +27,10 @@ pub fn configure(cfg: &mut ServiceConfig) {
             .route(web::get().to(sign_in_status)),
     );
     cfg.service(
+        web::resource("/api/groups/{group_id}/sign-in/calendar")
+            .route(web::get().to(get_sign_in_calendar)),
+    );
+    cfg.service(
         web::resource("/api/groups/{group_id}/sign-ins")
             .route(web::get().to(get_sign_ins)),
     );
@@ -116,6 +120,53 @@ pub struct MemberSignStatus {
     pub user_id: i64,
     pub signed: bool,
     pub consecutive_days: i32,
+}
+
+// ===== 2026-07-08 月历签到响应 (前端日历视图用) =====
+
+/// 组成员基本信息 (日历视图的"两半"标识)
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct CalendarMember {
+    pub user_id: i64,
+    pub nick_name: Option<String>,
+    pub avatar: Option<String>,
+}
+
+/// 单人单日签到信息
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct CalendarSigner {
+    pub user_id: i64,
+    /// 签到时间(用于前端判断"第一个签到的"和"第二个签到的")
+    pub signed_at: String,
+}
+
+/// 单日签到状态 (一天内可能 0/1/2 人签了)
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct CalendarDay {
+    pub date: String,
+    pub signers: Vec<CalendarSigner>,
+}
+
+/// 月历签到响应
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct SignInCalendarResponse {
+    /// 传入的月份 (YYYY-MM)
+    pub month: String,
+    pub members: Vec<CalendarMember>,
+    /// 月内每一天 (无签到的日子也会返回, signers 为空数组)
+    pub days: Vec<CalendarDay>,
+}
+
+/// 月历查询参数
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SignInCalendarQuery {
+    /// 年月, 格式 YYYY-MM; 不传默认当前月
+    pub month: Option<String>,
 }
 
 // ========== 处理器 ==========
@@ -288,6 +339,139 @@ pub async fn sign_in_status(
         total_sign_days: total_sign_days as i32,
         today_diamonds,
         daily_checkin_rewards,
+    }))
+}
+
+/// 获取月历签到状态 (2026-07-08 新增)
+///
+/// GET /api/groups/{group_id}/sign-in/calendar?month=2026-07
+///
+/// 返回指定月份内, 每组成员每天的签到情况.
+/// - `members`: 组里所有 ACTIVE 成员 (顺序固定, 前端用来标"两半"是谁)
+/// - `days`: 月内每一天的签到情况, signers 按签到时间升序 (signers[0] = 第一个签到的, signers[1] = 第二个)
+///   前端用这个顺序画"对角线分两半": 上半 = signers[0], 下半 = signers[1]
+/// - `month` 不传 → 默认当前月
+#[utoipa::path(
+    get,
+    path = "/api/groups/{group_id}/sign-in/calendar",
+    tag = "签到",
+    params(
+        ("group_id" = i64, Path, description = "组ID"),
+        ("month" = Option<String>, Query, description = "年月 YYYY-MM, 不传默认当前月")
+    ),
+    responses(
+        (status = 200, description = "获取成功", body = SignInCalendarResponse),
+        (status = 401, description = "未登录"),
+        (status = 403, description = "非组成员"),
+        (status = 500, description = "服务器错误")
+    ),
+    security(("bearer_auth" = []))
+)]
+pub async fn get_sign_in_calendar(
+    state: State<Arc<AppState>>,
+    token: UserToken,
+    _require: RequireGroup,
+    path: ntex::web::types::Path<i64>,
+    query: ntex::web::types::Query<SignInCalendarQuery>,
+) -> Result<impl Responder, CustomError> {
+    let group_id = *path;
+    let db = &state.db_pool;
+
+    // 检查用户是否是组成员
+    let is_member: bool = sqlx::query_scalar::<_, bool>(
+        "SELECT EXISTS(SELECT 1 FROM association_group_members WHERE group_id=$1 AND user_id=$2 AND member_status = 'ACTIVE'::group_member_status_enum)"
+    )
+    .bind(group_id)
+    .bind(token.user_id)
+    .fetch_one(db)
+    .await?;
+    if !is_member {
+        return Err(CustomError::Forbidden("非组成员".into()));
+    }
+
+    // 解析 month 参数, 不传或格式错 → 默认当前月
+    let (year, month) = match query.month.as_deref() {
+        Some(s) if s.len() == 7 && s.chars().nth(4) == Some('-') => {
+            let y: i32 = s[..4].parse().map_err(|_| CustomError::BadRequest("month 格式应为 YYYY-MM".into()))?;
+            let m: u32 = s[5..].parse().map_err(|_| CustomError::BadRequest("month 格式应为 YYYY-MM".into()))?;
+            if !(1..=12).contains(&m) {
+                return Err(CustomError::BadRequest("month 月份必须在 1-12".into()));
+            }
+            (y, m)
+        }
+        _ => {
+            let now = chrono::Utc::now();
+            (now.format("%Y").to_string().parse().unwrap(), now.format("%m").to_string().parse().unwrap())
+        }
+    };
+
+    // 月份起止日期 (用 chrono's NaiveDate 算, 跨年也能算)
+    let start = chrono::NaiveDate::from_ymd_opt(year, month, 1)
+        .ok_or_else(|| CustomError::BadRequest("无效的月份".into()))?;
+    let end = if month == 12 {
+        chrono::NaiveDate::from_ymd_opt(year + 1, 1, 1)
+    } else {
+        chrono::NaiveDate::from_ymd_opt(year, month + 1, 1)
+    }
+    .ok_or_else(|| CustomError::BadRequest("无效的月份".into()))?;
+
+    // 1) 查组成员基本信息 (固定顺序: 按 user_id 升序)
+    let member_rows: Vec<(i64, Option<String>, Option<String>)> = sqlx::query_as(
+        r#"SELECT u.user_id, u.nick_name, u.avatar
+           FROM association_group_members agm
+           JOIN users u ON u.user_id = agm.user_id
+           WHERE agm.group_id = $1 AND agm.member_status = 'ACTIVE'::group_member_status_enum
+           ORDER BY agm.user_id ASC"#
+    )
+    .bind(group_id)
+    .fetch_all(db)
+    .await?;
+
+    let members: Vec<CalendarMember> = member_rows
+        .into_iter()
+        .map(|(uid, nick, ava)| CalendarMember { user_id: uid, nick_name: nick, avatar: ava })
+        .collect();
+
+    // 2) 查月份内的签到记录 (按 sign_date, created_at 排序, 前端用 created_at 判"先/后")
+    let sign_rows: Vec<(i64, chrono::NaiveDate, chrono::DateTime<chrono::Utc>)> = sqlx::query_as(
+        r#"SELECT user_id, sign_date, created_at
+           FROM sign_in_records
+           WHERE group_id = $1 AND sign_date >= $2 AND sign_date < $3
+           ORDER BY sign_date ASC, created_at ASC"#
+    )
+    .bind(group_id)
+    .bind(start)
+    .bind(end)
+    .fetch_all(db)
+    .await?;
+
+    // 3) 按日期 group 起来 (前端要的"按天分")
+    let mut days_map: std::collections::BTreeMap<chrono::NaiveDate, Vec<CalendarSigner>> =
+        std::collections::BTreeMap::new();
+    for (uid, sign_date, signed_at) in sign_rows {
+        days_map
+            .entry(sign_date)
+            .or_default()
+            .push(CalendarSigner {
+                user_id: uid,
+                signed_at: signed_at.to_rfc3339(),
+            });
+    }
+
+    // 4) 生成"月内每一天"的列表 (没签到的日子 signers=[])
+    // 用 BTreeMap 已经是日期升序, 顺序 OK
+    let days: Vec<CalendarDay> = days_map
+        .into_iter()
+        .map(|(date, signers)| CalendarDay {
+            date: date.to_string(),
+            signers,
+        })
+        .collect();
+
+    Ok(ApiResponse::success(SignInCalendarResponse {
+        month: format!("{:04}-{:02}", year, month),
+        members,
+        days,
     }))
 }
 

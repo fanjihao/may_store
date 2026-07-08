@@ -187,6 +187,7 @@ impl Modify for SecurityAddon {
         crate::api::sign_in::routes::sign_in,
         crate::api::sign_in::routes::sign_in_status,
         crate::api::sign_in::routes::get_sign_ins,
+        crate::api::sign_in::routes::get_sign_in_calendar,
         // ==================== Upload (七牛云直传) ====================
         crate::api::upload::routes::get_upload_token,
         crate::api::upload::routes::get_upload_tokens,
