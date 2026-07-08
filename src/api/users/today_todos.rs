@@ -38,6 +38,10 @@ pub struct TodoItem {
     pub subtitle: Option<String>,
     pub ref_id: Option<i64>,
     pub action_url: String,
+    /// 该用户是否需要操作 (true = 你的事, 标红/突出;
+    ///                            false = 等对方, 灰色/等待态)
+    /// 2026-07-08 改: 订单类 todo 双方都返回, 用此字段区分"该我操作"和"等对方"
+    pub is_my_action: bool,
 }
 
 #[derive(Debug, Serialize, ToSchema)]
@@ -74,6 +78,8 @@ struct OrderRow {
     group_name: String,
     /// orders.title 是可空列(VARCHAR(128)), 老数据可能为 NULL
     title: Option<String>,
+    /// 该用户是否需要操作 (见 TodoItem::is_my_action)
+    is_my_action: bool,
 }
 
 struct WishRow {
@@ -154,12 +160,25 @@ pub async fn get_today_todos(
                 }),
                 ref_id: None,
                 action_url: format!("/pages/sign-in/index?groupId={}", r.group_id),
+                is_my_action: true, // 签到永远是用户自己的事
             });
         }
     }
 
     for r in &order_rows {
-        let (t, title) = order_kind_to_todo(&r.kind);
+        // 2026-07-08 改: 文案按"主动/被动"区分
+        //   主动 (is_my_action=true): "1 个订单待接受" / "待完成" / "待确认" — 是你的事
+        //   被动 (is_my_action=false): "等对方接单" / "等对方完成" / "等对方确认" — 看进度用
+        let title = match (r.kind.as_str(), r.is_my_action) {
+            ("ACCEPT", true) => "1 个订单待接单",
+            ("ACCEPT", false) => "1 个订单等对方接单",
+            ("COMPLETE", true) => "1 个订单待完成",
+            ("COMPLETE", false) => "1 个订单等对方完成",
+            ("CONFIRM", true) => "1 个订单待确认",
+            ("CONFIRM", false) => "1 个订单等对方确认",
+            _ => unreachable!("OrderRow.kind must be one of ACCEPT/COMPLETE/CONFIRM"),
+        };
+        let (t, _default_title) = order_kind_to_todo(&r.kind);
         items.push(TodoItem {
             r#type: t,
             priority: 2,
@@ -170,6 +189,7 @@ pub async fn get_today_todos(
             subtitle: Some(r.title.clone().unwrap_or_else(|| "（未命名）".to_string())),
             ref_id: Some(r.ref_id),
             action_url: format!("/pages/orders/detail?id={}", r.ref_id),
+            is_my_action: r.is_my_action,
         });
     }
 
@@ -184,6 +204,7 @@ pub async fn get_today_todos(
             subtitle: Some(r.title.clone()),
             ref_id: Some(r.ref_id),
             action_url: format!("/pages/wishes/detail?id={}", r.ref_id),
+            is_my_action: true, // 履约/协商 (按 SQL 过滤后) 永远是用户该操作的
         });
     }
 
@@ -197,6 +218,7 @@ pub async fn get_today_todos(
             subtitle: None,
             ref_id: None,
             action_url: "/pages/notifications/index".to_string(),
+            is_my_action: true, // 看消息永远是用户自己的事
         });
     }
 
@@ -259,21 +281,34 @@ async fn fetch_sign_in(
 }
 
 async fn fetch_orders(db: &sqlx::PgPool, user_id: i64) -> Result<Vec<OrderRow>, sqlx::Error> {
+    // 2026-07-08 改: 订单 todo 双方都返回, 用 is_my_action 区分"该我操作"和"等对方"
+    //   阶段1 (CREATED/PENDING_ACCEPT): assignee 该接单, 下单人看着等
+    //   阶段2 (ACCEPTED/IN_PROGRESS):   assignee 该完成, 下单人看着等
+    //   阶段3 (PRODUCTION_COMPLETED):   下单人该确认, assignee 看着等
     // 注意:orders 表的创建人列是 user_id(不是 creator_id)。
     let rows = sqlx::query(
         r#"
+        -- 阶段 1: 订单等接单
         SELECT 'ACCEPT' AS kind, o.order_id AS ref_id, o.group_id, g.group_name,
-               o.title, o.created_at
+               o.title, o.created_at,
+               (o.assignee_id = $1) AS is_my_action
         FROM orders o JOIN association_groups g ON g.group_id = o.group_id
-        WHERE o.assignee_id = $1 AND o.status IN ('CREATED'::order_status_enum,'PENDING_ACCEPT'::order_status_enum)
+        WHERE (o.assignee_id = $1 OR o.user_id = $1)
+          AND o.status IN ('CREATED'::order_status_enum,'PENDING_ACCEPT'::order_status_enum)
+          AND o.assignee_id <> o.user_id
         UNION ALL
-        SELECT 'COMPLETE' AS kind, o.order_id, o.group_id, g.group_name, o.title, o.created_at
+        -- 阶段 2: 订单等完成
+        SELECT 'COMPLETE' AS kind, o.order_id, o.group_id, g.group_name, o.title, o.created_at,
+               (o.assignee_id = $1) AS is_my_action
         FROM orders o JOIN association_groups g ON g.group_id = o.group_id
-        WHERE o.assignee_id = $1 AND o.status IN ('ACCEPTED'::order_status_enum,'IN_PROGRESS'::order_status_enum)
+        WHERE (o.assignee_id = $1 OR o.user_id = $1)
+          AND o.status IN ('ACCEPTED'::order_status_enum,'IN_PROGRESS'::order_status_enum)
         UNION ALL
-        SELECT 'CONFIRM' AS kind, o.order_id, o.group_id, g.group_name, o.title, o.created_at
+        -- 阶段 3: 订单等确认
+        SELECT 'CONFIRM' AS kind, o.order_id, o.group_id, g.group_name, o.title, o.created_at,
+               (o.user_id = $1) AS is_my_action
         FROM orders o JOIN association_groups g ON g.group_id = o.group_id
-        WHERE o.user_id = $1
+        WHERE (o.assignee_id = $1 OR o.user_id = $1)
           AND o.status IN ('PRODUCTION_COMPLETED'::order_status_enum,'BREEDER_FINISHED'::order_status_enum)
         ORDER BY created_at ASC
         "#,
@@ -290,6 +325,7 @@ async fn fetch_orders(db: &sqlx::PgPool, user_id: i64) -> Result<Vec<OrderRow>, 
             group_id: r.get("group_id"),
             group_name: r.get("group_name"),
             title: r.get("title"),
+            is_my_action: r.get("is_my_action"),
         })
         .collect())
 }
