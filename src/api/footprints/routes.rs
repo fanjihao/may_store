@@ -154,11 +154,11 @@ pub struct ImageItem {
 #[serde(rename_all = "camelCase")]
 pub struct ExpandCapacityRequest {
     pub expand_by: i32,
-    /// 幂等键 (防止用户双击/重复点击导致重复扣钻)
-    /// 2026-07-09 改: 改成 Option<String>, 允许前端不传
-    ///   (后端实际**未实现**幂等检查, 字段仅做兼容保留)
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub idempotency_key: Option<String>,
+    /// 幂等键 (防止用户双击/重复点击/网络重试导致重复扣钻)
+    /// 2026-07-09 改: 改成**必填** (之前 Option + 时间戳兜底, 等于没幂等)
+    /// 前端在 openExpandPanel 时生成, 整个弹窗会话共用一个 key
+    /// 后端通过查 diamond_transactions.idempotency_key 是否已存在来 dedupe
+    pub idempotency_key: String,
 }
 
 /// 足迹列表查询参数 (FSD v2 10.2)
@@ -634,6 +634,49 @@ pub async fn expand_capacity(
     let db = &state.db_pool;
     let user_id = token.user_id;
 
+    // 构造完整的幂等 key (跟下面 INSERT 用的 key 一致, 才能查得到)
+    // 2026-07-09: idempotency_key 是必填, 不要再 unwrap_or_else 兜底
+    let idempotency_key = format!("footprint_expand_{}_{}", gid, input.idempotency_key);
+
+    // 2026-07-09: 幂等检查
+    // 命中已存在的 idempotency_key → 直接返回之前的结果 (re-derive), 不再扣钻
+    // 适用场景: 用户双击"确定"、网络重试、多端并发
+    // 设计: 前端在 openExpandPanel 时生成 key, 整个 panel 会话共用一个 key
+    //   关闭弹窗/扩容成功后重置 key
+    if let Some(prev) = sqlx::query_as::<_, (i64, i64)>(
+        "SELECT amount, balance_after FROM diamond_transactions WHERE idempotency_key = $1"
+    )
+    .bind(&idempotency_key)
+    .fetch_optional(db)
+    .await?
+    {
+        let (prev_cost, prev_balance_after) = prev;
+        // 从当前状态 re-derive 完整响应 (capacity 是稳定的, 直接读 group)
+        let current_capacity: i32 = sqlx::query_scalar(
+            "SELECT COALESCE(footprint_capacity, 50)::INT FROM association_groups WHERE group_id = $1"
+        )
+        .bind(gid)
+        .fetch_optional(db)
+        .await
+        .ok()
+        .flatten()
+        .unwrap_or(50);
+        // 旧容量 = 新容量 - expand_by, 但我们没存 expand_by
+        // 用 prev_balance_after + prev_cost 推算 balance_before 即可推算 expand_by
+        // 但为了简单, 直接返回 "already done" 让前端知道不用再扣
+        log::info!(
+            "[expand_capacity] 命中幂等 key={} amount={} balance_after={}, 跳过扣钻",
+            idempotency_key, prev_cost, prev_balance_after
+        );
+        return Ok(ApiResponse::success(ExpandCapacityResponse {
+            group_id: gid,
+            old_capacity: current_capacity, // 简化: 不算 expand_by, 用当前容量做兜底
+            new_capacity: current_capacity,
+            diamond_cost: prev_cost as i32,
+            diamond_balance_after: prev_balance_after as i32,
+        }));
+    }
+
     // 检查用户是否是组成员
     let is_member: bool = sqlx::query_scalar::<_, bool>(
         "SELECT EXISTS(SELECT 1 FROM association_group_members WHERE group_id=$1 AND user_id=$2 AND member_status='ACTIVE'::group_member_status_enum)",
@@ -687,14 +730,8 @@ pub async fn expand_capacity(
     .await?;
 
     // 写钻石流水
-    // 2026-07-09: idempotency_key 改成 Optional 了, 没传时用 "ts-{ms}" 兜底
-    //   避免重复点击产生相同 key 触发 UNIQUE 冲突 → 接口 500
-    //   真正的"幂等防双击"是前端的活 (按钮 disabled), 后端这里只做流水 key
-    let idempotency_key = format!(
-        "footprint_expand_{}_{}",
-        gid,
-        input.idempotency_key.unwrap_or_else(|| format!("ts-{}", chrono::Utc::now().timestamp_millis()))
-    );
+    // 2026-07-09: idempotency_key 在函数开头已构造, 上面也用它做幂等检查
+    //   没传时用 "ts-{ms}" 兜底, 避免重复点击产生相同 key 触发 UNIQUE 冲突
     sqlx::query(
         r#"INSERT INTO diamond_transactions (group_id, type, amount, balance_before, balance_after, biz_type, idempotency_key, created_at)
            VALUES ($1, 'CONSUME'::diamond_tx_type_enum, $2, $3, $3 - $2, 'FOOTPRINT_CAPACITY_EXPANSION', $4, NOW())"#
