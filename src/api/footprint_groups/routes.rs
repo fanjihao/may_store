@@ -77,6 +77,9 @@ pub struct ListGroupsQuery {
         ("group_id" = i64, Path, description = "组 ID"),
         ("status" = Option<i16>, Query, description = "1=ACTIVE 0=DISABLED")
     ),
+    responses(
+        (status = 200, description = "获取成功", body = Vec<FootprintGroupOut>)
+    ),
     security(("bearer_auth" = []))
 )]
 pub async fn list_footprint_groups(

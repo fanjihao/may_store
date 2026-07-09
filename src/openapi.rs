@@ -341,6 +341,8 @@ impl Modify for SecurityAddon {
             crate::api::footprints::routes::FootprintsListResponse,
             crate::api::footprints::routes::ExpandCapacityRequest,
             crate::api::footprints::routes::ExpandCapacityResponse,
+            // -- Footprint Groups (2026-07-09 补: 不然前端 TS 类型拿不到 currentCount) --
+            crate::api::footprint_groups::routes::FootprintGroupOut,
             // -- Kitchens (做客厨房) --
             crate::api::kitchens::routes::AccessKitchenResponse,
             crate::api::kitchens::routes::KitchenFoodItem,
