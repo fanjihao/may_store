@@ -154,7 +154,11 @@ pub struct ImageItem {
 #[serde(rename_all = "camelCase")]
 pub struct ExpandCapacityRequest {
     pub expand_by: i32,
-    pub idempotency_key: String,
+    /// 幂等键 (防止用户双击/重复点击导致重复扣钻)
+    /// 2026-07-09 改: 改成 Option<String>, 允许前端不传
+    ///   (后端实际**未实现**幂等检查, 字段仅做兼容保留)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub idempotency_key: Option<String>,
 }
 
 /// 足迹列表查询参数 (FSD v2 10.2)
@@ -683,7 +687,14 @@ pub async fn expand_capacity(
     .await?;
 
     // 写钻石流水
-    let idempotency_key = format!("footprint_expand_{}_{}", gid, input.idempotency_key);
+    // 2026-07-09: idempotency_key 改成 Optional 了, 没传时用 "ts-{ms}" 兜底
+    //   避免重复点击产生相同 key 触发 UNIQUE 冲突 → 接口 500
+    //   真正的"幂等防双击"是前端的活 (按钮 disabled), 后端这里只做流水 key
+    let idempotency_key = format!(
+        "footprint_expand_{}_{}",
+        gid,
+        input.idempotency_key.unwrap_or_else(|| format!("ts-{}", chrono::Utc::now().timestamp_millis()))
+    );
     sqlx::query(
         r#"INSERT INTO diamond_transactions (group_id, type, amount, balance_before, balance_after, biz_type, idempotency_key, created_at)
            VALUES ($1, 'CONSUME'::diamond_tx_type_enum, $2, $3, $3 - $2, 'FOOTPRINT_CAPACITY_EXPANSION', $4, NOW())"#
