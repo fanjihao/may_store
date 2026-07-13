@@ -213,7 +213,7 @@ impl WishService {
         }
 
         let rec = sqlx::query_as::<_, WishRecord>(
-            "UPDATE wishes SET status = 'CLOSED'::feedback_status_enum::wish_status_enum WHERE wish_id = $1 \
+            "UPDATE wishes SET status = 'CLOSED'::wish_status_enum WHERE wish_id = $1 \
              RETURNING wish_id, wish_name, wish_cost, status, created_by, group_id, claimed_by, claimed_at, claim_cost, created_at, updated_at"
         )
         .bind(wish_id)
@@ -734,7 +734,7 @@ impl WishService {
         .await?;
 
         let rec = sqlx::query_as::<_, WishRecord>(
-            "UPDATE wishes SET status = 'CLOSED'::feedback_status_enum::wish_status_enum, closed_at = NOW(), updated_at = NOW() WHERE wish_id = $1 \
+            "UPDATE wishes SET status = 'CLOSED'::wish_status_enum, closed_at = NOW(), updated_at = NOW() WHERE wish_id = $1 \
              RETURNING wish_id, wish_name, wish_cost, status, created_by, group_id, claimed_by, claimed_at, claim_cost, created_at, updated_at, requester_id, fulfiller_id, initial_cost, final_cost, fulfillment_deadline_hours"
         )
         .bind(wish_id)
@@ -805,7 +805,7 @@ impl WishService {
         .await?;
 
         let rec = sqlx::query_as::<_, WishRecord>(
-            "UPDATE wishes SET status = 'CLOSED'::feedback_status_enum::wish_status_enum, closed_at = NOW(), updated_at = NOW() WHERE wish_id = $1 \
+            "UPDATE wishes SET status = 'CLOSED'::wish_status_enum, closed_at = NOW(), updated_at = NOW() WHERE wish_id = $1 \
              RETURNING wish_id, wish_name, wish_cost, status, created_by, group_id, claimed_by, claimed_at, claim_cost, created_at, updated_at, requester_id, fulfiller_id, initial_cost, final_cost, fulfillment_deadline_hours"
         )
         .bind(wish_id)
