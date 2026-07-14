@@ -8,7 +8,7 @@ use sqlx::{PgPool, Row};
 
 use crate::domain::event::{
     EventType, WishAgreementConfirmedPayload, WishClosedPayload,
-    WishNegotiatingPayload, WishSelectedPayload,
+    WishFinishedPayload, WishNegotiatingPayload, WishSelectedPayload,
 };
 use crate::domain::wish::{
     WishCreateInput, WishDeadlineInput, WishFeedbackInput, WishFeedbackRecord,
@@ -270,10 +270,11 @@ impl WishService {
         .execute(db)
         .await?;
 
-        // 更新心愿状态为已完成
+        // 状态保持 CLAIMED —— 由接单人 confirm-completion 才推进到 FINISHED
+        // 这里只读心愿最新状态返回,不改任何字段
         let rec = sqlx::query_as::<_, WishRecord>(
-            "UPDATE wishes SET status = 'FINISHED'::wish_status_enum WHERE wish_id = $1 \
-             RETURNING wish_id, wish_name, wish_cost, status, created_by, group_id, claimed_by, claimed_at, claim_cost, created_at, updated_at"
+            "SELECT wish_id, wish_name, wish_cost, status, created_by, group_id, claimed_by, claimed_at, claim_cost, created_at, updated_at \
+             FROM wishes WHERE wish_id = $1"
         )
         .bind(wish_id)
         .fetch_one(db)
@@ -999,6 +1000,86 @@ impl WishService {
                 group_id: existing.group_id,
                 frozen_amount: points_cost as i32,
                 fulfillment_due_at: fulfillment_due_at.to_rfc3339(),
+                trace_id: None,
+            },
+            Some(user_id),
+            Some(existing.group_id),
+            Some("wish"),
+            Some(wish_id),
+        )
+        .await;
+
+        Ok(rec)
+    }
+
+    /// 接单人确认履约完成 — 把心愿从 CLAIMED 推到 FINISHED
+    ///
+    /// 业务流:履约人提交打卡后(状态保持 CLAIMED),由接单人(requester_id)
+    /// 在 wishDetail 页面点「确认完成」,才推进到 FINISHED。
+    ///
+    /// 积分在 select_wish 阶段已 FREEZE,FINISHED 不再扣减 —— 走 reject_wish 的
+    /// UNFREEZE 路径会让积分回到余额;FINISHED 不走 UNFREEZE,相当于「正式扣下」。
+    pub async fn confirm_wish_completion(
+        db: &PgPool,
+        user_id: i64,
+        wish_id: i64,
+    ) -> Result<WishRecord, CustomError> {
+        let existing = sqlx::query_as::<_, WishRecord>(
+            "SELECT wish_id, wish_name, wish_cost, status, created_by, group_id, claimed_by, claimed_at, claim_cost, created_at, updated_at, \
+             requester_id, fulfiller_id, initial_cost, final_cost, fulfillment_deadline_hours FROM wishes WHERE wish_id = $1"
+        )
+        .bind(wish_id)
+        .fetch_optional(db)
+        .await?
+        .ok_or_else(|| CustomError::NotFound("心愿不存在".into()))?;
+
+        // 权限:只有接单人(requester_id)能确认完成
+        let requester_id = existing.requester_id.unwrap_or(existing.created_by);
+        if user_id != requester_id {
+            return Err(CustomError::Forbidden(
+                "只有接单人可以确认完成".into(),
+            ));
+        }
+
+        // 状态:必须是 CLAIMED
+        if existing.status != WishStatus::Claimed {
+            return Err(CustomError::BadRequest(
+                "只有履约中的心愿可以确认完成".into(),
+            ));
+        }
+
+        // 必须有打卡记录(履约人必须先提交打卡)
+        let feedback_exists: bool = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM wish_feedbacks WHERE wish_id = $1)"
+        )
+        .bind(wish_id)
+        .fetch_one(db)
+        .await?;
+        if !feedback_exists {
+            return Err(CustomError::BadRequest(
+                "履约人尚未提交打卡,无法确认完成".into(),
+            ));
+        }
+
+        let rec = sqlx::query_as::<_, WishRecord>(
+            "UPDATE wishes SET status = 'FINISHED'::wish_status_enum, updated_at = NOW() WHERE wish_id = $1 AND status = 'CLAIMED'::wish_status_enum \
+             RETURNING wish_id, wish_name, wish_cost, status, created_by, group_id, claimed_by, claimed_at, claim_cost, created_at, updated_at, \
+             requester_id, fulfiller_id, initial_cost, final_cost, fulfillment_deadline_hours"
+        )
+        .bind(wish_id)
+        .fetch_one(db)
+        .await?;
+
+        let deducted_amount = existing.final_cost.unwrap_or(existing.wish_cost);
+        let _ = EventPublisher::publish(
+            db,
+            EventType::WishFinished,
+            WishFinishedPayload {
+                wish_id,
+                requester_id,
+                fulfiller_id: existing.fulfiller_id.unwrap_or(0),
+                group_id: existing.group_id,
+                deducted_amount,
                 trace_id: None,
             },
             Some(user_id),

@@ -65,6 +65,9 @@ pub fn configure(cfg: &mut ServiceConfig) {
     cfg.service(
         web::resource("/api/wishes/{wish_id}/checkins").route(web::get().to(get_wish_checkins)), // FSD v2 7.12 获取打卡记录
     );
+    cfg.service(
+        web::resource("/api/wishes/{wish_id}/confirm-completion").route(web::post().to(wish_confirm_completion)), // FSD v2 7.13 接单人确认完成
+    );
 }
 
 // ========== 请求/响应结构 ==========
@@ -1033,6 +1036,34 @@ pub async fn wish_select(
 ) -> Result<impl Responder, CustomError> {
     let wish_id = *id;
     let out = WishService::select_wish(&state.db_pool, user_token.user_id, wish_id).await?;
+    Ok(ApiResponse::success(out))
+}
+
+/// 接单人确认履约完成 — 心愿从 CLAIMED 推到 FINISHED
+/// POST /api/wishes/{wish_id}/confirm-completion
+/// FSD v2 7.12
+#[utoipa::path(
+    post,
+    path = "/api/wishes/{wish_id}/confirm-completion",
+    tag = "心愿",
+    params(("wish_id" = i64, Path, description = "心愿ID")),
+    responses(
+        (status = 200, description = "确认完成", body = WishOut),
+        (status = 400, description = "状态不允许或履约人未提交打卡"),
+        (status = 403, description = "只有接单人可以确认完成"),
+        (status = 404, description = "心愿不存在")
+    ),
+    security(("bearer_auth" = []))
+)]
+pub async fn wish_confirm_completion(
+    user_token: UserToken,
+    _require: RequireGroup,
+    state: State<Arc<AppState>>,
+    id: Path<i64>,
+) -> Result<impl Responder, CustomError> {
+    let wish_id = *id;
+    let out =
+        WishService::confirm_wish_completion(&state.db_pool, user_token.user_id, wish_id).await?;
     Ok(ApiResponse::success(out))
 }
 

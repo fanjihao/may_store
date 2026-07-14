@@ -221,7 +221,7 @@ pub async fn complete_order(
     params(("order_id" = i64, Path, description = "订单ID")),
     request_body = OrderConfirmInput,
     responses(
-        (status = 200, description = "确认成功"),
+        (status = 200, description = "确认成功", body = OrderOutNew),
         (status = 400, description = "订单状态不允许确认"),
         (status = 404, description = "订单不存在")
     ),

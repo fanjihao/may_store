@@ -181,6 +181,30 @@ pub struct OrderOutNew {
     pub group_info: Option<GroupInfoSimple>,
     pub receiver_nick_name: Option<String>,
     pub receiver_avatar: Option<String>,
+    /// 当日上限触发的截断提示 —— 任意一类型(积分/经验)被截断时,前端展示给用户看
+    /// None 表示本次发放未受上限影响
+    pub daily_cap_warning: Option<DailyCapWarning>,
+}
+
+/// 每日上限触发的截断提示
+/// - granted: 实际发了多少
+/// - truncated: 少发了多少 (delta - granted)
+/// - daily_cap: 当日上限(发完时参考用)
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct DailyCapWarning {
+    /// 爱心积分截断信息
+    pub points: Option<DailyCapItem>,
+    /// 组经验截断信息
+    pub exp: Option<DailyCapItem>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct DailyCapItem {
+    pub granted: i64,
+    pub truncated: i64,
+    pub daily_cap: i64,
 }
 
 /// 组简要信息
@@ -214,6 +238,7 @@ impl From<OrderRecord> for OrderOutNew {
             group_info: None,
             receiver_nick_name: None,
             receiver_avatar: None,
+            daily_cap_warning: None,
         }
     }
 }

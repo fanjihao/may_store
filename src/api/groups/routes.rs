@@ -274,8 +274,16 @@ async fn swap_role(
         .unwrap_or(false);
 
     // 检查是否有未完结在途订单
+    // 终态集合与 swap_role_check 对齐:把同义拼写(COMPLETED/CONFIRMED_COMPLETED、CANCELED/CANCELLED、CONFIRMED_UNFINISHED/CONFIRMED_INCOMPLETE)
+    // 和 SYSTEM_CLOSED / BREEDER_CLOSED 都视为已关闭,避免预检和实操两个接口判定不一致
     let pending_orders: i64 = sqlx::query_scalar::<_, i64>(
-        "SELECT COUNT(*) FROM orders WHERE group_id=$1 AND status NOT IN ('CONFIRMED_COMPLETED', 'CONFIRMED_INCOMPLETE', 'REJECTED', 'CANCELLED', 'TIMEOUT')"
+        "SELECT COUNT(*) FROM orders WHERE group_id=$1 AND status NOT IN (\
+            'CONFIRMED_COMPLETED','COMPLETED',\
+            'CONFIRMED_INCOMPLETE','CONFIRMED_UNFINISHED',\
+            'REJECTED','CANCELLED','CANCELED',\
+            'SYSTEM_CLOSED','BREEDER_CLOSED',\
+            'TIMEOUT'\
+        )"
     )
     .bind(gid)
     .fetch_one(&mut *tx)
@@ -1506,6 +1514,7 @@ async fn swap_role_check(
     };
 
     // Q2-Q4 并行
+    // 终态集合与 swap_role 实际接口对齐 —— 避免预检通过但实际被拦的体验割裂
     let (active_orders, pending_wishes, frozen_points): (i64, i64, i64) = tokio::try_join!(
         sqlx::query_scalar::<_, i64>(
             r#"SELECT COUNT(*) FROM orders
@@ -1513,7 +1522,7 @@ async fn swap_role_check(
                  AND status NOT IN ('CONFIRMED_COMPLETED','COMPLETED',
                                     'CONFIRMED_INCOMPLETE','CONFIRMED_UNFINISHED',
                                     'REJECTED','CANCELLED','CANCELED',
-                                    'TIMEOUT','SYSTEM_CLOSED','BREEDER_CLOSED')"#,
+                                    'SYSTEM_CLOSED','BREEDER_CLOSED','TIMEOUT')"#,
         )
         .bind(gid)
         .fetch_one(db),
@@ -1521,7 +1530,16 @@ async fn swap_role_check(
             if ignore_ongoing_wish {
                 return Ok::<i64, sqlx::Error>(0);
             }
-            let n: i64 = sqlx::query_scalar(
+            // 与 swap_role 对齐:既要查「协商中」(全组 DRAFT/NEGOTIATING),
+            // 也要查「在途心愿」(自己作为 selected_by/fulfiller_id 的 CLAIMED)
+            let n_negotiating: i64 = sqlx::query_scalar(
+                r#"SELECT COUNT(*) FROM wishes
+                   WHERE group_id = $1 AND status IN ('DRAFT'::wish_status_enum, 'NEGOTIATING'::wish_status_enum)"#,
+            )
+            .bind(gid)
+            .fetch_one(db)
+            .await?;
+            let n_claimed: i64 = sqlx::query_scalar(
                 r#"SELECT COUNT(*) FROM wishes
                    WHERE group_id = $1 AND status = 'CLAIMED'::wish_status_enum
                      AND (selected_by = $2 OR fulfiller_id = $2)"#,
@@ -1530,7 +1548,7 @@ async fn swap_role_check(
             .bind(user_id)
             .fetch_one(db)
             .await?;
-            Ok(n)
+            Ok(n_negotiating + n_claimed)
         },
         sqlx::query_scalar::<_, i64>(
             // SUM 在 PostgreSQL 返回 NUMERIC,不是 BIGINT,直接解码 i64 会炸
@@ -1550,10 +1568,34 @@ async fn swap_role_check(
     // 拼装 reasons
     let mut reasons: Vec<String> = Vec::new();
     if active_orders > 0 {
-        reasons.push(format!("存在 {} 个未完结订单", active_orders));
+        reasons.push(format!("存在 {} 个未完结清单", active_orders));
     }
     if pending_wishes > 0 && !ignore_ongoing_wish {
-        reasons.push(format!("存在 {} 个在途心愿", pending_wishes));
+        // pending_wishes 已经合并了「协商中」+「在途」两类,文案分情况说明
+        let negotiating_n: i64 = sqlx::query_scalar(
+            r#"SELECT COUNT(*) FROM wishes
+               WHERE group_id = $1 AND status IN ('DRAFT'::wish_status_enum, 'NEGOTIATING'::wish_status_enum)"#,
+        )
+        .bind(gid)
+        .fetch_one(db)
+        .await
+        .unwrap_or(0);
+        let claimed_n: i64 = sqlx::query_scalar(
+            r#"SELECT COUNT(*) FROM wishes
+               WHERE group_id = $1 AND status = 'CLAIMED'::wish_status_enum
+                 AND (selected_by = $2 OR fulfiller_id = $2)"#,
+        )
+        .bind(gid)
+        .bind(user_id)
+        .fetch_one(db)
+        .await
+        .unwrap_or(0);
+        if negotiating_n > 0 {
+            reasons.push(format!("存在 {} 个协商中的心愿(请先同意或拒绝)", negotiating_n));
+        }
+        if claimed_n > 0 {
+            reasons.push(format!("存在 {} 个在途心愿(已兑换未确认完成)", claimed_n));
+        }
     }
     if frozen_points > 0 {
         reasons.push(format!("有 {} 冻结积分未处理", frozen_points));

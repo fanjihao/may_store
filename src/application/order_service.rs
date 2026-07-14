@@ -258,6 +258,7 @@ impl OrderService {
             group_info: None,
             receiver_nick_name: None,
             receiver_avatar: None,
+            daily_cap_warning: None,
         })
     }
 
@@ -447,6 +448,7 @@ impl OrderService {
                 group_info,
                 receiver_nick_name: db_guest_nick_name,
                 receiver_avatar: db_guest_avatar,
+                daily_cap_warning: None,
             };
             if out.guest_id.is_none() && out.is_guest {
                 out.guest_id = Some(out.user_id);
@@ -634,6 +636,7 @@ impl OrderService {
                 group_info,
                 receiver_nick_name: db_guest_nick_name,
                 receiver_avatar: db_guest_avatar,
+                daily_cap_warning: None,
             };
             if out.guest_id.is_none() && out.is_guest {
                 out.guest_id = Some(out.user_id);
@@ -775,6 +778,7 @@ impl OrderService {
             }),
             receiver_nick_name: db_receiver_nick_name,
             receiver_avatar: db_receiver_avatar,
+            daily_cap_warning: None,
         };
         if out.guest_id.is_none() && out.is_guest {
             out.guest_id = Some(out.user_id);
@@ -927,6 +931,9 @@ impl OrderService {
         // 用 Option 包住是因为只有积分/经验真的变动时才需要推
         let mut push_love_point: Option<(i64, i32, String, Option<i64>)> = None;
         let mut push_group_exp: Option<(i64, i64, String)> = None;
+        // 每日上限截断提示 —— 完成订单触达上限时返回给前端展示
+        // 仅在 ConfirmedCompleted 时计算,其他状态不发奖励,谈不上截断
+        let mut daily_cap_warning: Option<crate::domain::order::entities::DailyCapWarning> = None;
         // 当前订单状态对应的积分事件 reason
         let love_point_reason = match input.to_status {
             OrderStatus::Cancelled => "order_cancelled",
@@ -958,6 +965,7 @@ impl OrderService {
                 //   仅对正向奖励 (delta > 0) 生效; 扣分 (delta < 0) 不受上限影响
                 //   超额部分直接截断, 不报错 (订单流程照常)
                 let mut effective_delta = delta;
+                let mut points_cap_warning: Option<crate::domain::order::entities::DailyCapItem> = None;
                 if delta > 0 {
                     let base_cap = read_global_int(&mut tx, "dailyLovePointLimit", 100).await;
                     let level_step =
@@ -980,6 +988,14 @@ impl OrderService {
                     } else if (delta as i64) > room_left {
                         // 部分超出, 只发剩下的额度
                         effective_delta = room_left as i32;
+                    }
+                    // 记录截断提示 —— 仅当本次实际发的 < 原计划时记
+                    if (effective_delta as i64) < (delta as i64) {
+                        points_cap_warning = Some(crate::domain::order::entities::DailyCapItem {
+                            granted: effective_delta as i64,
+                            truncated: (delta as i64) - (effective_delta as i64),
+                            daily_cap: actual_cap as i64,
+                        });
                     }
                 }
 
@@ -1028,6 +1044,16 @@ impl OrderService {
                         ));
                     }
                 }
+                // 把本次的截断信息(若有)累加到外层 warning
+                if let Some(p) = points_cap_warning {
+                    let entry = daily_cap_warning.get_or_insert_with(
+                        || crate::domain::order::entities::DailyCapWarning {
+                            points: None,
+                            exp: None,
+                        },
+                    );
+                    entry.points = Some(p);
+                }
             }
         }
 
@@ -1068,6 +1094,21 @@ impl OrderService {
                     } else {
                         (exp_grant as i64).min(exp_room_left)
                     };
+
+                    // 记录截断提示 —— 仅当实际发的 < 原计划时记
+                    if effective_exp_grant < (exp_grant as i64) {
+                        let entry = daily_cap_warning.get_or_insert_with(
+                            || crate::domain::order::entities::DailyCapWarning {
+                                points: None,
+                                exp: None,
+                            },
+                        );
+                        entry.exp = Some(crate::domain::order::entities::DailyCapItem {
+                            granted: effective_exp_grant,
+                            truncated: (exp_grant as i64) - effective_exp_grant,
+                            daily_cap: actual_exp_cap as i64,
+                        });
+                    }
 
                     if effective_exp_grant > 0 {
                         let new_exp = current_exp + effective_exp_grant;
@@ -1268,6 +1309,7 @@ impl OrderService {
             group_info: None,
             receiver_nick_name: None,
             receiver_avatar: None,
+            daily_cap_warning,
         })
     }
 

@@ -145,6 +145,7 @@ impl Modify for SecurityAddon {
         crate::api::wishes::routes::submit_feedback,
         crate::api::wishes::routes::wish_close,
         crate::api::wishes::routes::wish_expire,
+        crate::api::wishes::routes::wish_confirm_completion,
         crate::api::wishes::routes::get_wish_checkins,
         crate::api::wishes::routes::pending_fulfillment,
         // ==================== Admin (后台管理) ====================
