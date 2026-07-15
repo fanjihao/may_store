@@ -953,6 +953,26 @@ impl WishService {
             .execute(&mut *tx)
             .await?;
 
+        // 同步 user_group_points —— 冻结语义:
+        //   available_love_point 减少(等于新的 users.love_point)
+        //   frozen_love_point    增加 (= 本次冻结金额)
+        //   love_point (legacy)  = available_love_point
+        sqlx::query(
+            "INSERT INTO user_group_points (user_id, group_id, available_love_point, love_point, frozen_love_point, updated_at) \
+             VALUES ($1, $2, $3, $3, $4, NOW()) \
+             ON CONFLICT (user_id, group_id) DO UPDATE \
+             SET available_love_point = $3, \
+                 love_point = $3, \
+                 frozen_love_point = user_group_points.frozen_love_point + $4, \
+                 updated_at = NOW()"
+        )
+        .bind(user_id)
+        .bind(existing.group_id)
+        .bind(available_after as i64)
+        .bind(points_cost as i64)
+        .execute(&mut *tx)
+        .await?;
+
         // 写积分流水(冻结) - biz_type 统一为 'wish'
         sqlx::query(
             "INSERT INTO love_point_transactions (user_id, group_id, type, amount, available_before, available_after, frozen_before, frozen_after, biz_type, biz_id, trace_id, created_at) \

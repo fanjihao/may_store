@@ -701,138 +701,48 @@ pub async fn list_group_wishes(
         None
     };
 
-    // ========== 聚合统计:与列表查询保持相同的过滤条件 ==========
-    // 不带分页/游标,只关心过滤后的总量与分状态计数
-    let counts_row = match (scope_filter, status_filter, role_filter) {
-        (Some(_sc), Some(s), Some(r)) => {
-            let col = if r == "REQUESTER" { "requester_id" } else { "fulfiller_id" };
-            let sql = format!(
-                r#"SELECT
-                      COUNT(*)::BIGINT AS total,
-                      COUNT(*) FILTER (WHERE w.status = 'NEGOTIATING'::wish_status_enum)::BIGINT AS negotiating,
-                      COUNT(*) FILTER (WHERE w.status = 'CREATED'::wish_status_enum)::BIGINT AS unlocked,
-                      COUNT(*) FILTER (WHERE w.status = 'CLAIMED'::wish_status_enum)::BIGINT AS claimed,
-                      COUNT(*) FILTER (WHERE w.status = 'FINISHED'::wish_status_enum)::BIGINT AS finished,
-                      COUNT(*) FILTER (WHERE w.status IN ('EXPIRED'::wish_status_enum,'CLOSED'::wish_status_enum))::BIGINT AS closed
-                   FROM wishes w
-                   WHERE w.group_id = $1 AND w.status = $2::wish_status_enum AND w.{} = $3
-                     AND (w.created_by = $4 OR w.fulfiller_id = $4)"#,
-                col
-            );
-            sqlx::query(&sql)
-                .bind(gid).bind(s).bind(user_token.user_id).bind(user_token.user_id)
-                .fetch_one(db).await?
-        }
-        (Some(_sc), Some(s), None) => sqlx::query(
-            r#"SELECT
-                  COUNT(*)::BIGINT AS total,
-                  COUNT(*) FILTER (WHERE w.status = 'NEGOTIATING'::wish_status_enum)::BIGINT AS negotiating,
-                  COUNT(*) FILTER (WHERE w.status = 'CREATED'::wish_status_enum)::BIGINT AS unlocked,
-                  COUNT(*) FILTER (WHERE w.status = 'CLAIMED'::wish_status_enum)::BIGINT AS claimed,
-                  COUNT(*) FILTER (WHERE w.status = 'FINISHED'::wish_status_enum)::BIGINT AS finished,
-                  COUNT(*) FILTER (WHERE w.status IN ('EXPIRED'::wish_status_enum,'CLOSED'::wish_status_enum))::BIGINT AS closed
-               FROM wishes w
-               WHERE w.group_id = $1 AND w.status = $2::wish_status_enum
-                 AND (w.created_by = $3 OR w.fulfiller_id = $3)"#,
-        )
-        .bind(gid).bind(s).bind(user_token.user_id)
-        .fetch_one(db).await?,
-        (Some(_sc), None, Some(r)) => {
-            let col = if r == "REQUESTER" { "requester_id" } else { "fulfiller_id" };
-            let sql = format!(
-                r#"SELECT
-                      COUNT(*)::BIGINT AS total,
-                      COUNT(*) FILTER (WHERE w.status = 'NEGOTIATING'::wish_status_enum)::BIGINT AS negotiating,
-                      COUNT(*) FILTER (WHERE w.status = 'CREATED'::wish_status_enum)::BIGINT AS unlocked,
-                      COUNT(*) FILTER (WHERE w.status = 'CLAIMED'::wish_status_enum)::BIGINT AS claimed,
-                      COUNT(*) FILTER (WHERE w.status = 'FINISHED'::wish_status_enum)::BIGINT AS finished,
-                      COUNT(*) FILTER (WHERE w.status IN ('EXPIRED'::wish_status_enum,'CLOSED'::wish_status_enum))::BIGINT AS closed
-                   FROM wishes w
-                   WHERE w.group_id = $1 AND w.{} = $2
-                     AND (w.created_by = $3 OR w.fulfiller_id = $3)"#,
-                col
-            );
-            sqlx::query(&sql)
-                .bind(gid).bind(user_token.user_id).bind(user_token.user_id)
-                .fetch_one(db).await?
-        }
-        (Some(_sc), None, None) => sqlx::query(
-            r#"SELECT
-                  COUNT(*)::BIGINT AS total,
-                  COUNT(*) FILTER (WHERE w.status = 'NEGOTIATING'::wish_status_enum)::BIGINT AS negotiating,
-                  COUNT(*) FILTER (WHERE w.status = 'CREATED'::wish_status_enum)::BIGINT AS unlocked,
-                  COUNT(*) FILTER (WHERE w.status = 'CLAIMED'::wish_status_enum)::BIGINT AS claimed,
-                  COUNT(*) FILTER (WHERE w.status = 'FINISHED'::wish_status_enum)::BIGINT AS finished,
-                  COUNT(*) FILTER (WHERE w.status IN ('EXPIRED'::wish_status_enum,'CLOSED'::wish_status_enum))::BIGINT AS closed
-               FROM wishes w
-               WHERE w.group_id = $1
-                 AND (w.created_by = $2 OR w.fulfiller_id = $2)"#,
-        )
-        .bind(gid).bind(user_token.user_id)
-        .fetch_one(db).await?,
-        (None, Some(s), Some(r)) => {
-            let col = if r == "REQUESTER" { "requester_id" } else { "fulfiller_id" };
-            let sql = format!(
-                r#"SELECT
-                      COUNT(*)::BIGINT AS total,
-                      COUNT(*) FILTER (WHERE w.status = 'NEGOTIATING'::wish_status_enum)::BIGINT AS negotiating,
-                      COUNT(*) FILTER (WHERE w.status = 'CREATED'::wish_status_enum)::BIGINT AS unlocked,
-                      COUNT(*) FILTER (WHERE w.status = 'CLAIMED'::wish_status_enum)::BIGINT AS claimed,
-                      COUNT(*) FILTER (WHERE w.status = 'FINISHED'::wish_status_enum)::BIGINT AS finished,
-                      COUNT(*) FILTER (WHERE w.status IN ('EXPIRED'::wish_status_enum,'CLOSED'::wish_status_enum))::BIGINT AS closed
-                   FROM wishes w
-                   WHERE w.group_id = $1 AND w.status = $2::wish_status_enum AND w.{} = $3"#,
-                col
-            );
-            sqlx::query(&sql)
-                .bind(gid).bind(s).bind(user_token.user_id)
-                .fetch_one(db).await?
-        }
-        (None, Some(s), None) => sqlx::query(
-            r#"SELECT
-                  COUNT(*)::BIGINT AS total,
-                  COUNT(*) FILTER (WHERE w.status = 'NEGOTIATING'::wish_status_enum)::BIGINT AS negotiating,
-                  COUNT(*) FILTER (WHERE w.status = 'CREATED'::wish_status_enum)::BIGINT AS unlocked,
-                  COUNT(*) FILTER (WHERE w.status = 'CLAIMED'::wish_status_enum)::BIGINT AS claimed,
-                  COUNT(*) FILTER (WHERE w.status = 'FINISHED'::wish_status_enum)::BIGINT AS finished,
-                  COUNT(*) FILTER (WHERE w.status IN ('EXPIRED'::wish_status_enum,'CLOSED'::wish_status_enum))::BIGINT AS closed
-               FROM wishes w
-               WHERE w.group_id = $1 AND w.status = $2::wish_status_enum"#,
-        )
-        .bind(gid).bind(s)
-        .fetch_one(db).await?,
-        (None, None, Some(r)) => {
-            let col = if r == "REQUESTER" { "requester_id" } else { "fulfiller_id" };
-            let sql = format!(
-                r#"SELECT
-                      COUNT(*)::BIGINT AS total,
-                      COUNT(*) FILTER (WHERE w.status = 'NEGOTIATING'::wish_status_enum)::BIGINT AS negotiating,
-                      COUNT(*) FILTER (WHERE w.status = 'CREATED'::wish_status_enum)::BIGINT AS unlocked,
-                      COUNT(*) FILTER (WHERE w.status = 'CLAIMED'::wish_status_enum)::BIGINT AS claimed,
-                      COUNT(*) FILTER (WHERE w.status = 'FINISHED'::wish_status_enum)::BIGINT AS finished,
-                      COUNT(*) FILTER (WHERE w.status IN ('EXPIRED'::wish_status_enum,'CLOSED'::wish_status_enum))::BIGINT AS closed
-                   FROM wishes w
-                   WHERE w.group_id = $1 AND w.{} = $2"#,
-                col
-            );
-            sqlx::query(&sql)
-                .bind(gid).bind(user_token.user_id)
-                .fetch_one(db).await?
-        }
-        (None, None, None) => sqlx::query(
-            r#"SELECT
-                  COUNT(*)::BIGINT AS total,
-                  COUNT(*) FILTER (WHERE w.status = 'NEGOTIATING'::wish_status_enum)::BIGINT AS negotiating,
-                  COUNT(*) FILTER (WHERE w.status = 'CREATED'::wish_status_enum)::BIGINT AS unlocked,
-                  COUNT(*) FILTER (WHERE w.status = 'CLAIMED'::wish_status_enum)::BIGINT AS claimed,
-                  COUNT(*) FILTER (WHERE w.status = 'FINISHED'::wish_status_enum)::BIGINT AS finished,
-                  COUNT(*) FILTER (WHERE w.status IN ('EXPIRED'::wish_status_enum,'CLOSED'::wish_status_enum))::BIGINT AS closed
-               FROM wishes w
-               WHERE w.group_id = $1"#,
-        )
-        .bind(gid)
-        .fetch_one(db).await?,
-    };
+    // ========== 聚合统计 ==========
+    // counts 是顶部 chip 用的总览数字,**不带 status 过滤** —— 用户切 tab 时
+    // 列表会变,但 chip 上的统计数字始终反映"全组我相关的所有心愿"分布,
+    // 否则每切一次 tab 所有数字都跟着跳,看着很乱
+    //
+    // 仍然受 scope (mine) 和 role (REQUESTER/FULFILLER) 影响:这些是用户身份维度
+    let mut counts_sql = String::from(
+        "SELECT \
+             COUNT(*)::BIGINT AS total, \
+             COUNT(*) FILTER (WHERE w.status = 'NEGOTIATING'::wish_status_enum)::BIGINT AS negotiating, \
+             COUNT(*) FILTER (WHERE w.status = 'CREATED'::wish_status_enum)::BIGINT AS unlocked, \
+             COUNT(*) FILTER (WHERE w.status = 'CLAIMED'::wish_status_enum)::BIGINT AS claimed, \
+             COUNT(*) FILTER (WHERE w.status = 'FINISHED'::wish_status_enum)::BIGINT AS finished, \
+             COUNT(*) FILTER (WHERE w.status IN ('EXPIRED'::wish_status_enum,'CLOSED'::wish_status_enum))::BIGINT AS closed \
+         FROM wishes w \
+         WHERE w.group_id = $1",
+    );
+    let mut counts_query = sqlx::query(&counts_sql).bind(gid);
+    if scope_filter.is_some() {
+        // (created_by = $X OR fulfiller_id = $X) —— 用同一个占位符两次
+        counts_sql.push_str(&format!(" AND (w.created_by = $2 OR w.fulfiller_id = $2)"));
+        counts_query = sqlx::query(&counts_sql).bind(gid).bind(user_token.user_id);
+    }
+    if let Some(r) = role_filter {
+        let col = if r == "REQUESTER" {
+            "requester_id"
+        } else {
+            "fulfiller_id"
+        };
+        // 继续累加占位符编号,scope=mine 时是 $2,这里再 +1 = $3
+        let next_idx = if scope_filter.is_some() { 3 } else { 2 };
+        counts_sql.push_str(&format!(" AND w.{} = ${}", col, next_idx));
+        counts_query = if scope_filter.is_some() {
+            sqlx::query(&counts_sql)
+                .bind(gid)
+                .bind(user_token.user_id)
+                .bind(user_token.user_id)
+        } else {
+            sqlx::query(&counts_sql).bind(gid).bind(user_token.user_id)
+        };
+    }
+    let counts_row = counts_query.fetch_one(db).await?;
 
     let counts = crate::domain::wish::entities::WishStatusCounts {
         negotiating: counts_row.get::<i64, _>("negotiating"),

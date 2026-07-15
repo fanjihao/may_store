@@ -840,6 +840,9 @@ CREATE TABLE love_point_transactions (
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 COMMENT ON TABLE love_point_transactions IS '爱心积分流水 - 所有积分变动必须写流水';
+-- 部分唯一索引:NULL 视为互不重复,只有非 NULL 值全局唯一
+-- 代码里 ON CONFLICT (idempotency_key) 必须带 WHERE idempotency_key IS NOT NULL,否则报 42P10
+-- 详见 CLAUDE.md「PostgreSQL 部分唯一索引 + ON CONFLICT 强制对齐」
 CREATE UNIQUE INDEX idx_lpt_idempotency ON love_point_transactions(idempotency_key) WHERE idempotency_key IS NOT NULL;
 CREATE INDEX idx_lpt_user_group_created ON love_point_transactions(user_id, group_id, created_at);
 
@@ -860,6 +863,9 @@ CREATE TABLE group_exp_transactions (
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 COMMENT ON TABLE group_exp_transactions IS '组经验流水 - 含等级变化';
+-- 部分唯一索引:NULL 视为互不重复,只有非 NULL 值全局唯一
+-- 代码里 ON CONFLICT (idempotency_key) 必须带 WHERE idempotency_key IS NOT NULL,否则报 42P10
+-- 详见 CLAUDE.md「PostgreSQL 部分唯一索引 + ON CONFLICT 强制对齐」
 CREATE UNIQUE INDEX idx_get_idempotency ON group_exp_transactions(idempotency_key) WHERE idempotency_key IS NOT NULL;
 CREATE INDEX idx_get_group_created ON group_exp_transactions(group_id, created_at);
 
@@ -882,6 +888,9 @@ CREATE TABLE diamond_transactions (
     CONSTRAINT chk_dt_subject CHECK (group_id IS NOT NULL OR user_id IS NOT NULL)
 );
 COMMENT ON TABLE diamond_transactions IS '钻石流水(组级 + 个人级)';
+-- 部分唯一索引:NULL 视为互不重复,只有非 NULL 值全局唯一
+-- 代码里 ON CONFLICT (idempotency_key) 必须带 WHERE idempotency_key IS NOT NULL,否则报 42P10
+-- 详见 CLAUDE.md「PostgreSQL 部分唯一索引 + ON CONFLICT 强制对齐」
 CREATE UNIQUE INDEX idx_dt_idempotency ON diamond_transactions(idempotency_key) WHERE idempotency_key IS NOT NULL;
 CREATE INDEX idx_dt_group_created ON diamond_transactions(group_id, created_at);
 

@@ -1031,6 +1031,19 @@ impl OrderService {
                             .bind(balance_after)
                             .execute(&mut *tx)
                             .await?;
+                        // 同步 user_group_points —— 1v1 模型下,可用余额应与 users.love_point 一致
+                        // frozen 暂时不动(冻结路径单独处理)
+                        sqlx::query(
+                            "INSERT INTO user_group_points (user_id, group_id, available_love_point, love_point, frozen_love_point, updated_at) \
+                             VALUES ($1, $2, $3, $3, 0, NOW()) \
+                             ON CONFLICT (user_id, group_id) DO UPDATE \
+                             SET available_love_point = $3, love_point = $3, updated_at = NOW()"
+                        )
+                        .bind(receiver_user_id)
+                        .bind(group_id)
+                        .bind(balance_after as i64)
+                        .execute(&mut *tx)
+                        .await?;
                         if effective_delta > 0 {
                             order.points_reward = effective_delta;
                         }
@@ -1127,12 +1140,14 @@ impl OrderService {
                             .unwrap_or(levels.first().map(|(lv, _)| *lv).unwrap_or(1));
 
                         // 4) 写流水 (幂等键防重)
+                        // v3.sql 中 idx_get_idempotency 是部分唯一索引:WHERE idempotency_key IS NOT NULL
+                        // PostgreSQL 要求 ON CONFLICT 必须带上与索引完全一致的 WHERE 谓词,否则报 42P10
                         let idem_key = format!("order:{}:exp", order.order_id);
                         sqlx::query(
                             r#"INSERT INTO group_exp_transactions
                                (group_id, type, amount, exp_before, exp_after, level_before, level_after, biz_type, biz_id, idempotency_key)
                                VALUES ($1, 'EARN'::group_exp_tx_type_enum, $2, $3, $4, $5, $6, 'ORDER', $7, $8)
-                               ON CONFLICT (idempotency_key) DO NOTHING"#,
+                               ON CONFLICT (idempotency_key) WHERE idempotency_key IS NOT NULL DO NOTHING"#,
                         )
                         .bind(group_id)
                         .bind(effective_exp_grant)
@@ -1407,6 +1422,28 @@ impl OrderService {
             .bind(balance_after)
             .execute(&mut *tx)
             .await?;
+        // 同步 user_group_points —— 评分也会动积分,得保持一致
+        // 当前是 1v1 组,用 order.group_id 即可
+        let rating_gid: Option<i64> = sqlx::query_scalar(
+            "SELECT group_id FROM orders WHERE order_id = $1"
+        )
+        .bind(order_id)
+        .fetch_optional(&mut *tx)
+        .await?
+        .flatten();
+        if let Some(gid) = rating_gid {
+            sqlx::query(
+                "INSERT INTO user_group_points (user_id, group_id, available_love_point, love_point, frozen_love_point, updated_at) \
+                 VALUES ($1, $2, $3, $3, 0, NOW()) \
+                 ON CONFLICT (user_id, group_id) DO UPDATE \
+                 SET available_love_point = $3, love_point = $3, updated_at = NOW()"
+            )
+            .bind(receiver_id)
+            .bind(gid)
+            .bind(balance_after as i64)
+            .execute(&mut *tx)
+            .await?;
+        }
         sqlx::query(
             "INSERT INTO love_point_transactions (user_id, amount, type, biz_type, biz_id, available_after) VALUES ($1,$2,'ORDER_RATING','ORDER',$3,$4)"
         )

@@ -100,6 +100,48 @@
   - 已集成到 `cargo test` —— 改完 Rust 代码必须 `cargo test` 通过才能提交。
   - 集成测试位置：`tests/sqlx_rename_consistency.rs`。
 
+## PostgreSQL 部分唯一索引 + ON CONFLICT 强制对齐
+
+- `v3.sql` 里凡是 `idempotency_key` 字段上的**幂等键唯一索引**都是**部分唯一索引**：
+
+  ```sql
+  CREATE UNIQUE INDEX idx_lpt_idempotency  ON love_point_transactions(idempotency_key)  WHERE idempotency_key IS NOT NULL;
+  CREATE UNIQUE INDEX idx_get_idempotency  ON group_exp_transactions(idempotency_key)    WHERE idempotency_key IS NOT NULL;
+  CREATE UNIQUE INDEX idx_dt_idempotency   ON diamond_transactions(idempotency_key)      WHERE idempotency_key IS NOT NULL;
+  ```
+
+- 用部分索引的原因：`idempotency_key` 是可空列，PG 的标准 `UNIQUE` 约束对 NULL 视为互不重复，多个 NULL 不冲突；用 `WHERE ... IS NOT NULL` 才能保证「非 NULL 时全局唯一」。
+- **后果**：代码里写 `INSERT ... ON CONFLICT (idempotency_key) DO NOTHING` 会**直接报错 42P10 `no_unique_or_exclusion_constraint`**——PG 要求 ON CONFLICT 必须带上与索引**完全一致**的 WHERE 谓词，否则匹配不上索引。
+- **正确写法**（**必须**带 WHERE 子句）：
+
+  ```sql
+  INSERT INTO group_exp_transactions (...) VALUES (...)
+  ON CONFLICT (idempotency_key) WHERE idempotency_key IS NOT NULL DO NOTHING
+  ```
+
+- **禁止**的写法：
+
+  ```sql
+  -- 缺 WHERE,会 42P10
+  ON CONFLICT (idempotency_key) DO NOTHING
+  ```
+
+- 适用范围：v3.sql 里所有用 `WHERE idempotency_key IS NOT NULL` 创建的部分唯一索引（上面列了 3 张表）。
+- 改代码时：每次新加 `ON CONFLICT (idempotency_key)` 前，对照 v3.sql 把对应索引的 WHERE 子句原样抄过来。
+
+## 积分变动必须同步 user_group_points
+
+- 项目里有**两套积分余额**：
+  - `users.love_point` —— 全局余额（**真正在变动的字段**，前端个人中心 / 订单完成 push 都基于它）
+  - `user_group_points.available_love_point` + `frozen_love_point` —— 组内可用 / 冻结
+- 1v1 模型下两者应该一致，但**积分消费类路径写完 `users.love_point` 之后必须同步 `user_group_points`**，否则积分商城（getPointsBalance 读 `user_group_points`）会显示陈旧数据。
+- **必须同步 `user_group_points` 的 4 个更新点**：
+  1. **订单完成**（CONFIRMED_COMPLETED / CONFIRMED_INCOMPLETE）→ `application/order_service.rs` `update_order_status` 内 UPDATE users 后
+  2. **订单评分**（reward / penalty）→ `application/order_service.rs` 评分事务内 UPDATE users 后
+  3. **心愿兑换**（FREEZE：可用减少 + 冻结增加）→ `application/wish_service.rs` `select_wish` 内 UPDATE users 后
+  4. **新增路径时**：任何新加的改 `users.love_point` 的代码，**必须**紧接着 UPSERT `user_group_points`（用 `INSERT ... ON CONFLICT (user_id, group_id) DO UPDATE` 模式）
+- 已知未修的尾巴：`unfreeze_wish_points`（拒绝心愿/心愿过期调用）目前**只写 UNFREEZE 流水、不实际恢复 `users.love_point`**，下一次做心愿关闭/退积分路径时记得补上 `users.love_point` 的恢复 + `user_group_points` 的同步。
+
 ## 改动 Rust 代码后必须跑的检查
 
 - 改完 Rust 代码 → 在 `cargo check` 通过之后，**必须**再跑：、

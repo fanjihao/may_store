@@ -208,15 +208,27 @@ async fn get_points_balance(
     }
 
     // 查询用户组内积分
-    let points: Option<(i64, i64)> = sqlx::query_as(
-        "SELECT available_love_point, frozen_love_point FROM user_group_points WHERE user_id=$1 AND group_id=$2"
+    // availableLovePoint: 取自 users.love_point —— 这是订单完成/退款时真正变动的字段
+    //                  (user_group_points.available_love_point 当前未在任何更新路径里写入,
+    //                   是个老的历史字段,不能作为可用余额的权威值)
+    // frozenLovePoint: 仍取自 user_group_points.frozen_love_point —— 冻结语义独立
+    //                  (虽然 select_wish 也没正确同步它,但这次不修冻结路径,先保持现状)
+    let available: i64 = sqlx::query_scalar(
+        "SELECT love_point FROM users WHERE user_id = $1"
+    )
+    .bind(user_id)
+    .fetch_optional(db)
+    .await?
+    .unwrap_or(0) as i64;
+
+    let frozen: i64 = sqlx::query_scalar(
+        "SELECT frozen_love_point FROM user_group_points WHERE user_id=$1 AND group_id=$2"
     )
     .bind(user_id)
     .bind(gid)
     .fetch_optional(db)
-    .await?;
-
-    let (available, frozen) = points.unwrap_or((0, 0));
+    .await?
+    .unwrap_or(0);
 
     // 获取每日限额信息（简化：默认100）
     let daily_limit = 100;
