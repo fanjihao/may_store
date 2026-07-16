@@ -7,6 +7,7 @@
 use crate::api::ws::get_connection_manager;
 use crate::api::ws::messages::{
     WsEnvelope, WsGroupExpChangeData, WsLovePointChangeData,
+    WsOrderUpdateData,
 };
 use sqlx::PgPool;
 
@@ -143,6 +144,64 @@ pub async fn push_group_exp_change_notice(
         if !sent {
             log::debug!(
                 "[push_group_exp_change] 用户 {} 不在线, 推送跳过",
+                target_id
+            );
+        }
+    }
+}
+
+/// 推"订单状态变更"给全组在线成员 (2026-07-15 P1-2 新增)
+///
+/// 设计: 跟 push_group_exp_change_notice 一样, 离线静默丢弃
+/// 触发场景: 任意 order 状态推进 (accept / complete / confirm / cancel / reject / timeout)
+/// 前端: 收到后刷新订单列表 / 订单详情
+pub async fn push_order_update_notice(
+    db: &PgPool,
+    group_id: Option<i64>,
+    order_id: i64,
+    status: String,
+    message: String,
+) {
+    // 没 group_id 的订单不广播(做客订单单独场景,本期暂不处理)
+    let Some(gid) = group_id else {
+        return;
+    };
+    let payload = WsOrderUpdateData {
+        order_id,
+        status,
+        message,
+    };
+    let envelope = WsEnvelope::order_update(&payload);
+    let Ok(json) = serde_json::to_string(&envelope) else {
+        log::error!("order_update 通知序列化失败: {:?}", payload);
+        return;
+    };
+
+    // 反查全组 ACTIVE 成员 -> 逐个推
+    let target_ids: Vec<i64> = match sqlx::query_scalar(
+        "SELECT user_id FROM association_group_members
+         WHERE group_id = $1 AND member_status = 'ACTIVE'::group_member_status_enum",
+    )
+    .bind(gid)
+    .fetch_all(db)
+    .await
+    {
+        Ok(v) => v,
+        Err(e) => {
+            log::error!(
+                "[push_order_update] 查 group_id={} 成员失败: {:?}",
+                gid, e
+            );
+            Vec::new()
+        }
+    };
+
+    let manager = get_connection_manager();
+    for target_id in target_ids {
+        let sent = manager.send_to_user(target_id, &json).await;
+        if !sent {
+            log::debug!(
+                "[push_order_update] 用户 {} 不在线, 推送跳过",
                 target_id
             );
         }

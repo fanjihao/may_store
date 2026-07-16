@@ -32,9 +32,6 @@ pub fn configure(cfg: &mut ServiceConfig) {
     );
     // 全局心愿详情/操作
     cfg.service(
-        web::resource("/api/wishes/pending-fulfillment").route(web::get().to(pending_fulfillment)),
-    );
-    cfg.service(
         web::resource("/api/wishes/{wish_id}").route(web::get().to(get_wish)), // FSD v2 7.3 获取心愿详情
     );
     cfg.service(
@@ -63,9 +60,6 @@ pub fn configure(cfg: &mut ServiceConfig) {
         web::resource("/api/wishes/{wish_id}/close").route(web::post().to(wish_close)), // FSD v2 7.11 关闭心愿
     );
     cfg.service(
-        web::resource("/api/wishes/{wish_id}/checkins").route(web::get().to(get_wish_checkins)), // FSD v2 7.12 获取打卡记录
-    );
-    cfg.service(
         web::resource("/api/wishes/{wish_id}/confirm-completion").route(web::post().to(wish_confirm_completion)), // FSD v2 7.13 接单人确认完成
     );
 }
@@ -83,12 +77,6 @@ pub struct WishListQuery {
     /// "mine" = 只返回当前用户创建或被指定为履约人的心愿；其他值或缺失 = 全组
     #[serde(default)]
     pub scope: Option<String>,
-}
-
-/// 待履约心愿查询参数
-#[derive(Debug, Deserialize, utoipa::IntoParams)]
-pub struct PendingFulfillmentQuery {
-    pub group_id: Option<i64>,
 }
 
 /// 心愿关闭输入
@@ -1178,126 +1166,4 @@ pub async fn wish_expire(
         "status": "EXPIRED",
         "frozenAmountUnfrozen": frozen_amount
     })))
-}
-
-/// 获取心愿打卡记录列表
-/// GET /api/wishes/{wish_id}/checkins
-/// FSD v2 7.12
-#[utoipa::path(
-    get,
-    path = "/api/wishes/{wish_id}/checkins",
-    tag = "心愿",
-    params(("wish_id" = i64, Path, description = "心愿ID")),
-    responses(
-        (status = 200, description = "获取成功"),
-        (status = 404, description = "心愿不存在")
-    ),
-    security(("bearer_auth" = []))
-)]
-pub async fn get_wish_checkins(
-    _user_token: UserToken,
-    _require: RequireGroup,
-    state: State<Arc<AppState>>,
-    id: Path<i64>,
-) -> Result<impl Responder, CustomError> {
-    let wish_id = *id;
-    let checkins = sqlx::query(
-        r#"SELECT wc.id, wc.wish_id, wc.user_id, wc.content, wc.location, wc.images, wc.created_at, u.nick_name
-           FROM wish_checkins wc JOIN users u ON u.user_id = wc.user_id WHERE wc.wish_id = $1 ORDER BY wc.created_at DESC"#
-    )
-    .bind(wish_id)
-    .fetch_all(&state.db_pool)
-    .await?;
-    let items: Vec<serde_json::Value> = checkins
-        .iter()
-        .map(|r| {
-            serde_json::json!({
-                "id": r.get::<i64, _>("id"),
-                "wishId": r.get::<i64, _>("wish_id"),
-                "userId": r.get::<i64, _>("user_id"),
-                "nickname": r.get::<Option<String>, _>("nick_name"),
-                "content": r.get::<Option<String>, _>("content"),
-                "location": r.get::<Option<String>, _>("location"),
-                "images": r.get::<Option<serde_json::Value>, _>("images"),
-                "createdAt": r.get::<chrono::DateTime<chrono::Utc>, _>("created_at")
-            })
-        })
-        .collect();
-    Ok(ApiResponse::success(
-        serde_json::json!({ "checkins": items }),
-    ))
-}
-
-/// 获取我作为履约人的待履约心愿
-/// GET /api/wishes/pending-fulfillment
-#[utoipa::path(
-    get,
-    path = "/api/wishes/pending-fulfillment",
-    tag = "心愿",
-    params(
-        ("group_id" = Option<i64>, Query, description = "组ID筛选")
-    ),
-    responses(
-        (status = 200, description = "获取成功"),
-        (status = 401, description = "未登录")
-    ),
-    security(("bearer_auth" = []))
-)]
-pub async fn pending_fulfillment(
-    user_token: UserToken,
-    _require: RequireGroup,
-    state: State<Arc<AppState>>,
-    query: Query<PendingFulfillmentQuery>,
-) -> Result<impl Responder, CustomError> {
-    let db = &state.db_pool;
-    let rows = match query.group_id {
-        Some(gid) => {
-            sqlx::query(
-                r#"
-            SELECT w.wish_id, w.wish_name, w.final_cost, w.fulfillment_due_at, w.status, w.group_id,
-                   u.nick_name as requester_nickname,
-                   CASE WHEN w.fulfillment_due_at < NOW() THEN true ELSE false END as is_overdue
-            FROM wishes w
-            JOIN users u ON u.user_id = w.requester_id
-            WHERE w.fulfiller_id = $1 AND w.status = 'CLAIMED'::wish_status_enum AND w.group_id = $2
-            ORDER BY w.fulfillment_due_at ASC
-            "#,
-            )
-            .bind(user_token.user_id)
-            .bind(gid)
-            .fetch_all(db)
-            .await?
-        }
-        None => {
-            sqlx::query(
-                r#"
-            SELECT w.wish_id, w.wish_name, w.final_cost, w.fulfillment_due_at, w.status, w.group_id,
-                   u.nick_name as requester_nickname,
-                   CASE WHEN w.fulfillment_due_at < NOW() THEN true ELSE false END as is_overdue
-            FROM wishes w
-            JOIN users u ON u.user_id = w.requester_id
-            WHERE w.fulfiller_id = $1 AND w.status = 'CLAIMED'::wish_status_enum
-            ORDER BY w.fulfillment_due_at ASC
-            "#,
-            )
-            .bind(user_token.user_id)
-            .fetch_all(db)
-            .await?
-        }
-    };
-    let items: Vec<serde_json::Value> = rows
-        .iter()
-        .map(|r| {
-            serde_json::json!({
-                "wishId": r.get::<i64, _>("wish_id"),
-                "name": r.get::<String, _>("wish_name"),
-                "requesterNickname": r.get::<Option<String>, _>("requester_nickname"),
-                "finalCost": r.get::<Option<i32>, _>("final_cost"),
-                "fulfillmentDueAt": r.get::<Option<chrono::DateTime<chrono::Utc>>, _>("fulfillment_due_at"),
-                "status": r.get::<String, _>("status"),
-                "isOverdue": r.get::<bool, _>("is_overdue")
-            })
-        })
-        .collect();
-    Ok(ApiResponse::success(serde_json::json!({ "items": items })))
 }

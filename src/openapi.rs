@@ -115,11 +115,6 @@ impl Modify for SecurityAddon {
         crate::api::kitchens::routes::create_guest_order,
         // ==================== Economy (经济查询) ====================
         crate::api::economy::routes::get_points_balance,
-        crate::api::economy::routes::get_points_transactions,
-        crate::api::economy::routes::get_diamonds_balance,
-        crate::api::economy::routes::get_diamonds_transactions,
-        crate::api::economy::routes::get_group_exp,
-        crate::api::economy::routes::get_exp_transactions,
         // ==================== Orders (订单) ====================
         crate::api::orders::routes::create_order,
         crate::api::orders::routes::get_orders,
@@ -132,7 +127,6 @@ impl Modify for SecurityAddon {
         crate::api::orders::routes::cancel_order,
         crate::api::orders::routes::reject_order,
         crate::api::orders::routes::order_timeout,
-        crate::api::orders::routes::update_guest_remark,
         // ==================== Wishes (心愿) —— create_group_wish 唯一来源 ====================
         crate::api::wishes::routes::create_group_wish,
         crate::api::wishes::routes::list_group_wishes,
@@ -146,8 +140,6 @@ impl Modify for SecurityAddon {
         crate::api::wishes::routes::wish_close,
         crate::api::wishes::routes::wish_expire,
         crate::api::wishes::routes::wish_confirm_completion,
-        crate::api::wishes::routes::get_wish_checkins,
-        crate::api::wishes::routes::pending_fulfillment,
         // ==================== Admin (后台管理) ====================
         crate::api::admin::routes::get_stats,
         crate::api::admin::routes::list_groups,
@@ -276,7 +268,6 @@ impl Modify for SecurityAddon {
             // -- Orders --
             crate::api::orders::routes::OrderCancelInput,
             crate::api::orders::routes::OrderRejectInput,
-            crate::api::orders::routes::GuestRemarkInput,
             crate::api::orders::routes::OrderConfirmInput,
             // -- Notifications --
             crate::api::notifications::routes::NotificationItem,

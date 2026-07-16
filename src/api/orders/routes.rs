@@ -38,7 +38,6 @@ pub fn configure(cfg: &mut ServiceConfig) {
             .route("/{order_id}/cancel", web::post().to(cancel_order))
             .route("/{order_id}/reject", web::post().to(reject_order))
             .route("/{order_id}/timeout", web::post().to(order_timeout))
-            .route("/{order_id}/guest-remark", web::patch().to(update_guest_remark)),
     )
     .service(
         web::scope("/api/orders-rating")
@@ -372,59 +371,6 @@ pub async fn order_timeout(
     Ok(ApiResponse::success(out))
 }
 
-/// 更新做客订单备注
-/// PATCH /api/orders/{order_id}/guest-remark
-///
-/// 仅做客订单创建者可更新备注
-#[utoipa::path(
-    patch,
-    path = "/api/orders/{order_id}/guest-remark",
-    tag = "订单",
-    params(("order_id" = i64, Path, description = "订单ID")),
-    request_body = GuestRemarkInput,
-    responses(
-        (status = 200, description = "更新成功"),
-        (status = 400, description = "非做客订单无法更新备注"),
-        (status = 403, description = "无权更新"),
-        (status = 404, description = "订单不存在")
-    ),
-    security(("bearer_auth" = []))
-)]
-pub async fn update_guest_remark(
-    user_token: UserToken,
-    state: State<Arc<AppState>>,
-    order_id: Path<i64>,
-    body: Json<GuestRemarkInput>,
-) -> Result<impl Responder, CustomError> {
-    let id = *order_id;
-    let input = body.into_inner();
-
-    // 检查订单是否存在且为 GUEST 类型
-    let order = AppOrderService::get_order_by_id(&state.db_pool, id).await?
-        .ok_or_else(|| CustomError::NotFound("订单不存在".into()))?;
-
-    if !order.is_guest {
-        return Err(CustomError::BadRequest("非做客订单无法更新备注".into()));
-    }
-
-    // 检查是否是创建者
-    if order.user_id != user_token.user_id {
-        return Err(CustomError::Forbidden("无权更新此订单备注".into()));
-    }
-
-    // 更新做客备注
-    sqlx::query(
-        "UPDATE orders SET guest_remark=$1, guest_mark_tags=$2 WHERE order_id=$3"
-    )
-    .bind(&input.guest_remark)
-    .bind(serde_json::json!(&input.guest_mark_tags))
-    .bind(id)
-    .execute(&state.db_pool)
-    .await?;
-
-    Ok(ApiResponse::ok())
-}
-
 /// 订单取消输入
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
@@ -437,14 +383,6 @@ pub struct OrderCancelInput {
 #[serde(rename_all = "camelCase")]
 pub struct OrderRejectInput {
     pub reason: Option<String>,
-}
-
-/// 做客订单备注输入
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
-#[serde(rename_all = "camelCase")]
-pub struct GuestRemarkInput {
-    pub guest_remark: Option<String>,
-    pub guest_mark_tags: Option<Vec<String>>,
 }
 
 /// 订单确认输入

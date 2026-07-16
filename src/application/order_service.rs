@@ -1271,6 +1271,29 @@ impl OrderService {
             .await;
         }
 
+        // === 2026-07-15: 推送 order_update 给全组, 前端收到后刷新订单相关页面 ===
+        // 状态变化时触发,文案按 to_status 给一句口语化提示
+        if from_status != input.to_status {
+            let message = match input.to_status {
+                OrderStatus::Accepted => "清单已被对方接单",
+                OrderStatus::ProductionCompleted => "清单已完成制作",
+                OrderStatus::ConfirmedCompleted => "清单已确认完成",
+                OrderStatus::ConfirmedIncomplete => "清单被判定未完成",
+                OrderStatus::Cancelled => "清单已取消",
+                OrderStatus::Rejected => "清单被拒绝",
+                OrderStatus::Timeout => "清单超时关闭",
+                OrderStatus::Created => "清单已创建",
+            };
+            crate::api::orders::broadcast::push_order_update_notice(
+                db,
+                order.group_id,
+                order.order_id,
+                format!("{:?}", input.to_status),
+                message.to_string(),
+            )
+            .await;
+        }
+
         // 发布状态变更事件 (用于 /api/groups/{group_id}/activities 活动流)
         // 仅在 from != to 时发（防御性，正常情况前面已经拦截）
         if from_status != input.to_status {

@@ -140,7 +140,7 @@
   2. **订单评分**（reward / penalty）→ `application/order_service.rs` 评分事务内 UPDATE users 后
   3. **心愿兑换**（FREEZE：可用减少 + 冻结增加）→ `application/wish_service.rs` `select_wish` 内 UPDATE users 后
   4. **新增路径时**：任何新加的改 `users.love_point` 的代码，**必须**紧接着 UPSERT `user_group_points`（用 `INSERT ... ON CONFLICT (user_id, group_id) DO UPDATE` 模式）
-- 已知未修的尾巴：`unfreeze_wish_points`（拒绝心愿/心愿过期调用）目前**只写 UNFREEZE 流水、不实际恢复 `users.love_point`**，下一次做心愿关闭/退积分路径时记得补上 `users.love_point` 的恢复 + `user_group_points` 的同步。
+- 已知未修的尾巴：`unfreeze_wish_points`（拒绝心愿/心愿过期调用）~~只写 UNFREEZE 流水、不实际恢复 `users.love_point`~~ **已于 2026-07-15 修**，函数体改成事务：写流水 + `UPDATE users SET love_point = love_point + frozen_amount` + UPSERT user_group_points。
 
 ## 改动 Rust 代码后必须跑的检查
 
@@ -159,3 +159,33 @@
 - **前端项目 `wx-store`**：与本仓（`may_store`）同级，路径 `../wx-store`（绝对路径 `/home/peter/project/wx-store`）。
 - 当用户提到"前端" / "页面" / "UI" / "stash 页 / 餐厅 / 厨房信息展示"等视觉/交互相关需求时，**优先想到去 `../wx-store` 改前端代码**；本仓（`may_store`）只负责接口与数据。
 - 改前端时不要顺手改本仓的 API；改本仓 API 时不要顺手改前端。两边需要同步时，先跟用户确认是哪一边。
+
+## 8. 已整改记录（2026-07-15 review）
+
+详细 review 报告见 `docs/system-review-2026-07-15.md`。下面是已修的项：
+
+### 已修的 P0（真 bug）
+- ✅ P0-1 删 `update_guest_remark`（功能与 `createOrder.vue` 备注字段重复，已删路由 + handler + struct）
+- ✅ P0-2 `daily_cap_warning` 填进响应（已完成，之前对话里）
+- ✅ P0-3 `unfreeze_wish_points` 恢复 `users.love_point`（包事务，加 UPDATE users + UPSERT user_group_points）
+
+### 已修的 P1（契约/接缝）
+- ✅ P1-1 删 12+ 死代码 WS 事件类型（`OrderRiskDetected` / `WishCreated` / `LovePoint*` / `Group*` / `DiamondEarned` / `RoleSwapped` / `OrderReviewed` / `FootprintPublished` / `WishFulfilled` / `DiamondConsumed` / `PointChanged`）
+- ✅ P1-2 订单状态变更 WS 推送 + 前端 `order.vue` / `orderDetail.vue` 订阅
+- ✅ P1-5 删 7 个死代码前端 API（`getPointsTransactions` / `getDiamondsBalance` / `getDiamondsTransactions` / `getGroupExp` / `getExpTransactions` / `getWishCheckins` / `pendingFulfillment`，后端 + 前端同步删）
+- ✅ P1-6 修 `today_todos.rs` SQL 状态名（`BREEDER_FINISHED` 不存在于 enum，改成 `PRODUCTION_COMPLETED`）
+- ✅ P1-7 home.vue 角色切换按钮 `:class` 视觉锁 → `:disabled` 真禁用
+- ✅ P1-8 抽 `reject_wish` / `close_wish_internal` 公共逻辑（→ `reject_or_close_wish`）
+
+### 已修的 P2（体验/规范）
+- ✅ P2-1 `feedback.vue` 加载失败给 toast
+- ✅ P2-3 `wishDetail.vue` 改 `: any` → 正类型（`WishOutWithNegotiations` / `NegotiationItem`）
+- ✅ P2-4 注释里"接单人/下单人"清理
+- ✅ P2-5 全局错误拦截器（`silenceError` 工具 + CLAUDE.md 规范文档）
+
+### 不做 / 不可做
+- ❌ P1-3 `group_diamond_change` 订单路径推送（用户说"目前只有签到解锁容量才会有钻石变化"，不做）
+- ➖ P1-4 P1-7 已是合法实现（不是 review 误判的死代码，文档已修正）
+- ➖ P2-2 `todayslist.vue` 用通用 `getOrders` + 前端分桶补上了
+- ❌ P2-6 `累计投喂 0 次` 写死（placeholder，等后端字段接入）
+- ❌ P2-7 `WishQualityRewarded` 前端订阅（事件类型已删、后端 admin 接口不发 WS，前置条件缺失）

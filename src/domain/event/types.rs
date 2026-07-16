@@ -5,7 +5,13 @@ use serde::{Deserialize, Serialize};
 
 // ============== 事件类型枚举 ==============
 
-/// 事件类型枚举 - FSD完整定义
+/// 事件类型枚举 - 只保留实际有 publish 调用的变体
+///
+/// 2026-07-15 P1-1 清理:删除了 17 个死代码变体 (OrderRiskDetected / WishCreated /
+/// WishFeedbackSubmitted / WishQualityRewarded / LovePointEarned~Deducted /
+/// GroupExpEarned / GroupLevelUp / DiamondEarned / RoleSwapped / OrderReviewed /
+/// FootprintPublished / WishFulfilled / DiamondConsumed / PointChanged),
+/// 它们只在自己文件的 as_str/from_str 出现,0 publish 0 订阅
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum EventType {
@@ -19,35 +25,15 @@ pub enum EventType {
     OrderCancelled,
     OrderRejected,
     OrderTimeout,
-    OrderRiskDetected,
     // 心愿事件
-    WishCreated,
     WishNegotiating,
     WishAgreementConfirmed,
     WishSelected,
-    WishFeedbackSubmitted,
     WishFinished,
     WishExpired,
-    WishQualityRewarded,
     WishClosed,
-    // 经济事件
-    LovePointEarned,
-    LovePointFrozen,
-    LovePointUnfrozen,
-    LovePointDeducted,
-    GroupExpEarned,
-    GroupLevelUp,
-    DiamondEarned,
-    // 组事件
-    RoleSwapped,
     // 签到事件
     SignIn,
-    // 兼容旧事件
-    OrderReviewed,
-    FootprintPublished,
-    WishFulfilled,
-    DiamondConsumed,
-    PointChanged,
 }
 
 impl EventType {
@@ -63,30 +49,13 @@ impl EventType {
             EventType::OrderCancelled => "OrderCancelledEvent",
             EventType::OrderRejected => "OrderRejectedEvent",
             EventType::OrderTimeout => "OrderTimeoutEvent",
-            EventType::OrderRiskDetected => "OrderRiskDetectedEvent",
-            EventType::WishCreated => "WishCreatedEvent",
             EventType::WishNegotiating => "WishNegotiatingEvent",
             EventType::WishAgreementConfirmed => "WishAgreementConfirmedEvent",
             EventType::WishSelected => "WishSelectedEvent",
-            EventType::WishFeedbackSubmitted => "WishFeedbackSubmittedEvent",
             EventType::WishFinished => "WishFinishedEvent",
             EventType::WishExpired => "WishExpiredEvent",
-            EventType::WishQualityRewarded => "WishQualityRewardedEvent",
             EventType::WishClosed => "WishClosedEvent",
-            EventType::LovePointEarned => "LovePointEarnedEvent",
-            EventType::LovePointFrozen => "LovePointFrozenEvent",
-            EventType::LovePointUnfrozen => "LovePointUnfrozenEvent",
-            EventType::LovePointDeducted => "LovePointDeductedEvent",
-            EventType::GroupExpEarned => "GroupExpEarnedEvent",
-            EventType::GroupLevelUp => "GroupLevelUpEvent",
-            EventType::DiamondEarned => "DiamondEarnedEvent",
-            EventType::RoleSwapped => "RoleSwappedEvent",
             EventType::SignIn => "SignInEvent",
-            EventType::OrderReviewed => "OrderReviewedEvent",
-            EventType::FootprintPublished => "FootprintPublishedEvent",
-            EventType::WishFulfilled => "WishFulfilledEvent",
-            EventType::DiamondConsumed => "DiamondConsumedEvent",
-            EventType::PointChanged => "PointChangedEvent",
         }
     }
 
@@ -102,30 +71,13 @@ impl EventType {
             "OrderCancelledEvent" => Some(EventType::OrderCancelled),
             "OrderRejectedEvent" => Some(EventType::OrderRejected),
             "OrderTimeoutEvent" => Some(EventType::OrderTimeout),
-            "OrderRiskDetectedEvent" => Some(EventType::OrderRiskDetected),
-            "WishCreatedEvent" => Some(EventType::WishCreated),
             "WishNegotiatingEvent" => Some(EventType::WishNegotiating),
             "WishAgreementConfirmedEvent" => Some(EventType::WishAgreementConfirmed),
             "WishSelectedEvent" => Some(EventType::WishSelected),
-            "WishFeedbackSubmittedEvent" => Some(EventType::WishFeedbackSubmitted),
             "WishFinishedEvent" => Some(EventType::WishFinished),
             "WishExpiredEvent" => Some(EventType::WishExpired),
-            "WishQualityRewardedEvent" => Some(EventType::WishQualityRewarded),
             "WishClosedEvent" => Some(EventType::WishClosed),
-            "LovePointEarnedEvent" => Some(EventType::LovePointEarned),
-            "LovePointFrozenEvent" => Some(EventType::LovePointFrozen),
-            "LovePointUnfrozenEvent" => Some(EventType::LovePointUnfrozen),
-            "LovePointDeductedEvent" => Some(EventType::LovePointDeducted),
-            "GroupExpEarnedEvent" => Some(EventType::GroupExpEarned),
-            "GroupLevelUpEvent" => Some(EventType::GroupLevelUp),
-            "DiamondEarnedEvent" => Some(EventType::DiamondEarned),
-            "RoleSwappedEvent" => Some(EventType::RoleSwapped),
             "SignInEvent" => Some(EventType::SignIn),
-            "OrderReviewedEvent" => Some(EventType::OrderReviewed),
-            "FootprintPublishedEvent" => Some(EventType::FootprintPublished),
-            "WishFulfilledEvent" => Some(EventType::WishFulfilled),
-            "DiamondConsumedEvent" => Some(EventType::DiamondConsumed),
-            "PointChangedEvent" => Some(EventType::PointChanged),
             _ => None,
         }
     }
@@ -183,31 +135,6 @@ pub struct OrderConfirmedIncompletePayload {
     pub trace_id: Option<String>,
 }
 
-/// 订单风控检测事件 Payload
-#[allow(dead_code)]
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct OrderRiskDetectedPayload {
-    pub order_id: i64,
-    pub user_id: i64,
-    pub group_id: i64,
-    pub risk_status: String,
-    pub risk_detail: Option<serde_json::Value>,
-    pub trace_id: Option<String>,
-}
-
-/// 心愿创建事件 Payload
-#[allow(dead_code)]
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct WishCreatedPayload {
-    pub wish_id: i64,
-    pub user_id: i64,
-    pub group_id: i64,
-    pub initial_cost: i32,
-    pub trace_id: Option<String>,
-}
-
 /// 心愿协商事件 Payload
 #[allow(dead_code)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -250,18 +177,6 @@ pub struct WishSelectedPayload {
     pub trace_id: Option<String>,
 }
 
-/// 心愿打卡提交事件 Payload
-#[allow(dead_code)]
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct WishFeedbackSubmittedPayload {
-    pub wish_id: i64,
-    pub requester_id: i64,
-    pub fulfiller_id: i64,
-    pub group_id: i64,
-    pub trace_id: Option<String>,
-}
-
 /// 心愿完成事件 Payload - 打卡完成，积分正式扣减
 #[allow(dead_code)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -288,19 +203,6 @@ pub struct WishExpiredPayload {
     pub trace_id: Option<String>,
 }
 
-/// 心愿质量奖励事件 Payload
-#[allow(dead_code)]
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct WishQualityRewardedPayload {
-    pub wish_id: i64,
-    pub group_id: i64,
-    pub reviewer_id: i64,
-    pub quality_level: String,
-    pub diamond_reward: i32,
-    pub trace_id: Option<String>,
-}
-
 /// 心愿关闭事件 Payload
 #[allow(dead_code)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -311,109 +213,6 @@ pub struct WishClosedPayload {
     pub group_id: i64,
     pub reason: Option<String>,
     pub unfrozen_if_any: bool,
-    pub trace_id: Option<String>,
-}
-
-/// 爱心积分获得事件 Payload
-#[allow(dead_code)]
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct LovePointEarnedPayload {
-    pub user_id: i64,
-    pub group_id: i64,
-    pub amount: i32,
-    pub biz_type: String,
-    pub biz_id: i64,
-    pub trace_id: Option<String>,
-}
-
-/// 爱心积分冻结事件 Payload
-#[allow(dead_code)]
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct LovePointFrozenPayload {
-    pub user_id: i64,
-    pub group_id: i64,
-    pub amount: i32,
-    pub biz_type: String,
-    pub biz_id: i64,
-    pub trace_id: Option<String>,
-}
-
-/// 爱心积分解冻事件 Payload
-#[allow(dead_code)]
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct LovePointUnfrozenPayload {
-    pub user_id: i64,
-    pub group_id: i64,
-    pub amount: i32,
-    pub biz_type: String,
-    pub biz_id: i64,
-    pub trace_id: Option<String>,
-}
-
-/// 爱心积分扣减事件 Payload
-#[allow(dead_code)]
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct LovePointDeductedPayload {
-    pub user_id: i64,
-    pub group_id: i64,
-    pub amount: i32,
-    pub biz_type: String,
-    pub biz_id: i64,
-    pub trace_id: Option<String>,
-}
-
-/// 组经验获得事件 Payload
-#[allow(dead_code)]
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct GroupExpEarnedPayload {
-    pub group_id: i64,
-    pub amount: i32,
-    pub exp_before: i64,
-    pub exp_after: i64,
-    pub biz_type: String,
-    pub biz_id: i64,
-    pub trace_id: Option<String>,
-}
-
-/// 组等级提升事件 Payload
-#[allow(dead_code)]
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct GroupLevelUpPayload {
-    pub group_id: i64,
-    pub old_level: i32,
-    pub new_level: i32,
-    pub trace_id: Option<String>,
-}
-
-/// 组钻石获得事件 Payload
-#[allow(dead_code)]
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct DiamondEarnedPayload {
-    pub group_id: i64,
-    pub amount: i32,
-    pub biz_type: String,
-    pub biz_id: i64,
-    pub trace_id: Option<String>,
-}
-
-/// 角色互换事件 Payload
-#[allow(dead_code)]
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct RoleSwappedPayload {
-    pub group_id: i64,
-    pub user_id: i64,
-    pub old_buyer_id: Option<i64>,
-    pub old_seller_id: Option<i64>,
-    pub new_buyer_id: Option<i64>,
-    pub new_seller_id: Option<i64>,
     pub trace_id: Option<String>,
 }
 
@@ -428,63 +227,4 @@ pub struct SignInPayload {
     pub consecutive_days: i32,
     pub diamond_reward: i32,
     pub trace_id: Option<String>,
-}
-
-// ============== 兼容旧事件Payload ==============
-
-/// 订单评价事件 Payload
-#[allow(dead_code)]
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct OrderReviewedPayload {
-    pub order_id: i64,
-    pub rater_user_id: i64,
-    pub target_user_id: i64,
-    pub rating_delta: i32,
-    pub group_id: Option<i64>,
-}
-
-/// 足迹发布事件 Payload
-#[allow(dead_code)]
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct FootprintPublishedPayload {
-    pub record_id: i64,
-    pub user_id: i64,
-    pub group_id: i64,
-    pub order_id: Option<i64>,
-}
-
-/// 心愿完成事件 Payload (旧版兼容)
-#[allow(dead_code)]
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct WishFulfilledPayload {
-    pub wish_id: i64,
-    pub user_id: i64,
-    pub group_id: i64,
-    pub points_spent: i32,
-}
-
-/// 钻石消耗事件 Payload
-#[allow(dead_code)]
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct DiamondConsumedPayload {
-    pub user_id: i64,
-    pub group_id: Option<i64>,
-    pub amount: i32,
-    pub scene: String,
-    pub relation_id: Option<i64>,
-}
-
-/// 积分变动事件 Payload
-#[allow(dead_code)]
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct PointChangedPayload {
-    pub user_id: i64,
-    pub amount: i32,
-    pub tx_type: String,
-    pub ref_id: Option<i64>,
 }

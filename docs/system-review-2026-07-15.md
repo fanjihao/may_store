@@ -19,18 +19,26 @@
 
 ## 🔴 P0：真 bug
 
-### P0-1：`updateGuestRemark` 后端已注册但前端没 UI 调
+### ~~P0-1：`updateGuestRemark` 后端已注册但前端没 UI 调~~ 已决议：删除
 
-- **位置**: 
+- **位置**:
   - 后端路由：`api/orders/routes.rs:41` 已挂载（`PATCH /api/orders/{order_id}/guest-remark`）
   - 前端 API 函数：`apis/order.ts:66` 已生成
   - 前端页面：**没有任何 .vue 调过**（grep `updateGuestRemark` 在 pages 下 0 命中）
 - **现状**: 后端 OK，OpenAPI 也有这个接口，但前端没 UI 入口。**这不是路由没挂的 bug，是功能没做完**
-- **影响**: "做客清单备注"功能（v3 FSD 7.10 提到）没法用
-- **修复方向**:
-  - 选 A：在 `createOrder.vue` / `orderDetail.vue` 加备注输入框 + 调 `updateGuestRemark`
-  - 选 B：删掉前后端这一坨（如果短期不打算做）
-- **修复成本**: 选 A 中等，选 B 1 行
+- **决议（2026-07-15）**: 删掉。理由：下单页面 `createOrder.vue` 已经有备注字段，重复了
+
+### P0-2：~~`update_order_status` 事务 commit 后 `daily_cap_warning` 没序列化~~ 已修
+
+- **位置**: `application/order_service.rs:1327`
+- **现状**（**之前的 review 又错了**）: 实际已经修过了。OrderOutNew 构造时 `daily_cap_warning,` 变量已经传进去（line 1327），内部 `daily_cap_warning` 通过 `get_or_insert_with` 在 line 1062/1113 累加。**功能已生效**
+
+### P0-3：`unfreeze_wish_points` 仍只写流水不恢复 `users.love_point`
+
+- **位置**: `application/wish_service.rs:839`
+- **现状**: 拒绝心愿/心愿过期时调用此函数，但只 INSERT 一条 UNFREEZE 流水，**不实际更新 `users.love_point`**
+- **影响**: 用户拒绝心愿时冻结的积分**没真退**，只是账上记一笔。"账面退、实际没退"的奇怪状态
+- **修复成本**: 在 INSERT 流水后加一行 `UPDATE users SET love_point = love_point + frozen_amount`，并同步 `user_group_points`
 
 ### P0-2：`update_order_status` 事务 commit 后 `daily_cap_warning` 没序列化
 
@@ -183,9 +191,9 @@
 
 ### 第一批（一晚上能搞完）
 
-1. P0-1 修 `guest-remark` 路由挂载（1 行 `web::resource`）
-2. P0-2 修 `daily_cap_warning` 没填进响应（把变量传到 OrderOutNew 构造里）
-3. P0-3 修 `unfreeze_wish_points` 恢复 `users.love_point`（顺手同步 `user_group_points`）
+1. ~~P0-1 修 `guest-remark` 路由挂载~~ **已修（2026-07-15）**：删除 `update_guest_remark` handler + `GuestRemarkInput` struct + openapi 注册 + 前端自动同步
+2. ~~P0-2 修 `daily_cap_warning` 没填进响应~~ 已修
+3. ~~P0-3 修 `unfreeze_wish_points` 恢复 `users.love_point`~~ **已修（2026-07-15）**：函数体改成事务；加 UPDATE users + UPSERT user_group_points
 4. P1-6 修 `BREEDER_FINISHED` 那行 SQL 写错的状态名
 
 ### 第二批（半天）

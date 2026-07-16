@@ -305,11 +305,13 @@ async fn fetch_orders(db: &sqlx::PgPool, user_id: i64) -> Result<Vec<OrderRow>, 
           AND o.status IN ('ACCEPTED'::order_status_enum,'IN_PROGRESS'::order_status_enum)
         UNION ALL
         -- 阶段 3: 订单等确认
+        -- 2026-07-15 P1-6 修复: 之前写了 'BREEDER_FINISHED',但 v3.sql 的 order_status_enum 没有这个值,
+        -- PG enum cast 会炸。已合并到唯一的 PRODUCTION_COMPLETED(同义别名)
         SELECT 'CONFIRM' AS kind, o.order_id, o.group_id, g.group_name, o.title, o.created_at,
                (o.user_id = $1) AS is_my_action
         FROM orders o JOIN association_groups g ON g.group_id = o.group_id
         WHERE (o.assignee_id = $1 OR o.user_id = $1)
-          AND o.status IN ('PRODUCTION_COMPLETED'::order_status_enum,'BREEDER_FINISHED'::order_status_enum)
+          AND o.status = 'PRODUCTION_COMPLETED'::order_status_enum
         ORDER BY created_at ASC
         "#,
     )
