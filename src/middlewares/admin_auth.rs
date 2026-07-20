@@ -63,9 +63,8 @@ impl<E: ErrorRenderer> FromRequest<E> for AdminToken {
         let auth_header = req.headers().get("Authorization").cloned();
 
         async move {
-            let state = state.ok_or_else(|| {
-                CustomError::internal(String::from("app state 缺失"))
-            })?;
+            let state =
+                state.ok_or_else(|| CustomError::internal(String::from("app state 缺失")))?;
             let mut raw = auth_header
                 .ok_or_else(|| CustomError::auth_invalid_token("缺少 Authorization 头"))?
                 .to_str()
@@ -85,8 +84,8 @@ impl<E: ErrorRenderer> FromRequest<E> for AdminToken {
             .await?;
             let user_id = claims.user_id()?;
 
-            // 2. 加载用户公开信息(可选,失败不阻塞)
-            let user = load_user_public_for_token(&state, user_id).await;
+            // 2. users 主账号也必须为 ACTIVE；DB 状态检查失败时拒绝管理员请求
+            let user = Some(load_user_public_for_token(&state, user_id).await?);
 
             // 3. 查 admin_users 表 —— UserRole::Admin 不被信任,必须以表为准
             let row: Option<(i64, String, String)> = sqlx::query_as(
@@ -98,16 +97,15 @@ impl<E: ErrorRenderer> FromRequest<E> for AdminToken {
             .fetch_optional(&state.db_pool)
             .await?;
 
-            let (admin_id, role_str, status) = row
-                .ok_or_else(|| CustomError::Forbidden(String::from("需要管理员权限")))?;
+            let (admin_id, role_str, status) =
+                row.ok_or_else(|| CustomError::Forbidden(String::from("需要管理员权限")))?;
 
             if status != "ACTIVE" {
                 return Err(CustomError::Forbidden(String::from("管理员账号已停用")));
             }
 
-            let role = AdminRole::from_str(&role_str).ok_or_else(|| {
-                CustomError::internal(format!("未知管理员角色: {role_str}"))
-            })?;
+            let role = AdminRole::from_str(&role_str)
+                .ok_or_else(|| CustomError::internal(format!("未知管理员角色: {role_str}")))?;
 
             Ok(AdminToken {
                 admin_id,

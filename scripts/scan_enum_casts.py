@@ -17,6 +17,9 @@ import sys
 from pathlib import Path
 from collections import defaultdict
 
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="backslashreplace")
+
 ROOT = Path(__file__).resolve().parent.parent
 V3_SQL = ROOT / "src" / "v3.sql"
 DEFAULT_SCAN_DIR = ROOT / "src"

@@ -13,10 +13,124 @@ use crate::domain::order::{
 };
 use crate::errors::CustomError;
 use crate::infrastructure::event::publisher::EventPublisher;
+use crate::middlewares::target_group::is_active_target_group_member;
 use crate::models::pagination::{decode_cursor, encode_cursor, CursorPage};
 
 /// 订单应用服务
 pub struct OrderService;
+
+#[derive(Debug, Clone)]
+struct OrderActorPolicyContext {
+    actor_id: i64,
+    creator_id: i64,
+    guest_user_id: Option<i64>,
+    assignee_id: Option<i64>,
+    actor_is_active_group_member: bool,
+    actor_is_active_receiving_member: bool,
+    goal_time: Option<DateTime<Utc>>,
+    deadline: Option<DateTime<Utc>>,
+    now: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum OrderActorPolicyError {
+    UnrelatedActor,
+    AssigneeRequired,
+    CreatorRequired,
+    TimeoutParticipantRequired,
+    TimeoutDeadlineMissing,
+    TimeoutNotDue,
+    UnsupportedTargetStatus,
+}
+
+/// 订单状态 actor 纯策略；数据库身份与时间快照由事务内调用方传入。
+fn check_order_actor_policy(
+    context: &OrderActorPolicyContext,
+    to_status: OrderStatus,
+) -> Result<(), OrderActorPolicyError> {
+    let is_participant = context.actor_id == context.creator_id
+        || context.guest_user_id == Some(context.actor_id)
+        || context.assignee_id == Some(context.actor_id);
+
+    if !is_participant && !context.actor_is_active_group_member {
+        return Err(OrderActorPolicyError::UnrelatedActor);
+    }
+
+    match to_status {
+        OrderStatus::Accepted | OrderStatus::Rejected | OrderStatus::ProductionCompleted => {
+            let seller_allowed = match context.assignee_id {
+                Some(assignee_id) => context.actor_id == assignee_id,
+                None => context.actor_is_active_receiving_member,
+            };
+            if seller_allowed {
+                Ok(())
+            } else {
+                Err(OrderActorPolicyError::AssigneeRequired)
+            }
+        }
+        OrderStatus::Cancelled
+        | OrderStatus::ConfirmedCompleted
+        | OrderStatus::ConfirmedIncomplete => {
+            if context.actor_id == context.creator_id {
+                Ok(())
+            } else {
+                Err(OrderActorPolicyError::CreatorRequired)
+            }
+        }
+        OrderStatus::Timeout => {
+            if !is_participant {
+                return Err(OrderActorPolicyError::TimeoutParticipantRequired);
+            }
+            if context.goal_time.is_none() && context.deadline.is_none() {
+                return Err(OrderActorPolicyError::TimeoutDeadlineMissing);
+            }
+            let is_due = context
+                .goal_time
+                .is_some_and(|goal_time| goal_time <= context.now)
+                || context
+                    .deadline
+                    .is_some_and(|deadline| deadline <= context.now);
+            if is_due {
+                Ok(())
+            } else {
+                Err(OrderActorPolicyError::TimeoutNotDue)
+            }
+        }
+        OrderStatus::Created => Err(OrderActorPolicyError::UnsupportedTargetStatus),
+    }
+}
+
+fn actor_policy_error(error: OrderActorPolicyError) -> CustomError {
+    match error {
+        OrderActorPolicyError::TimeoutDeadlineMissing => {
+            CustomError::BadRequest("订单未设置可供用户触发的超时时间".into())
+        }
+        OrderActorPolicyError::TimeoutNotDue => {
+            CustomError::BadRequest("订单尚未到达超时时间".into())
+        }
+        OrderActorPolicyError::UnrelatedActor
+        | OrderActorPolicyError::AssigneeRequired
+        | OrderActorPolicyError::CreatorRequired
+        | OrderActorPolicyError::TimeoutParticipantRequired
+        | OrderActorPolicyError::UnsupportedTargetStatus => {
+            CustomError::Forbidden("无权操作该订单".into())
+        }
+    }
+}
+
+fn order_rating_transaction_type(delta: i32) -> Option<&'static str> {
+    if (1..=5).contains(&delta) {
+        Some("EARN")
+    } else if (-5..=-1).contains(&delta) {
+        Some("DEDUCT")
+    } else {
+        None
+    }
+}
+
+fn order_rating_idempotency_key(order_id: i64) -> String {
+    format!("order:{order_id}:rating")
+}
 
 /// 从 global_configs 读整数配置
 ///
@@ -95,57 +209,28 @@ impl OrderService {
         }
         let mut tx = db.begin().await?;
 
-        // 校验用户组成员资格
-        if let Some(gid) = input.group_id {
-            let is_member = sqlx::query_scalar::<_, bool>(
-                "SELECT EXISTS(SELECT 1 FROM association_group_members WHERE group_id=$1 AND user_id=$2)"
-            )
-            .bind(gid)
-            .bind(user_id)
-            .fetch_one(&mut *tx)
-            .await?;
-
-            if !is_member {
-                let mut allowed = false;
-                if let Some(code) = &input.invite_code {
-                    let group_code: Option<String> = sqlx::query_scalar(
-                        "SELECT invite_code FROM association_groups WHERE group_id=$1",
-                    )
-                    .bind(gid)
-                    .fetch_optional(&mut *tx)
-                    .await?
-                    .flatten();
-
-                    if let Some(gc) = group_code {
-                        if gc == *code {
-                            allowed = true;
-                        }
-                    }
-                }
-
-                if !allowed {
-                    tx.rollback().await.ok();
-                    return Err(CustomError::BadRequest("你不是该组成员且邀请码无效".into()));
-                }
-            }
-        }
+        // 普通订单只允许目标组 ACTIVE 成员创建。访客必须走 kitchens 专用链路，
+        // association_groups.invite_code 不再作为普通订单的授权凭证。
+        let group_id = input
+            .group_id
+            .ok_or_else(|| CustomError::BadRequest("普通订单必须指定 group_id".into()))?;
+        crate::middlewares::target_group::require_active_target_group_member(
+            &mut *tx, user_id, group_id,
+        )
+        .await?;
 
         let remark = input.remark.clone();
-        let points_reward = input.points_reward.unwrap_or(0);
-        let is_guest = input.is_guest.unwrap_or(input.group_id.is_none());
 
         let rec: OrderRecord = sqlx::query_as::<_, OrderRecord>(
             "INSERT INTO orders (user_id, guest_user_id, group_id, goal_time, remark, points_reward, is_guest) \
-             VALUES ($1,$2,$3,$4,$5,$6,$7) \
+             VALUES ($1,$2,$3,$4,$5,0,false) \
              RETURNING order_id, user_id, guest_user_id AS guest_id, group_id, status, goal_time, remark, points_reward, cancel_reason, reject_reason, last_status_change_at, created_at, updated_at, is_guest"
         )
         .bind(user_id)
         .bind::<Option<i64>>(None)
-        .bind(input.group_id)
+        .bind(group_id)
         .bind(input.goal_time)
         .bind(remark)
-        .bind(points_reward)
-        .bind(is_guest)
         .fetch_one(&mut *tx)
         .await?;
 
@@ -285,13 +370,7 @@ impl OrderService {
         );
         qb.push(" WHERE ");
         if let Some(gid) = query.group_id {
-            let is_member = sqlx::query_scalar::<_, bool>(
-                "SELECT EXISTS(SELECT 1 FROM association_group_members WHERE group_id=$1 AND user_id=$2)"
-            )
-            .bind(gid)
-            .bind(user_id)
-            .fetch_one(db)
-            .await?;
+            let is_member = is_active_target_group_member(db, user_id, gid).await?;
 
             qb.push(" o.group_id = ");
             qb.push_bind(gid);
@@ -471,15 +550,11 @@ impl OrderService {
         user_id: i64,
         query: &TeamTodayOrdersQuery,
     ) -> Result<Vec<OrderOutNew>, CustomError> {
-        let group_id = query.group_id;
+        let group_id = query
+            .group_id
+            .ok_or_else(|| CustomError::BadRequest("缺少 group_id".into()))?;
 
-        let is_member = sqlx::query_scalar::<_, bool>(
-            "SELECT EXISTS(SELECT 1 FROM association_group_members WHERE group_id=$1 AND user_id=$2)"
-        )
-        .bind(group_id)
-        .bind(user_id)
-        .fetch_one(db)
-        .await?;
+        let is_member = is_active_target_group_member(db, user_id, group_id).await?;
 
         if !is_member {
             return Err(CustomError::BadRequest("无权访问该组订单".into()));
@@ -652,6 +727,7 @@ impl OrderService {
     /// 获取订单详情
     pub async fn get_order_by_id(
         db: &PgPool,
+        user_id: i64,
         order_id: i64,
     ) -> Result<Option<OrderOutNew>, CustomError> {
         let row = sqlx::query(
@@ -665,9 +741,20 @@ impl OrderService {
             LEFT JOIN association_groups g ON o.group_id = g.group_id \
             LEFT JOIN users ur ON o.guest_user_id = ur.user_id \
             LEFT JOIN users uc ON o.user_id = uc.user_id \
-            WHERE o.order_id=$1"
+            WHERE o.order_id=$1 \
+              AND (o.user_id=$2 OR o.guest_user_id=$2 OR EXISTS ( \
+                  SELECT 1 \
+                  FROM association_group_members access_member \
+                  JOIN association_groups access_group \
+                    ON access_group.group_id = access_member.group_id \
+                  WHERE access_member.group_id = o.group_id \
+                    AND access_member.user_id = $2 \
+                    AND access_member.member_status = 'ACTIVE'::group_member_status_enum \
+                    AND access_group.status = 'ACTIVE'::user_status_enum \
+              ))"
         )
         .bind(order_id)
+        .bind(user_id)
         .fetch_optional(db)
         .await?;
 
@@ -828,7 +915,10 @@ impl OrderService {
         let mut tx = db.begin().await?;
 
         let current: Option<OrderRecord> = sqlx::query_as::<_, OrderRecord>(
-            "SELECT order_id, user_id, is_guest, guest_user_id AS guest_id, group_id, status, goal_time, remark, points_reward, cancel_reason, reject_reason, last_status_change_at, exp_grant_status, created_at, updated_at FROM orders WHERE order_id=$1 FOR UPDATE"
+            "SELECT order_id, user_id, is_guest, guest_user_id AS guest_id, group_id, status, \
+                    goal_time, deadline, assignee_id, remark, points_reward, cancel_reason, \
+                    reject_reason, last_status_change_at, exp_grant_status, created_at, updated_at \
+             FROM orders WHERE order_id=$1 FOR UPDATE",
         )
         .bind(input.order_id)
         .fetch_optional(&mut *tx)
@@ -837,10 +927,51 @@ impl OrderService {
             Some(o) => o,
             None => {
                 tx.rollback().await.ok();
-                return Err(CustomError::BadRequest("订单不存在".into()));
+                return Err(CustomError::order_not_found("订单不存在"));
             }
         };
         let from_status = order.status;
+
+        let actor_is_active_group_member = match order.group_id {
+            Some(group_id) => is_active_target_group_member(&mut *tx, user_id, group_id).await?,
+            None => false,
+        };
+        let actor_is_active_receiving_member = match order.group_id {
+            Some(group_id) => {
+                sqlx::query_scalar::<_, bool>(
+                    r#"SELECT EXISTS(
+                           SELECT 1
+                           FROM association_group_members m
+                           JOIN association_groups g ON g.group_id = m.group_id
+                           WHERE m.group_id = $1
+                             AND m.user_id = $2
+                             AND m.member_status = 'ACTIVE'::group_member_status_enum
+                             AND m.role_in_group = 'RECEIVING'::group_member_role_enum
+                             AND g.status = 'ACTIVE'::user_status_enum
+                       )"#,
+                )
+                .bind(group_id)
+                .bind(user_id)
+                .fetch_one(&mut *tx)
+                .await?
+            }
+            None => false,
+        };
+        check_order_actor_policy(
+            &OrderActorPolicyContext {
+                actor_id: user_id,
+                creator_id: order.user_id,
+                guest_user_id: order.guest_id,
+                assignee_id: order.assignee_id,
+                actor_is_active_group_member,
+                actor_is_active_receiving_member,
+                goal_time: order.goal_time,
+                deadline: order.deadline,
+                now: Utc::now(),
+            },
+            input.to_status,
+        )
+        .map_err(actor_policy_error)?;
 
         if order.status == input.to_status {
             tx.rollback().await.ok();
@@ -852,6 +983,22 @@ impl OrderService {
         }
 
         match input.to_status {
+            OrderStatus::Accepted => {
+                sqlx::query(
+                    "UPDATE orders \
+                     SET status=$2, assignee_id=COALESCE(assignee_id, $3), accepted_at=NOW(), \
+                         last_status_change_at=NOW(), updated_at=NOW() \
+                     WHERE order_id=$1",
+                )
+                .bind(order.order_id)
+                .bind(input.to_status)
+                .bind(user_id)
+                .execute(&mut *tx)
+                .await?;
+                if order.assignee_id.is_none() {
+                    order.assignee_id = Some(user_id);
+                }
+            }
             OrderStatus::Rejected => {
                 sqlx::query(
                     "UPDATE orders SET status=$2, reject_reason=$3, last_status_change_at=NOW(), updated_at=NOW() WHERE order_id=$1"
@@ -917,15 +1064,14 @@ impl OrderService {
         let pt_cfg = Self::get_group_point_config(&mut *tx, order.group_id).await;
         let points_delta = match input.to_status {
             OrderStatus::Cancelled => Some(pt_cfg.breeder_closed_points),
-            OrderStatus::ConfirmedCompleted => Some(
-                input
-                    .points_reward
-                    .unwrap_or(order.points_reward.max(pt_cfg.confirmed_finished_points)),
-            ),
+            OrderStatus::ConfirmedCompleted => Some(pt_cfg.confirmed_finished_points),
             OrderStatus::ConfirmedIncomplete => Some(pt_cfg.confirmed_unfinished_points),
             OrderStatus::Timeout => Some(pt_cfg.timeout_points),
             _ => None,
         };
+        // 完成奖励展示值只记录本次实际发放量；旧订单行里的值不参与奖励决策。
+        let mut actual_completion_reward =
+            matches!(input.to_status, OrderStatus::ConfirmedCompleted).then_some(0);
 
         // 待 commit 后推送的 socket 事件 (2026-07-08)
         // 用 Option 包住是因为只有积分/经验真的变动时才需要推
@@ -949,15 +1095,25 @@ impl OrderService {
                     Some(id) => id,
                     None => return Err(CustomError::BadRequest("订单缺少group_id".into())),
                 };
-                let receiver_user_id = match sqlx::query(
-                    "SELECT user_id FROM association_group_members WHERE group_id=$1 AND role_in_group='RECEIVING'::group_member_role_enum LIMIT 1"
-                )
-                .bind(group_id)
-                .fetch_optional(&mut *tx)
-                .await
-                {
-                    Ok(Some(r)) => r.get::<i64, _>("user_id"),
-                    _ => return Err(CustomError::BadRequest("未找到接单用户".into())),
+                let receiver_user_id = match order.assignee_id {
+                    Some(assignee_id) => assignee_id,
+                    None => match sqlx::query(
+                        r#"SELECT m.user_id
+                           FROM association_group_members m
+                           JOIN association_groups g ON g.group_id = m.group_id
+                           WHERE m.group_id=$1
+                             AND m.role_in_group='RECEIVING'::group_member_role_enum
+                             AND m.member_status='ACTIVE'::group_member_status_enum
+                             AND g.status='ACTIVE'::user_status_enum
+                           LIMIT 1"#,
+                    )
+                    .bind(group_id)
+                    .fetch_optional(&mut *tx)
+                    .await
+                    {
+                        Ok(Some(r)) => r.get::<i64, _>("user_id"),
+                        _ => return Err(CustomError::BadRequest("未找到接单用户".into())),
+                    },
                 };
 
                 // 2026-07-06 防刷单: 每日积分上限
@@ -965,7 +1121,8 @@ impl OrderService {
                 //   仅对正向奖励 (delta > 0) 生效; 扣分 (delta < 0) 不受上限影响
                 //   超额部分直接截断, 不报错 (订单流程照常)
                 let mut effective_delta = delta;
-                let mut points_cap_warning: Option<crate::domain::order::entities::DailyCapItem> = None;
+                let mut points_cap_warning: Option<crate::domain::order::entities::DailyCapItem> =
+                    None;
                 if delta > 0 {
                     let base_cap = read_global_int(&mut tx, "dailyLovePointLimit", 100).await;
                     let level_step =
@@ -1011,7 +1168,11 @@ impl OrderService {
                         // love_point_tx_type_enum 合法值: EARN / FREEZE / UNFREEZE / DEDUCT / ADJUST
                         // 订单完成: 正值用 EARN, 负值用 DEDUCT
                         // 字符串到自定义 enum PG 不会隐式转换, 必须 ::love_point_tx_type_enum
-                        let tx_type = if effective_delta >= 0 { "EARN" } else { "DEDUCT" };
+                        let tx_type = if effective_delta >= 0 {
+                            "EARN"
+                        } else {
+                            "DEDUCT"
+                        };
                         sqlx::query(
                             r#"INSERT INTO love_point_transactions
                                (user_id, group_id, type, amount, available_before, available_after, frozen_before, frozen_after, biz_type, biz_id)
@@ -1044,8 +1205,8 @@ impl OrderService {
                         .bind(balance_after as i64)
                         .execute(&mut *tx)
                         .await?;
-                        if effective_delta > 0 {
-                            order.points_reward = effective_delta;
+                        if actual_completion_reward.is_some() {
+                            actual_completion_reward = Some(effective_delta);
                         }
 
                         // 2026-07-08: 记录待推送的 love_point 变化 (commit 后调用)
@@ -1059,15 +1220,24 @@ impl OrderService {
                 }
                 // 把本次的截断信息(若有)累加到外层 warning
                 if let Some(p) = points_cap_warning {
-                    let entry = daily_cap_warning.get_or_insert_with(
-                        || crate::domain::order::entities::DailyCapWarning {
+                    let entry = daily_cap_warning.get_or_insert_with(|| {
+                        crate::domain::order::entities::DailyCapWarning {
                             points: None,
                             exp: None,
-                        },
-                    );
+                        }
+                    });
                     entry.points = Some(p);
                 }
             }
+        }
+
+        if let Some(actual_reward) = actual_completion_reward {
+            sqlx::query("UPDATE orders SET points_reward=$2, updated_at=NOW() WHERE order_id=$1")
+                .bind(order.order_id)
+                .bind(actual_reward)
+                .execute(&mut *tx)
+                .await?;
+            order.points_reward = actual_reward;
         }
 
         // 组经验发放 (订单完成 → association_groups.exp + 流水 + 防重发)
@@ -1085,7 +1255,7 @@ impl OrderService {
                 if exp_grant > 0 {
                     // 2) 锁住组行, 读当前 exp 和 level
                     let (current_exp, current_level): (i64, i32) = sqlx::query_as(
-                        "SELECT exp, level FROM association_groups WHERE group_id=$1 FOR UPDATE"
+                        "SELECT exp, level FROM association_groups WHERE group_id=$1 FOR UPDATE",
                     )
                     .bind(group_id)
                     .fetch_one(&mut *tx)
@@ -1097,8 +1267,7 @@ impl OrderService {
                     let base_exp_cap = read_global_int(&mut tx, "dailyGroupExpLimit", 200).await;
                     let exp_level_step =
                         read_global_int(&mut tx, "dailyGroupExpLimitLevelStep", 20).await;
-                    let actual_exp_cap =
-                        base_exp_cap + (current_level - 1).max(0) * exp_level_step;
+                    let actual_exp_cap = base_exp_cap + (current_level - 1).max(0) * exp_level_step;
                     let already_earned_today = sum_today_group_exp_earned(&mut tx, group_id).await;
                     let exp_room_left = (actual_exp_cap as i64 - already_earned_today).max(0);
 
@@ -1110,12 +1279,12 @@ impl OrderService {
 
                     // 记录截断提示 —— 仅当实际发的 < 原计划时记
                     if effective_exp_grant < (exp_grant as i64) {
-                        let entry = daily_cap_warning.get_or_insert_with(
-                            || crate::domain::order::entities::DailyCapWarning {
+                        let entry = daily_cap_warning.get_or_insert_with(|| {
+                            crate::domain::order::entities::DailyCapWarning {
                                 points: None,
                                 exp: None,
-                            },
-                        );
+                            }
+                        });
                         entry.exp = Some(crate::domain::order::entities::DailyCapItem {
                             granted: effective_exp_grant,
                             truncated: (exp_grant as i64) - effective_exp_grant,
@@ -1190,11 +1359,7 @@ impl OrderService {
                     // 2026-07-08: 记录待推送的组经验变化 (commit 后调用)
                     // 只推"实际发了经验"的情况, 没发的不打扰用户
                     // (新值 new_exp/new_level 已写入 group, push 函数会自己查最新值)
-                    push_group_exp = Some((
-                        group_id,
-                        user_id,
-                        "order_completed".to_string(),
-                    ));
+                    push_group_exp = Some((group_id, user_id, "order_completed".to_string()));
                 }
             }
         }
@@ -1385,52 +1550,84 @@ impl OrderService {
         order_id: i64,
         body: &OrderRatingCreateInput,
     ) -> Result<OrderRatingOut, CustomError> {
-        if body.delta == 0 || body.delta.abs() > 5 {
+        let mut tx = db.begin().await?;
+
+        let Some(transaction_type) = order_rating_transaction_type(body.delta) else {
+            tx.rollback().await.ok();
             return Err(CustomError::BadRequest(
                 "评分增减范围为 -5..5 且不能为0".into(),
             ));
-        }
+        };
+
         let order_row = sqlx::query(
-            "SELECT
-                    o.order_id,
-                    o.user_id,
-                    o.status,
-                    agm.user_id as target_user
-                FROM
-                    orders o
-                LEFT JOIN
-                    association_group_members agm
-                ON
-                    agm.group_id = o.group_id
-                WHERE
-                    o.order_id = $1 AND agm.role_in_group = 'RECEIVING'::group_member_role_enum FOR UPDATE",
+            r#"SELECT order_id, user_id, status, group_id, assignee_id
+               FROM orders
+               WHERE order_id = $1
+               FOR UPDATE"#,
         )
         .bind(order_id)
-        .fetch_optional(db)
+        .fetch_optional(&mut *tx)
         .await?;
-        let Some(or) = order_row else {
+        let Some(order_row) = order_row else {
+            tx.rollback().await.ok();
             return Err(CustomError::BadRequest("订单不存在".into()));
         };
-        let status: OrderStatus = or.get("status");
+
+        let locked_order_id: i64 = order_row.get("order_id");
+        let creator_id: i64 = order_row.get("user_id");
+        let status: OrderStatus = order_row.get("status");
+        let group_id: Option<i64> = order_row.get("group_id");
+        let assignee_id: Option<i64> = order_row.get("assignee_id");
+
         if status != OrderStatus::ConfirmedCompleted {
+            tx.rollback().await.ok();
             return Err(CustomError::BadRequest("仅完成的订单可评分".into()));
         }
-        let o_user_id: i64 = or.get("user_id");
-        if o_user_id != user_id {
+        if creator_id != user_id {
+            tx.rollback().await.ok();
             return Err(CustomError::BadRequest("仅下单用户可评分".into()));
         }
-        let receiver_id: i64 = or.get("target_user");
+        let Some(group_id) = group_id else {
+            tx.rollback().await.ok();
+            return Err(CustomError::BadRequest("订单缺少group_id".into()));
+        };
 
-        let existing = sqlx::query("SELECT rating_id FROM order_ratings WHERE order_id=$1")
-            .bind(order_id)
-            .fetch_optional(db)
-            .await?;
-        if existing.is_some() {
+        let existing_rating: Option<i64> =
+            sqlx::query_scalar("SELECT rating_id FROM order_ratings WHERE order_id = $1")
+                .bind(locked_order_id)
+                .fetch_optional(&mut *tx)
+                .await?;
+        if existing_rating.is_some() {
+            tx.rollback().await.ok();
             return Err(CustomError::BadRequest("该订单已评分".into()));
         }
 
-        let mut tx = db.begin().await?;
-        let target_row = sqlx::query("SELECT love_point FROM users WHERE user_id=$1 FOR UPDATE")
+        let receiver_id = match assignee_id {
+            Some(assignee_id) => assignee_id,
+            None => {
+                let receiver_id: Option<i64> = sqlx::query_scalar(
+                    r#"SELECT m.user_id
+                       FROM association_group_members m
+                       JOIN association_groups g ON g.group_id = m.group_id
+                       WHERE m.group_id = $1
+                         AND m.role_in_group = 'RECEIVING'::group_member_role_enum
+                         AND m.member_status = 'ACTIVE'::group_member_status_enum
+                         AND g.status = 'ACTIVE'::user_status_enum
+                       ORDER BY m.is_primary DESC, m.id ASC
+                       LIMIT 1"#,
+                )
+                .bind(group_id)
+                .fetch_optional(&mut *tx)
+                .await?;
+                let Some(receiver_id) = receiver_id else {
+                    tx.rollback().await.ok();
+                    return Err(CustomError::BadRequest("未找到接单用户".into()));
+                };
+                receiver_id
+            }
+        };
+
+        let target_row = sqlx::query("SELECT love_point FROM users WHERE user_id = $1 FOR UPDATE")
             .bind(receiver_id)
             .fetch_optional(&mut *tx)
             .await?;
@@ -1439,53 +1636,99 @@ impl OrderService {
             return Err(CustomError::BadRequest("被评分用户不存在".into()));
         };
         let current_lp: i32 = target_row.get("love_point");
-        let balance_after = current_lp + body.delta;
-        sqlx::query("UPDATE users SET love_point=$2 WHERE user_id=$1")
-            .bind(receiver_id)
-            .bind(balance_after)
-            .execute(&mut *tx)
-            .await?;
-        // 同步 user_group_points —— 评分也会动积分,得保持一致
-        // 当前是 1v1 组,用 order.group_id 即可
-        let rating_gid: Option<i64> = sqlx::query_scalar(
-            "SELECT group_id FROM orders WHERE order_id = $1"
-        )
-        .bind(order_id)
-        .fetch_optional(&mut *tx)
-        .await?
-        .flatten();
-        if let Some(gid) = rating_gid {
-            sqlx::query(
-                "INSERT INTO user_group_points (user_id, group_id, available_love_point, love_point, frozen_love_point, updated_at) \
-                 VALUES ($1, $2, $3, $3, 0, NOW()) \
-                 ON CONFLICT (user_id, group_id) DO UPDATE \
-                 SET available_love_point = $3, love_point = $3, updated_at = NOW()"
-            )
-            .bind(receiver_id)
-            .bind(gid)
-            .bind(balance_after as i64)
-            .execute(&mut *tx)
-            .await?;
-        }
+        let balance_after = current_lp
+            .checked_add(body.delta)
+            .ok_or_else(|| CustomError::internal("用户爱心积分溢出"))?;
+
+        // 先确保组积分行存在，再锁住它读取真实冻结余额。
         sqlx::query(
-            "INSERT INTO love_point_transactions (user_id, amount, type, biz_type, biz_id, available_after) VALUES ($1,$2,'ORDER_RATING','ORDER',$3,$4)"
+            r#"INSERT INTO user_group_points
+                   (user_id, group_id, available_love_point, love_point, frozen_love_point, updated_at)
+               VALUES ($1, $2, $3, $3, 0, NOW())
+               ON CONFLICT (user_id, group_id) DO NOTHING"#,
         )
         .bind(receiver_id)
-        .bind(body.delta)
-        .bind(order_id)
-        .bind(balance_after)
+        .bind(group_id)
+        .bind(i64::from(current_lp))
         .execute(&mut *tx)
         .await?;
-        let rating_row = sqlx::query(
-            "INSERT INTO order_ratings (order_id, rater_user_id, target_user_id, delta, remark) VALUES ($1,$2,$3,$4,$5) RETURNING rating_id, order_id, rater_user_id, target_user_id, delta, remark, created_at"
+        let frozen_love_point: i64 = sqlx::query_scalar(
+            r#"SELECT frozen_love_point
+               FROM user_group_points
+               WHERE user_id = $1 AND group_id = $2
+               FOR UPDATE"#,
         )
-        .bind(order_id)
+        .bind(receiver_id)
+        .bind(group_id)
+        .fetch_one(&mut *tx)
+        .await?;
+
+        // 唯一约束是并发兜底；评分行成功占位后才允许修改余额。
+        let rating_row = sqlx::query(
+            r#"INSERT INTO order_ratings
+                   (order_id, rater_user_id, target_user_id, delta, remark)
+               VALUES ($1, $2, $3, $4, $5)
+               ON CONFLICT (order_id) DO NOTHING
+               RETURNING rating_id, order_id, rater_user_id, target_user_id, delta, remark, created_at"#,
+        )
+        .bind(locked_order_id)
         .bind(user_id)
         .bind(receiver_id)
         .bind(body.delta)
         .bind(&body.remark)
-        .fetch_one(&mut *tx)
+        .fetch_optional(&mut *tx)
         .await?;
+        let Some(rating_row) = rating_row else {
+            tx.rollback().await.ok();
+            return Err(CustomError::BadRequest("该订单已评分".into()));
+        };
+
+        let idempotency_key = order_rating_idempotency_key(locked_order_id);
+        let transaction_id: Option<i64> = sqlx::query_scalar(
+            r#"INSERT INTO love_point_transactions
+                   (user_id, group_id, type, amount, available_before, available_after,
+                    frozen_before, frozen_after, biz_type, biz_id, idempotency_key)
+               VALUES
+                   ($1, $2, $3::love_point_tx_type_enum, $4, $5, $6,
+                    $7, $7, 'ORDER_RATING', $8, $9)
+               ON CONFLICT (idempotency_key) WHERE idempotency_key IS NOT NULL
+               DO NOTHING
+               RETURNING id"#,
+        )
+        .bind(receiver_id)
+        .bind(group_id)
+        .bind(transaction_type)
+        .bind(i64::from(body.delta))
+        .bind(i64::from(current_lp))
+        .bind(i64::from(balance_after))
+        .bind(frozen_love_point)
+        .bind(locked_order_id)
+        .bind(&idempotency_key)
+        .fetch_optional(&mut *tx)
+        .await?;
+        if transaction_id.is_none() {
+            tx.rollback().await.ok();
+            return Err(CustomError::BadRequest("该订单已评分".into()));
+        }
+
+        sqlx::query("UPDATE users SET love_point = $2 WHERE user_id = $1")
+            .bind(receiver_id)
+            .bind(balance_after)
+            .execute(&mut *tx)
+            .await?;
+        sqlx::query(
+            r#"UPDATE user_group_points
+               SET available_love_point = $3,
+                   love_point = $3,
+                   updated_at = NOW()
+               WHERE user_id = $1 AND group_id = $2"#,
+        )
+        .bind(receiver_id)
+        .bind(group_id)
+        .bind(i64::from(balance_after))
+        .execute(&mut *tx)
+        .await?;
+
         tx.commit().await?;
         Ok(OrderRatingOut {
             rating_id: rating_row.get("rating_id"),
@@ -1504,10 +1747,11 @@ impl OrderService {
         user_id: i64,
         order_id: i64,
     ) -> Result<Option<OrderRatingOut>, CustomError> {
-        let order_row = sqlx::query("SELECT user_id, guest_user_id AS guest_id FROM orders WHERE order_id=$1")
-            .bind(order_id)
-            .fetch_optional(db)
-            .await?;
+        let order_row =
+            sqlx::query("SELECT user_id, guest_user_id AS guest_id FROM orders WHERE order_id=$1")
+                .bind(order_id)
+                .fetch_optional(db)
+                .await?;
         let Some(or) = order_row else {
             return Err(CustomError::BadRequest("订单不存在".into()));
         };
@@ -1582,16 +1826,9 @@ impl OrderService {
             "confirmedUnfinishedPoints",
             cfg.confirmed_unfinished_points
         );
-        cfg.breeder_closed_points = read_global_int!(
-            &mut *conn,
-            "breederClosedPoints",
-            cfg.breeder_closed_points
-        );
-        cfg.timeout_points = read_global_int!(
-            &mut *conn,
-            "timeoutPoints",
-            cfg.timeout_points
-        );
+        cfg.breeder_closed_points =
+            read_global_int!(&mut *conn, "breederClosedPoints", cfg.breeder_closed_points);
+        cfg.timeout_points = read_global_int!(&mut *conn, "timeoutPoints", cfg.timeout_points);
 
         // 2) per-group 覆盖 (FSD §11.23 group_configs 表) —— 已存在的 group 行会盖掉上面 4 个值
         //    group_configs.normal_order_love_point 替代旧 group_point_configs.confirmed_finished_points
@@ -1603,11 +1840,12 @@ impl OrderService {
                         confirmed_unfinished_points, \
                         timeout_points, \
                         overdue_unfinished_points \
-                 FROM group_configs WHERE group_id=$1"
+                 FROM group_configs WHERE group_id=$1",
             )
             .bind(gid)
             .fetch_optional(&mut *conn)
-            .await {
+            .await
+            {
                 cfg = r;
             }
         }
@@ -1637,5 +1875,137 @@ impl Default for GroupPointConfigOut {
             timeout_points: 0,
             overdue_unfinished_points: 0,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::Duration;
+
+    const CREATOR: i64 = 10;
+    const GUEST: i64 = 11;
+    const ASSIGNEE: i64 = 12;
+    const GROUP_MEMBER: i64 = 13;
+    const RECEIVER: i64 = 14;
+    const OUTSIDER: i64 = 15;
+
+    fn assigned_context(actor_id: i64) -> OrderActorPolicyContext {
+        let now = Utc::now();
+        OrderActorPolicyContext {
+            actor_id,
+            creator_id: CREATOR,
+            guest_user_id: Some(GUEST),
+            assignee_id: Some(ASSIGNEE),
+            actor_is_active_group_member: matches!(actor_id, GROUP_MEMBER | RECEIVER),
+            actor_is_active_receiving_member: actor_id == RECEIVER,
+            goal_time: Some(now - Duration::minutes(1)),
+            deadline: None,
+            now,
+        }
+    }
+
+    #[test]
+    fn assigned_order_actor_matrix_covers_every_target_status() {
+        let cases: &[(OrderStatus, &[i64])] = &[
+            (OrderStatus::Created, &[]),
+            (OrderStatus::Accepted, &[ASSIGNEE]),
+            (OrderStatus::Rejected, &[ASSIGNEE]),
+            (OrderStatus::ProductionCompleted, &[ASSIGNEE]),
+            (OrderStatus::Cancelled, &[CREATOR]),
+            (OrderStatus::ConfirmedCompleted, &[CREATOR]),
+            (OrderStatus::ConfirmedIncomplete, &[CREATOR]),
+            (OrderStatus::Timeout, &[CREATOR, GUEST, ASSIGNEE]),
+        ];
+        let actors = [CREATOR, GUEST, ASSIGNEE, GROUP_MEMBER, RECEIVER, OUTSIDER];
+
+        for (status, allowed_actors) in cases {
+            for actor in actors {
+                assert_eq!(
+                    check_order_actor_policy(&assigned_context(actor), *status).is_ok(),
+                    allowed_actors.contains(&actor),
+                    "unexpected decision for status={status:?}, actor={actor}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn legacy_unassigned_order_requires_active_receiving_member() {
+        for status in [
+            OrderStatus::Accepted,
+            OrderStatus::Rejected,
+            OrderStatus::ProductionCompleted,
+        ] {
+            let mut receiver = assigned_context(RECEIVER);
+            receiver.assignee_id = None;
+            assert!(check_order_actor_policy(&receiver, status).is_ok());
+
+            let mut ordinary_member = assigned_context(GROUP_MEMBER);
+            ordinary_member.assignee_id = None;
+            assert_eq!(
+                check_order_actor_policy(&ordinary_member, status),
+                Err(OrderActorPolicyError::AssigneeRequired)
+            );
+
+            let mut inactive_receiver = assigned_context(OUTSIDER);
+            inactive_receiver.assignee_id = None;
+            inactive_receiver.actor_is_active_receiving_member = false;
+            assert_eq!(
+                check_order_actor_policy(&inactive_receiver, status),
+                Err(OrderActorPolicyError::UnrelatedActor)
+            );
+        }
+    }
+
+    #[test]
+    fn timeout_requires_participant_and_expired_timestamp() {
+        let now = Utc::now();
+        let mut creator = assigned_context(CREATOR);
+        creator.now = now;
+        creator.goal_time = None;
+        creator.deadline = None;
+        assert_eq!(
+            check_order_actor_policy(&creator, OrderStatus::Timeout),
+            Err(OrderActorPolicyError::TimeoutDeadlineMissing)
+        );
+
+        creator.goal_time = Some(now + Duration::minutes(1));
+        assert_eq!(
+            check_order_actor_policy(&creator, OrderStatus::Timeout),
+            Err(OrderActorPolicyError::TimeoutNotDue)
+        );
+
+        creator.deadline = Some(now - Duration::seconds(1));
+        assert!(check_order_actor_policy(&creator, OrderStatus::Timeout).is_ok());
+
+        let mut member = assigned_context(GROUP_MEMBER);
+        member.now = now;
+        member.goal_time = Some(now - Duration::seconds(1));
+        assert_eq!(
+            check_order_actor_policy(&member, OrderStatus::Timeout),
+            Err(OrderActorPolicyError::TimeoutParticipantRequired)
+        );
+    }
+
+    #[test]
+    fn order_rating_transaction_type_follows_delta_direction() {
+        for delta in 1..=5 {
+            assert_eq!(order_rating_transaction_type(delta), Some("EARN"));
+        }
+        for delta in -5..=-1 {
+            assert_eq!(order_rating_transaction_type(delta), Some("DEDUCT"));
+        }
+        for invalid_delta in [-6, 0, 6] {
+            assert_eq!(order_rating_transaction_type(invalid_delta), None);
+        }
+    }
+
+    #[test]
+    fn order_rating_idempotency_key_is_stable() {
+        assert_eq!(
+            order_rating_idempotency_key(42),
+            "order:42:rating".to_string()
+        );
     }
 }

@@ -109,24 +109,45 @@ pub async fn init_app_state() -> Result<Arc<AppState>, CustomError> {
 
     // 生产级连接池配置
     let db_pool = PgPoolOptions::new()
-        .max_connections(env::var("DB_MAX_CONNECTIONS")
-            .ok().and_then(|s| s.parse().ok()).unwrap_or(20))
-        .min_connections(env::var("DB_MIN_CONNECTIONS")
-            .ok().and_then(|s| s.parse().ok()).unwrap_or(2))
+        .max_connections(
+            env::var("DB_MAX_CONNECTIONS")
+                .ok()
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(20),
+        )
+        .min_connections(
+            env::var("DB_MIN_CONNECTIONS")
+                .ok()
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(2),
+        )
         .acquire_timeout(std::time::Duration::from_secs(
             env::var("DB_ACQUIRE_TIMEOUT_SECS")
-                .ok().and_then(|s| s.parse().ok()).unwrap_or(3),
+                .ok()
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(3),
         ))
         .idle_timeout(std::time::Duration::from_secs(
             env::var("DB_IDLE_TIMEOUT_SECS")
-                .ok().and_then(|s| s.parse().ok()).unwrap_or(600),
+                .ok()
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(600),
         ))
         .max_lifetime(std::time::Duration::from_secs(
             env::var("DB_MAX_LIFETIME_SECS")
-                .ok().and_then(|s| s.parse().ok()).unwrap_or(1800),
+                .ok()
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(1800),
         ))
         .connect(&db_url)
         .await?;
+
+    // v3.sql 用于空库初始化；此处只执行 forward-only 增量迁移。
+    // SQLx migrator 使用数据库锁，多个实例同时启动时不会重复应用同一版本。
+    sqlx::migrate!("./migrations")
+        .run(&db_pool)
+        .await
+        .map_err(|e| CustomError::internal(format!("数据库迁移失败: {e}")))?;
 
     let app_state = Arc::new(AppState {
         db_pool,

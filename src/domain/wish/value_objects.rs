@@ -3,8 +3,21 @@
 // FSD.latest.md compliant - 7状态模型
 
 use serde::{Deserialize, Serialize};
-use utoipa::ToSchema;
 use sqlx::Type;
+use utoipa::ToSchema;
+
+pub const WISH_COST_MIN: i32 = 1;
+pub const WISH_COST_MAX: i32 = 1_000_000;
+pub const WISH_COST_RANGE_ERROR: &str = "心愿积分价格必须在 1..=1000000 范围内";
+
+/// 校验所有心愿积分价格字段共用的业务边界。
+pub fn validate_wish_cost(cost: i32) -> Result<(), &'static str> {
+    if (WISH_COST_MIN..=WISH_COST_MAX).contains(&cost) {
+        Ok(())
+    } else {
+        Err(WISH_COST_RANGE_ERROR)
+    }
+}
 
 /// 心愿状态枚举 - 6状态模型(DRAFT 已删除,创建直接进入 NEGOTIATING)
 /// 状态机:
@@ -37,7 +50,10 @@ pub enum WishStatus {
 /// 心愿协商动作枚举
 #[allow(dead_code)]
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, ToSchema, Type, PartialEq, Eq)]
-#[sqlx(type_name = "wish_negotiation_action_enum", rename_all = "SCREAMING_SNAKE_CASE")]
+#[sqlx(
+    type_name = "wish_negotiation_action_enum",
+    rename_all = "SCREAMING_SNAKE_CASE"
+)]
 pub enum WishNegotiationAction {
     /// 报价
     #[serde(rename = "QUOTE")]
@@ -61,7 +77,10 @@ pub enum WishNegotiationAction {
 
 /// 质量查看状态
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, ToSchema, Type, PartialEq, Eq)]
-#[sqlx(type_name = "wish_quality_status_enum", rename_all = "SCREAMING_SNAKE_CASE")]
+#[sqlx(
+    type_name = "wish_quality_status_enum",
+    rename_all = "SCREAMING_SNAKE_CASE"
+)]
 pub enum WishQualityStatus {
     #[serde(rename = "NONE")]
     None,
@@ -92,7 +111,10 @@ impl WishStatus {
 
     /// 判断是否为终态
     pub fn is_terminal(self) -> bool {
-        matches!(self, WishStatus::Finished | WishStatus::Expired | WishStatus::Closed)
+        matches!(
+            self,
+            WishStatus::Finished | WishStatus::Expired | WishStatus::Closed
+        )
     }
 
     /// 判断是否为可选择状态(可被发起人选择并冻结积分)
@@ -103,5 +125,41 @@ impl WishStatus {
     /// 判断是否为可协商状态
     pub fn is_negotiable(self) -> bool {
         matches!(self, WishStatus::Negotiating)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{validate_wish_cost, WISH_COST_MAX, WISH_COST_MIN};
+
+    #[test]
+    fn wish_cost_accepts_inclusive_boundaries() {
+        assert!(validate_wish_cost(WISH_COST_MIN).is_ok());
+        assert!(validate_wish_cost(WISH_COST_MAX).is_ok());
+    }
+
+    #[test]
+    fn wish_cost_rejects_values_outside_range() {
+        for cost in [i32::MIN, -1, 0, WISH_COST_MAX + 1, i32::MAX] {
+            assert!(
+                validate_wish_cost(cost).is_err(),
+                "{cost} should be rejected"
+            );
+        }
+    }
+
+    #[test]
+    fn wish_close_transition_only_allows_non_terminal_states() {
+        use super::WishStatus::*;
+
+        for status in [Negotiating, Created, Claimed] {
+            assert!(status.can_transition(Closed), "{status:?} should close");
+        }
+        for status in [Finished, Expired, Closed] {
+            assert!(
+                !status.can_transition(Closed),
+                "{status:?} must remain terminal"
+            );
+        }
     }
 }

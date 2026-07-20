@@ -13,26 +13,22 @@ use crate::config::AppState;
 use crate::errors::CustomError;
 use crate::middlewares::auth::UserToken;
 use crate::middlewares::require_group::RequireGroup;
+use crate::middlewares::target_group::require_active_target_group_member;
 use crate::utils::response::ApiResponse;
 
 /// 配置签到路由
 pub fn configure(cfg: &mut ServiceConfig) {
     // 不用 web::scope —— 避免圈住路径
+    cfg.service(web::resource("/api/groups/{group_id}/sign-in").route(web::post().to(sign_in)));
     cfg.service(
-        web::resource("/api/groups/{group_id}/sign-in")
-            .route(web::post().to(sign_in)),
-    );
-    cfg.service(
-        web::resource("/api/groups/{group_id}/sign-in/status")
-            .route(web::get().to(sign_in_status)),
+        web::resource("/api/groups/{group_id}/sign-in/status").route(web::get().to(sign_in_status)),
     );
     cfg.service(
         web::resource("/api/groups/{group_id}/sign-in/calendar")
             .route(web::get().to(get_sign_in_calendar)),
     );
     cfg.service(
-        web::resource("/api/groups/{group_id}/sign-ins")
-            .route(web::get().to(get_sign_ins)),
+        web::resource("/api/groups/{group_id}/sign-ins").route(web::get().to(get_sign_ins)),
     );
 }
 
@@ -196,6 +192,7 @@ pub async fn sign_in(
     path: ntex::web::types::Path<i64>,
 ) -> Result<impl Responder, CustomError> {
     let group_id = *path;
+    require_active_target_group_member(&state.db_pool, token.user_id, group_id).await?;
     let app_state = (*state).clone();
     let result = SignService::daily_checkin(token, group_id, &app_state).await?;
     Ok(ApiResponse::success(DailyCheckinResponse {
@@ -233,18 +230,7 @@ pub async fn sign_in_status(
     let group_id = *path;
     let db = &state.db_pool;
 
-    // 检查用户是否是组成员
-    let is_member: bool = sqlx::query_scalar::<_, bool>(
-        "SELECT EXISTS(SELECT 1 FROM association_group_members WHERE group_id=$1 AND user_id=$2 AND member_status = 'ACTIVE'::group_member_status_enum)"
-    )
-    .bind(group_id)
-    .bind(token.user_id)
-    .fetch_one(db)
-    .await?;
-
-    if !is_member {
-        return Err(CustomError::Forbidden("非组成员".into()));
-    }
+    require_active_target_group_member(db, token.user_id, group_id).await?;
 
     // 获取今天日期
     let today = chrono::Utc::now().date_naive();
@@ -266,7 +252,7 @@ pub async fn sign_in_status(
     let last_sign_row: Option<(chrono::NaiveDate, i32)> = sqlx::query_as(
         "SELECT sign_date, consecutive_days FROM sign_in_records
          WHERE group_id = $1 AND user_id = $2
-         ORDER BY sign_date DESC LIMIT 1"
+         ORDER BY sign_date DESC LIMIT 1",
     )
     .bind(group_id)
     .bind(token.user_id)
@@ -298,19 +284,14 @@ pub async fn sign_in_status(
     let daily_checkin_rewards = SignService::load_sign_rewards(db).await;
 
     // 找出当前用户
-    let my_member = member_statuses
-        .iter()
-        .find(|m| m.user_id == token.user_id);
+    let my_member = member_statuses.iter().find(|m| m.user_id == token.user_id);
 
     // 当前用户今日签到状态
     let today_signed = my_member.map(|m| m.signed).unwrap_or(false);
     // 连续天数用 compute_current_consecutive_days 算 —— 关键修复:
     // 今天没签但昨天签了 → 仍然返回"streak 还在"
-    let consecutive_days = compute_current_consecutive_days(
-        today,
-        last_sign_date,
-        last_consecutive_days,
-    );
+    let consecutive_days =
+        compute_current_consecutive_days(today, last_sign_date, last_consecutive_days);
 
     // 累计签到天数(从 sign_in_records 查 COUNT)
     let total_sign_days: i64 = sqlx::query_scalar(
@@ -377,23 +358,17 @@ pub async fn get_sign_in_calendar(
     let group_id = *path;
     let db = &state.db_pool;
 
-    // 检查用户是否是组成员
-    let is_member: bool = sqlx::query_scalar::<_, bool>(
-        "SELECT EXISTS(SELECT 1 FROM association_group_members WHERE group_id=$1 AND user_id=$2 AND member_status = 'ACTIVE'::group_member_status_enum)"
-    )
-    .bind(group_id)
-    .bind(token.user_id)
-    .fetch_one(db)
-    .await?;
-    if !is_member {
-        return Err(CustomError::Forbidden("非组成员".into()));
-    }
+    require_active_target_group_member(db, token.user_id, group_id).await?;
 
     // 解析 month 参数, 不传或格式错 → 默认当前月
     let (year, month) = match query.month.as_deref() {
         Some(s) if s.len() == 7 && s.chars().nth(4) == Some('-') => {
-            let y: i32 = s[..4].parse().map_err(|_| CustomError::BadRequest("month 格式应为 YYYY-MM".into()))?;
-            let m: u32 = s[5..].parse().map_err(|_| CustomError::BadRequest("month 格式应为 YYYY-MM".into()))?;
+            let y: i32 = s[..4]
+                .parse()
+                .map_err(|_| CustomError::BadRequest("month 格式应为 YYYY-MM".into()))?;
+            let m: u32 = s[5..]
+                .parse()
+                .map_err(|_| CustomError::BadRequest("month 格式应为 YYYY-MM".into()))?;
             if !(1..=12).contains(&m) {
                 return Err(CustomError::BadRequest("month 月份必须在 1-12".into()));
             }
@@ -401,7 +376,10 @@ pub async fn get_sign_in_calendar(
         }
         _ => {
             let now = chrono::Utc::now();
-            (now.format("%Y").to_string().parse().unwrap(), now.format("%m").to_string().parse().unwrap())
+            (
+                now.format("%Y").to_string().parse().unwrap(),
+                now.format("%m").to_string().parse().unwrap(),
+            )
         }
     };
 
@@ -421,7 +399,7 @@ pub async fn get_sign_in_calendar(
            FROM association_group_members agm
            JOIN users u ON u.user_id = agm.user_id
            WHERE agm.group_id = $1 AND agm.member_status = 'ACTIVE'::group_member_status_enum
-           ORDER BY agm.user_id ASC"#
+           ORDER BY agm.user_id ASC"#,
     )
     .bind(group_id)
     .fetch_all(db)
@@ -429,7 +407,11 @@ pub async fn get_sign_in_calendar(
 
     let members: Vec<CalendarMember> = member_rows
         .into_iter()
-        .map(|(uid, nick, ava)| CalendarMember { user_id: uid, nick_name: nick, avatar: ava })
+        .map(|(uid, nick, ava)| CalendarMember {
+            user_id: uid,
+            nick_name: nick,
+            avatar: ava,
+        })
         .collect();
 
     // 2) 查月份内的签到记录 (按 sign_date, created_at 排序, 前端用 created_at 判"先/后")
@@ -437,7 +419,7 @@ pub async fn get_sign_in_calendar(
         r#"SELECT user_id, sign_date, created_at
            FROM sign_in_records
            WHERE group_id = $1 AND sign_date >= $2 AND sign_date < $3
-           ORDER BY sign_date ASC, created_at ASC"#
+           ORDER BY sign_date ASC, created_at ASC"#,
     )
     .bind(group_id)
     .bind(start)
@@ -449,13 +431,10 @@ pub async fn get_sign_in_calendar(
     let mut days_map: std::collections::BTreeMap<chrono::NaiveDate, Vec<CalendarSigner>> =
         std::collections::BTreeMap::new();
     for (uid, sign_date, signed_at) in sign_rows {
-        days_map
-            .entry(sign_date)
-            .or_default()
-            .push(CalendarSigner {
-                user_id: uid,
-                signed_at: signed_at.to_rfc3339(),
-            });
+        days_map.entry(sign_date).or_default().push(CalendarSigner {
+            user_id: uid,
+            signed_at: signed_at.to_rfc3339(),
+        });
     }
 
     // 4) 生成"月内每一天"的列表 (没签到的日子 signers=[])
@@ -503,36 +482,30 @@ pub async fn get_sign_ins(
     let group_id = *path;
     let db = &state.db_pool;
 
-    // 检查用户是否是组成员
-    let is_member: bool = sqlx::query_scalar::<_, bool>(
-        "SELECT EXISTS(SELECT 1 FROM association_group_members WHERE group_id=$1 AND user_id=$2 AND member_status = 'ACTIVE'::group_member_status_enum)"
-    )
-    .bind(group_id)
-    .bind(token.user_id)
-    .fetch_one(db)
-    .await?;
+    require_active_target_group_member(db, token.user_id, group_id).await?;
 
-    if !is_member {
-        return Err(CustomError::Forbidden("非组成员".into()));
-    }
-
-    let date_filter = if let Some(ref ym) = query.year_month {
-        format!("AND TO_CHAR(sr.sign_date, 'YYYY-MM') = '{}'", ym)
-    } else {
-        String::new()
+    let (start, next_month_start) = match query.year_month.as_deref() {
+        Some(value) => {
+            let (start, next_month_start) = parse_year_month(value)?;
+            (Some(start), Some(next_month_start))
+        }
+        None => (None, None),
     };
 
-    let sql = format!(
+    let records = sqlx::query(
         r#"SELECT sr.id, sr.user_id, sr.sign_date, sr.consecutive_days, sr.diamond_reward, u.nick_name
            FROM sign_in_records sr
            JOIN users u ON u.user_id = sr.user_id
-           WHERE sr.group_id = $1 {}
+           WHERE sr.group_id = $1
+             AND ($2::date IS NULL OR (sr.sign_date >= $2 AND sr.sign_date < $3))
            ORDER BY sr.sign_date DESC
            LIMIT 31"#,
-        date_filter
-    );
-
-    let records = sqlx::query(&sql).bind(group_id).fetch_all(db).await?;
+    )
+    .bind(group_id)
+    .bind(start)
+    .bind(next_month_start)
+    .fetch_all(db)
+    .await?;
 
     let items: Vec<serde_json::Value> = records
         .iter()
@@ -559,9 +532,91 @@ pub struct SignInsQuery {
     pub year_month: Option<String>,
 }
 
+fn parse_year_month(value: &str) -> Result<(chrono::NaiveDate, chrono::NaiveDate), CustomError> {
+    let bytes = value.as_bytes();
+    if bytes.len() != 7
+        || bytes[4] != b'-'
+        || !bytes[..4].iter().all(u8::is_ascii_digit)
+        || !bytes[5..].iter().all(u8::is_ascii_digit)
+    {
+        return Err(CustomError::BadRequest(
+            "year_month 格式应为 YYYY-MM".into(),
+        ));
+    }
+
+    let year = value[..4]
+        .parse::<i32>()
+        .map_err(|_| CustomError::BadRequest("year_month 格式应为 YYYY-MM".into()))?;
+    let month = value[5..]
+        .parse::<u32>()
+        .map_err(|_| CustomError::BadRequest("year_month 格式应为 YYYY-MM".into()))?;
+    let start = chrono::NaiveDate::from_ymd_opt(year, month, 1)
+        .ok_or_else(|| CustomError::BadRequest("year_month 不是有效月份".into()))?;
+    let (next_year, next_month) = if month == 12 {
+        (
+            year.checked_add(1)
+                .ok_or_else(|| CustomError::BadRequest("year_month 超出支持范围".into()))?,
+            1,
+        )
+    } else {
+        (year, month + 1)
+    };
+    let next_month_start = chrono::NaiveDate::from_ymd_opt(next_year, next_month, 1)
+        .ok_or_else(|| CustomError::BadRequest("year_month 超出支持范围".into()))?;
+
+    Ok((start, next_month_start))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn year_month_builds_half_open_month_range() {
+        let (start, next_month_start) = parse_year_month("2026-01").unwrap();
+        assert_eq!(start, chrono::NaiveDate::from_ymd_opt(2026, 1, 1).unwrap());
+        assert_eq!(
+            next_month_start,
+            chrono::NaiveDate::from_ymd_opt(2026, 2, 1).unwrap()
+        );
+    }
+
+    #[test]
+    fn year_month_handles_december_year_boundary() {
+        let (start, next_month_start) = parse_year_month("2026-12").unwrap();
+        assert_eq!(start, chrono::NaiveDate::from_ymd_opt(2026, 12, 1).unwrap());
+        assert_eq!(
+            next_month_start,
+            chrono::NaiveDate::from_ymd_opt(2027, 1, 1).unwrap()
+        );
+    }
+
+    #[test]
+    fn year_month_handles_leap_february_boundary() {
+        let (start, next_month_start) = parse_year_month("2028-02").unwrap();
+        assert_eq!(start, chrono::NaiveDate::from_ymd_opt(2028, 2, 1).unwrap());
+        assert_eq!(
+            next_month_start,
+            chrono::NaiveDate::from_ymd_opt(2028, 3, 1).unwrap()
+        );
+    }
+
+    #[test]
+    fn year_month_rejects_non_strict_or_invalid_values() {
+        for value in [
+            "2026-6",
+            "26-06",
+            "2026/06",
+            "2026-00",
+            "2026-13",
+            "2026-06' OR 1=1",
+        ] {
+            assert!(matches!(
+                parse_year_month(value),
+                Err(CustomError::BadRequest(_))
+            ));
+        }
+    }
 
     #[test]
     fn sign_in_status_response_contains_rewards_field() {
@@ -578,7 +633,11 @@ mod tests {
         };
         let json = serde_json::to_value(&resp).unwrap();
         assert!(json.get("daily_checkin_rewards").is_some());
-        let arr = json.get("daily_checkin_rewards").unwrap().as_array().unwrap();
+        let arr = json
+            .get("daily_checkin_rewards")
+            .unwrap()
+            .as_array()
+            .unwrap();
         assert_eq!(arr.len(), 7);
         assert_eq!(arr[0].as_i64().unwrap(), 5);
         assert_eq!(arr[6].as_i64().unwrap(), 20);

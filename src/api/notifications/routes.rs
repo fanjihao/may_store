@@ -4,7 +4,7 @@
 use ntex::web::{
     self,
     types::{Json, Path, Query, State},
-    HttpResponse, Responder, ServiceConfig,
+    Responder, ServiceConfig,
 };
 use serde::{Deserialize, Serialize};
 use sqlx::Row;
@@ -23,7 +23,10 @@ pub fn configure(cfg: &mut ServiceConfig) {
         web::scope("/api/notifications")
             .route("", web::get().to(get_notifications))
             .route("/unread-count", web::get().to(get_unread_count))
-            .route("/{notification_id}/read", web::post().to(mark_single_as_read))
+            .route(
+                "/{notification_id}/read",
+                web::post().to(mark_single_as_read),
+            )
             .route("/read-all", web::post().to(mark_all_as_read))
             .route("/{notification_id}", web::delete().to(delete_notification)),
     );
@@ -85,8 +88,37 @@ pub struct NotificationQuery {
     pub cursor: Option<String>,
     pub limit: Option<i32>,
     pub is_read: Option<bool>,
+    #[serde(rename = "type")]
     #[param(rename = "type")]
     pub type_: Option<String>,
+}
+
+fn parse_notification_cursor(cursor: Option<&str>) -> Result<Option<i64>, CustomError> {
+    cursor
+        .map(|value| {
+            value
+                .parse::<i64>()
+                .map_err(|_| CustomError::BadRequest("cursor 必须是 i64".into()))
+        })
+        .transpose()
+}
+
+fn parse_notification_type(type_: Option<&str>) -> Result<Option<&str>, CustomError> {
+    match type_ {
+        Some(value) if matches!(value, "ORDER" | "WISH" | "SIGN_IN" | "SYSTEM") => Ok(Some(value)),
+        Some(_) => Err(CustomError::BadRequest(
+            "type 必须是 ORDER、WISH、SIGN_IN 或 SYSTEM".into(),
+        )),
+        None => Ok(None),
+    }
+}
+
+fn parse_notification_limit(limit: Option<i32>) -> Result<i32, CustomError> {
+    let limit = limit.unwrap_or(20);
+    if !(1..=100).contains(&limit) {
+        return Err(CustomError::BadRequest("limit 必须在 1..100 之间".into()));
+    }
+    Ok(limit)
 }
 
 /// 获取通知列表
@@ -112,43 +144,29 @@ pub async fn get_notifications(
 ) -> Result<impl Responder, CustomError> {
     let db = &state.db_pool;
     let user_id = token.user_id;
-    let limit = query.limit.unwrap_or(20).min(100);
+    let limit = parse_notification_limit(query.limit)?;
+    let cursor = parse_notification_cursor(query.cursor.as_deref())?;
+    let notification_type = parse_notification_type(query.type_.as_deref())?;
 
-    // 构建筛选条件
-    let is_read_filter = if let Some(is_read) = query.is_read {
-        if is_read {
-            "AND n.is_read = true".to_string()
-        } else {
-            "AND n.is_read = false".to_string()
-        }
-    } else {
-        String::new()
-    };
-
-    let type_filter = if let Some(ref notif_type) = query.type_ {
-        format!("AND n.type = '{}'", notif_type)
-    } else {
-        String::new()
-    };
-
-    let cursor_filter = if let Some(ref cursor) = query.cursor {
-        format!("AND n.id < {}", cursor)
-    } else {
-        String::new()
-    };
-
-    let sql = format!(
+    let rows = sqlx::query(
         r#"
-        SELECT n.id, n.type, n.title, n.content, n.data, n.is_read, n.created_at
+        SELECT n.notification_id AS id, n.type::text AS type, n.title, n.content, n.data, n.is_read, n.created_at
         FROM notifications n
-        WHERE n.user_id = $1 {} {} {}
-        ORDER BY n.created_at DESC
-        LIMIT $2
+        WHERE n.user_id = $1
+          AND ($2::boolean IS NULL OR n.is_read = $2)
+          AND ($3::notification_type_enum IS NULL OR n.type = $3::notification_type_enum)
+          AND ($4::bigint IS NULL OR n.notification_id < $4)
+        ORDER BY n.notification_id DESC
+        LIMIT $5
         "#,
-        is_read_filter, type_filter, cursor_filter
-    );
-
-    let rows = sqlx::query(&sql).bind(user_id).bind(limit + 1).fetch_all(db).await?;
+    )
+    .bind(user_id)
+    .bind(query.is_read)
+    .bind(notification_type)
+    .bind(cursor)
+    .bind(limit + 1)
+    .fetch_all(db)
+    .await?;
 
     let has_more = rows.len() > limit as usize;
     let notifications: Vec<NotificationItem> = rows
@@ -204,16 +222,17 @@ pub async fn get_unread_count(
     let user_id = token.user_id;
 
     // 获取总未读数
-    let total: i32 =
-        sqlx::query_scalar("SELECT COUNT(*) FROM notifications WHERE user_id = $1 AND is_read = false")
-            .bind(user_id)
-            .fetch_one(db)
-            .await?;
+    let total: i32 = sqlx::query_scalar(
+        "SELECT COUNT(*)::INT FROM notifications WHERE user_id = $1 AND is_read = false",
+    )
+    .bind(user_id)
+    .fetch_one(db)
+    .await?;
 
     // 获取按类型分类的未读数
     let by_type_rows = sqlx::query(
         r#"
-        SELECT type, COUNT(*) as count
+        SELECT type::text AS type, COUNT(*) as count
         FROM notifications
         WHERE user_id = $1 AND is_read = false
         GROUP BY type
@@ -265,7 +284,7 @@ pub async fn mark_single_as_read(
     let user_id = token.user_id;
 
     let result = sqlx::query(
-        "UPDATE notifications SET is_read = true WHERE id = $1 AND user_id = $2",
+        "UPDATE notifications SET is_read = true WHERE notification_id = $1 AND user_id = $2",
     )
     .bind(notif_id)
     .bind(user_id)
@@ -317,7 +336,7 @@ pub async fn mark_all_as_read(
             } else {
                 // 标记指定通知
                 sqlx::query(
-                    "UPDATE notifications SET is_read = true WHERE user_id = $1 AND id = ANY($2) AND is_read = false",
+                    "UPDATE notifications SET is_read = true WHERE user_id = $1 AND notification_id = ANY($2) AND is_read = false",
                 )
                 .bind(user_id)
                 .bind(ids)
@@ -327,19 +346,23 @@ pub async fn mark_all_as_read(
             }
         } else {
             // 全部标记
-            sqlx::query("UPDATE notifications SET is_read = true WHERE user_id = $1 AND is_read = false")
-                .bind(user_id)
-                .execute(db)
-                .await?
-                .rows_affected() as i32
-        }
-    } else {
-        // 全部标记
-        sqlx::query("UPDATE notifications SET is_read = true WHERE user_id = $1 AND is_read = false")
+            sqlx::query(
+                "UPDATE notifications SET is_read = true WHERE user_id = $1 AND is_read = false",
+            )
             .bind(user_id)
             .execute(db)
             .await?
             .rows_affected() as i32
+        }
+    } else {
+        // 全部标记
+        sqlx::query(
+            "UPDATE notifications SET is_read = true WHERE user_id = $1 AND is_read = false",
+        )
+        .bind(user_id)
+        .execute(db)
+        .await?
+        .rows_affected() as i32
     };
 
     Ok(ApiResponse::success(MarkAllReadResponse { updated_count }))
@@ -380,7 +403,7 @@ pub async fn delete_notification(
     let user_id = token.user_id;
 
     let result =
-        sqlx::query("DELETE FROM notifications WHERE id = $1 AND user_id = $2")
+        sqlx::query("DELETE FROM notifications WHERE notification_id = $1 AND user_id = $2")
             .bind(notif_id)
             .bind(user_id)
             .execute(db)
@@ -393,4 +416,59 @@ pub async fn delete_notification(
     Ok(ApiResponse::success(DeleteNotificationResponse {
         status: "ok".to_string(),
     }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn notification_cursor_requires_i64() {
+        assert_eq!(
+            parse_notification_cursor(Some("9223372036854775807")).unwrap(),
+            Some(i64::MAX)
+        );
+        assert!(matches!(
+            parse_notification_cursor(Some("1 OR 1=1")),
+            Err(CustomError::BadRequest(_))
+        ));
+        assert!(matches!(
+            parse_notification_cursor(Some("9223372036854775808")),
+            Err(CustomError::BadRequest(_))
+        ));
+    }
+
+    #[test]
+    fn notification_type_uses_strict_whitelist() {
+        for value in ["ORDER", "WISH", "SIGN_IN", "SYSTEM"] {
+            assert_eq!(parse_notification_type(Some(value)).unwrap(), Some(value));
+        }
+        for value in ["order", "ALL", "ORDER' OR '1'='1", ""] {
+            assert!(matches!(
+                parse_notification_type(Some(value)),
+                Err(CustomError::BadRequest(_))
+            ));
+        }
+    }
+
+    #[test]
+    fn notification_query_accepts_type_parameter_name() {
+        let query: NotificationQuery = serde_urlencoded::from_str("type=ORDER").unwrap();
+        assert_eq!(query.type_.as_deref(), Some("ORDER"));
+    }
+
+    #[test]
+    fn notification_limit_stays_within_bounds() {
+        assert_eq!(parse_notification_limit(None).unwrap(), 20);
+        assert_eq!(parse_notification_limit(Some(1)).unwrap(), 1);
+        assert_eq!(parse_notification_limit(Some(100)).unwrap(), 100);
+        assert!(matches!(
+            parse_notification_limit(Some(0)),
+            Err(CustomError::BadRequest(_))
+        ));
+        assert!(matches!(
+            parse_notification_limit(Some(101)),
+            Err(CustomError::BadRequest(_))
+        ));
+    }
 }

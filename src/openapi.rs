@@ -61,7 +61,9 @@ impl Modify for SecurityAddon {
         crate::api::groups::routes::swap_role_check,
         crate::api::groups::routes::settlement_check,
         crate::api::groups::routes::fulfillment_stats,
-        crate::api::groups::routes::join_group,
+        crate::api::groups::partner_invitations::create_partner_invitation,
+        crate::api::groups::partner_invitations::preview_partner_invitation,
+        crate::api::groups::partner_invitations::accept_partner_invitation,
         crate::api::groups::routes::exit_group,
         crate::api::groups::routes::get_group_members,
         crate::api::groups::routes::create_group_order,
@@ -110,6 +112,7 @@ impl Modify for SecurityAddon {
         crate::api::support_tickets::routes::list_my_tickets,
         crate::api::support_tickets::routes::get_ticket,
         // ==================== Kitchens (主人家厨房) ====================
+        crate::api::kitchens::routes::create_guest_invitation,
         crate::api::kitchens::routes::access_kitchen,
         crate::api::kitchens::routes::get_kitchen_foods,
         crate::api::kitchens::routes::create_guest_order,
@@ -225,7 +228,9 @@ impl Modify for SecurityAddon {
             crate::api::groups::routes::CreateGroupWishResponse,
             crate::api::groups::routes::GroupOrderInput,
             crate::api::groups::routes::GroupWishInput,
-            crate::api::groups::routes::JoinGroupInput,
+            crate::api::groups::partner_invitations::PartnerInvitationCreated,
+            crate::api::groups::partner_invitations::PartnerInvitationPreview,
+            crate::api::groups::partner_invitations::PartnerInvitationAccepted,
             crate::api::groups::routes::GroupMemberOut,
             crate::api::groups::routes::SwapRoleCheckResponse,
             crate::api::groups::routes::UpdateGroupNameRequest,
@@ -287,7 +292,6 @@ impl Modify for SecurityAddon {
             crate::api::upload::routes::BusinessRefType,
             crate::api::upload::routes::ConfirmUploadRequest,
             crate::api::upload::routes::ConfirmUploadResponse,
-            crate::api::upload::routes::QiniuCallbackRequest,
             crate::api::upload::routes::DeleteFileResponse,
             crate::api::upload::routes::ErrorBody,
             // -- Admin --
@@ -336,9 +340,11 @@ impl Modify for SecurityAddon {
             // -- Footprint Groups (2026-07-09 补: 不然前端 TS 类型拿不到 currentCount) --
             crate::api::footprint_groups::routes::FootprintGroupOut,
             // -- Kitchens (做客厨房) --
+            crate::api::kitchens::routes::GuestInvitationCreated,
             crate::api::kitchens::routes::AccessKitchenResponse,
             crate::api::kitchens::routes::KitchenFoodItem,
             crate::api::kitchens::routes::CreateGuestOrderResponse,
+            crate::api::kitchens::routes::GuestOrderItemInput,
             crate::api::kitchens::routes::GuestOrderInput,
             // -- Dashboard (数据看板) --
             crate::api::dashboard::routes::GroupDashboardResponse,
@@ -415,4 +421,49 @@ pub struct ApiDoc;
 /// 生成 OpenAPI 3.0 JSON 文档
 pub fn openapi_json() -> String {
     ApiDoc::openapi().to_pretty_json().unwrap_or_default()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::openapi_json;
+    use serde_json::Value;
+
+    #[test]
+    #[ignore = "invoked by wx-store api:fetch"]
+    fn export_openapi_for_tooling() {
+        println!("__MAY_STORE_OPENAPI_BEGIN__");
+        println!("{}", openapi_json());
+        println!("__MAY_STORE_OPENAPI_END__");
+    }
+
+    fn assert_price_range(schema: &Value) {
+        assert_eq!(schema["minimum"].as_f64(), Some(1.0));
+        assert_eq!(schema["maximum"].as_f64(), Some(1_000_000.0));
+    }
+
+    #[test]
+    fn wish_request_schemas_use_url_group_and_bounded_prices() {
+        let document: Value =
+            serde_json::from_str(&openapi_json()).expect("OpenAPI document must be valid JSON");
+        let schemas = &document["components"]["schemas"];
+        let create_properties = schemas["WishCreateInput"]["properties"]
+            .as_object()
+            .expect("WishCreateInput properties");
+
+        assert!(create_properties.get("groupId").is_none());
+        assert!(create_properties.get("group_id").is_none());
+        assert_price_range(
+            create_properties
+                .get("wishCost")
+                .expect("WishCreateInput.wishCost"),
+        );
+        assert_price_range(&schemas["WishQuoteInput"]["properties"]["cost"]);
+
+        assert_eq!(
+            document["paths"]["/api/groups/{group_id}/wishes"]["post"]["requestBody"]["content"]
+                ["application/json"]["schema"]["$ref"]
+                .as_str(),
+            Some("#/components/schemas/WishCreateInput")
+        );
+    }
 }

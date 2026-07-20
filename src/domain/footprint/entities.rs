@@ -11,12 +11,12 @@ use utoipa::ToSchema;
 #[serde(rename_all = "camelCase")]
 pub struct RecordGroup {
     pub id: i64,
-    pub group_id: i64,
+    /// 全局分组为 None，组内自建分组为对应 group_id。
+    pub group_id: Option<i64>,
     pub group_name: String,
     pub group_type: i16,
-    pub max_capacity: i32,
-    pub current_count: i32,
     pub status: i16,
+    pub is_global: bool,
     pub create_time: DateTime<Utc>,
     pub update_time: DateTime<Utc>,
 }

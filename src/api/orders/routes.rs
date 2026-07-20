@@ -4,7 +4,7 @@
 use ntex::web::{
     self,
     types::{Json, Path, Query, State},
-    HttpResponse, Responder, ServiceConfig,
+    Responder, ServiceConfig,
 };
 use std::sync::Arc;
 
@@ -19,6 +19,7 @@ use crate::domain::order::{
 };
 use crate::errors::CustomError;
 use crate::middlewares::auth::UserToken;
+use crate::middlewares::idempotency::{self, IdempotencyKey, ReservationOutcome};
 use crate::middlewares::require_group::RequireGroup;
 use crate::models::pagination::CursorPage;
 use crate::utils::response::ApiResponse;
@@ -37,7 +38,7 @@ pub fn configure(cfg: &mut ServiceConfig) {
             // FSD v2: 取消/拒绝/超时/备注接口
             .route("/{order_id}/cancel", web::post().to(cancel_order))
             .route("/{order_id}/reject", web::post().to(reject_order))
-            .route("/{order_id}/timeout", web::post().to(order_timeout))
+            .route("/{order_id}/timeout", web::post().to(order_timeout)),
     )
     .service(
         web::scope("/api/orders-rating")
@@ -57,12 +58,43 @@ pub fn configure(cfg: &mut ServiceConfig) {
 pub async fn create_order(
     user_token: UserToken,
     _require: RequireGroup,
+    idempotency_key: IdempotencyKey,
     state: State<Arc<AppState>>,
     data: Json<OrderCreateInput>,
 ) -> Result<impl Responder, CustomError> {
-    let out = AppOrderService::create_order(&state.db_pool, user_token.user_id, &data.into_inner())
-        .await?;
-    Ok(ApiResponse::success(out))
+    let reservation = match idempotency::reserve(
+        &state.redis_cache,
+        user_token.user_id,
+        "POST",
+        "/api/orders",
+        idempotency_key.0.as_deref(),
+    )
+    .await?
+    {
+        ReservationOutcome::Bypass => None,
+        ReservationOutcome::Acquired(reservation) => Some(reservation),
+        ReservationOutcome::Completed(cached) => {
+            return Ok(ApiResponse::success(cached.body));
+        }
+    };
+
+    let input = data.into_inner();
+    let out = match AppOrderService::create_order(&state.db_pool, user_token.user_id, &input).await
+    {
+        Ok(out) => out,
+        Err(error) => {
+            if let Some(reservation) = reservation.as_ref() {
+                reservation.release().await;
+            }
+            return Err(error);
+        }
+    };
+    let payload = serde_json::to_value(out)
+        .map_err(|e| CustomError::internal(format!("订单响应序列化失败: {e}")))?;
+    if let Some(reservation) = reservation.as_ref() {
+        reservation.complete(200, &payload).await?;
+    }
+    Ok(ApiResponse::success(payload))
 }
 
 #[utoipa::path(
@@ -92,11 +124,13 @@ pub async fn get_orders(
     security(("bearer_auth" = []))
 )]
 pub async fn get_order_detail(
-    _user_token: UserToken,
+    user_token: UserToken,
     state: State<Arc<AppState>>,
     id: Path<i64>,
 ) -> Result<impl Responder, CustomError> {
-    let out = AppOrderService::get_order_by_id(&state.db_pool, *id).await?;
+    let out = AppOrderService::get_order_by_id(&state.db_pool, user_token.user_id, *id)
+        .await?
+        .ok_or_else(|| CustomError::order_not_found("订单不存在"))?;
     Ok(ApiResponse::success(out))
 }
 
@@ -163,7 +197,6 @@ pub async fn get_order_rating(
 )]
 pub async fn accept_order(
     user_token: UserToken,
-    _require: RequireGroup,
     state: State<Arc<AppState>>,
     order_id: Path<i64>,
 ) -> Result<impl Responder, CustomError> {
@@ -172,7 +205,6 @@ pub async fn accept_order(
         order_id: id,
         to_status: OrderStatus::Accepted,
         remark: None,
-        points_reward: None,
     };
     let out =
         AppOrderService::update_order_status(&state.db_pool, user_token.user_id, &input).await?;
@@ -195,7 +227,6 @@ pub async fn accept_order(
 )]
 pub async fn complete_order(
     user_token: UserToken,
-    _require: RequireGroup,
     state: State<Arc<AppState>>,
     order_id: Path<i64>,
 ) -> Result<impl Responder, CustomError> {
@@ -204,7 +235,6 @@ pub async fn complete_order(
         order_id: id,
         to_status: OrderStatus::ProductionCompleted,
         remark: None,
-        points_reward: None,
     };
     let out =
         AppOrderService::update_order_status(&state.db_pool, user_token.user_id, &input).await?;
@@ -228,7 +258,6 @@ pub async fn complete_order(
 )]
 pub async fn confirm_order(
     user_token: UserToken,
-    _require: RequireGroup,
     state: State<Arc<AppState>>,
     order_id: Path<i64>,
     body: Json<OrderConfirmInput>,
@@ -247,7 +276,6 @@ pub async fn confirm_order(
             order_id: id,
             to_status,
             remark: input.remark,
-            points_reward: None,
         },
     )
     .await?;
@@ -273,7 +301,6 @@ pub async fn confirm_order(
 )]
 pub async fn cancel_order(
     user_token: UserToken,
-    _require: RequireGroup,
     state: State<Arc<AppState>>,
     order_id: Path<i64>,
     body: Json<OrderCancelInput>,
@@ -287,7 +314,6 @@ pub async fn cancel_order(
             order_id: id,
             to_status: OrderStatus::Cancelled,
             remark: input.reason,
-            points_reward: None,
         },
     )
     .await?;
@@ -313,7 +339,6 @@ pub async fn cancel_order(
 )]
 pub async fn reject_order(
     user_token: UserToken,
-    _require: RequireGroup,
     state: State<Arc<AppState>>,
     order_id: Path<i64>,
     body: Json<OrderRejectInput>,
@@ -327,7 +352,6 @@ pub async fn reject_order(
             order_id: id,
             to_status: OrderStatus::Rejected,
             remark: input.reason,
-            points_reward: None,
         },
     )
     .await?;
@@ -352,7 +376,6 @@ pub async fn reject_order(
 )]
 pub async fn order_timeout(
     user_token: UserToken,
-    _require: RequireGroup,
     state: State<Arc<AppState>>,
     order_id: Path<i64>,
 ) -> Result<impl Responder, CustomError> {
@@ -364,7 +387,6 @@ pub async fn order_timeout(
             order_id: id,
             to_status: OrderStatus::Timeout,
             remark: None,
-            points_reward: None,
         },
     )
     .await?;

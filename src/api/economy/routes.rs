@@ -3,11 +3,10 @@
 
 use ntex::web::{
     self,
-    types::{Path, Query, State},
+    types::{Path, State},
     HttpResponse, ServiceConfig,
 };
 use serde::{Deserialize, Serialize};
-use sqlx::Row;
 use std::sync::Arc;
 use utoipa::ToSchema;
 
@@ -15,6 +14,7 @@ use crate::config::AppState;
 use crate::errors::CustomError;
 use crate::middlewares::auth::UserToken;
 use crate::middlewares::require_group::RequireGroup;
+use crate::middlewares::target_group::require_active_target_group_member;
 use crate::utils::response::ApiResponse;
 
 /// 配置经济查询路由
@@ -172,18 +172,7 @@ async fn get_points_balance(
     let gid = group_id.into_inner();
     let user_id = token.user_id;
 
-    // 检查用户是否是组成员
-    let is_member: bool = sqlx::query_scalar::<_, bool>(
-        "SELECT EXISTS(SELECT 1 FROM association_group_members WHERE group_id=$1 AND user_id=$2 AND member_status='ACTIVE'::group_member_status_enum)",
-    )
-    .bind(gid)
-    .bind(user_id)
-    .fetch_one(db)
-    .await?;
-
-    if !is_member {
-        return Err(CustomError::Forbidden("无权访问该组".into()));
-    }
+    require_active_target_group_member(db, user_id, gid).await?;
 
     // 查询用户组内积分
     // availableLovePoint: 取自 users.love_point —— 这是订单完成/退款时真正变动的字段
@@ -191,16 +180,14 @@ async fn get_points_balance(
     //                   是个老的历史字段,不能作为可用余额的权威值)
     // frozenLovePoint: 仍取自 user_group_points.frozen_love_point —— 冻结语义独立
     //                  (虽然 select_wish 也没正确同步它,但这次不修冻结路径,先保持现状)
-    let available: i64 = sqlx::query_scalar(
-        "SELECT love_point FROM users WHERE user_id = $1"
-    )
-    .bind(user_id)
-    .fetch_optional(db)
-    .await?
-    .unwrap_or(0) as i64;
+    let available: i64 = sqlx::query_scalar("SELECT love_point FROM users WHERE user_id = $1")
+        .bind(user_id)
+        .fetch_optional(db)
+        .await?
+        .unwrap_or(0) as i64;
 
     let frozen: i64 = sqlx::query_scalar(
-        "SELECT frozen_love_point FROM user_group_points WHERE user_id=$1 AND group_id=$2"
+        "SELECT frozen_love_point FROM user_group_points WHERE user_id=$1 AND group_id=$2",
     )
     .bind(user_id)
     .bind(gid)
@@ -215,7 +202,7 @@ async fn get_points_balance(
     let today_earned: i64 = sqlx::query_scalar(
         r#"SELECT COALESCE(SUM(amount), 0)::BIGINT FROM love_point_transactions
            WHERE user_id=$1 AND group_id=$2 AND type='EARN'::love_point_tx_type_enum
-           AND created_at >= CURRENT_DATE"#
+           AND created_at >= CURRENT_DATE"#,
     )
     .bind(user_id)
     .bind(gid)

@@ -4,7 +4,8 @@
 
 use ntex::web::{
     self,
-    types::{Json, Path, Query, State}, Responder, ServiceConfig,
+    types::{Json, Path, Query, State},
+    Responder, ServiceConfig,
 };
 use serde::{Deserialize, Serialize};
 use sqlx::Row;
@@ -15,17 +16,14 @@ use crate::config::AppState;
 use crate::errors::CustomError;
 use crate::middlewares::auth::UserToken;
 use crate::middlewares::require_group::RequireGroup;
+use crate::middlewares::target_group::require_active_target_group_member;
 use crate::utils::response::ApiResponse;
 
 /// 从 global_configs 读整数配置
 ///
 /// 读不到 (DB 无记录 / 配置值不是整数) 时返回传入的默认值。
 /// 与 admin/routes.rs::read_int 行为对齐, 但每请求走一次, 没有缓存。
-async fn read_global_int(
-    db: &sqlx::PgPool,
-    key: &str,
-    default: i32,
-) -> i32 {
+async fn read_global_int(db: &sqlx::PgPool, key: &str, default: i32) -> i32 {
     sqlx::query_as::<_, (Option<serde_json::Value>,)>(
         "SELECT config_value FROM global_configs WHERE config_key = $1",
     )
@@ -35,8 +33,80 @@ async fn read_global_int(
     .ok()
     .flatten()
     .and_then(|(v,)| v)
-    .and_then(|v| v.as_i64().map(|n| n as i32))
+    .and_then(|v| v.as_i64().and_then(|n| i32::try_from(n).ok()))
     .unwrap_or(default)
+}
+
+const DEFAULT_FOOTPRINT_CAPACITY: i32 = 50;
+const DEFAULT_EXPAND_COST_PER_SLOT: i32 = 5;
+const MAX_EXPAND_BY: i32 = 100;
+const MAX_IDEMPOTENCY_KEY_CHARS: usize = 128;
+
+#[derive(Debug, PartialEq, Eq)]
+struct CapacityExpansion {
+    diamond_cost: i32,
+    new_capacity: i32,
+}
+
+fn calculate_capacity_expansion(
+    current_capacity: i32,
+    expand_by: i32,
+    cost_per_slot: i32,
+) -> Result<CapacityExpansion, CustomError> {
+    if !(1..=MAX_EXPAND_BY).contains(&expand_by) {
+        return Err(CustomError::invalid_parameter(
+            "expandBy 必须在 1 到 100 之间",
+        ));
+    }
+    if cost_per_slot < 0 {
+        return Err(CustomError::internal_error("足迹扩容单价配置不能为负数"));
+    }
+
+    let diamond_cost = expand_by
+        .checked_mul(cost_per_slot)
+        .ok_or_else(|| CustomError::invalid_parameter("足迹扩容价格超出支持范围"))?;
+    let new_capacity = current_capacity
+        .checked_add(expand_by)
+        .ok_or_else(|| CustomError::invalid_parameter("足迹容量超出支持范围"))?;
+
+    Ok(CapacityExpansion {
+        diamond_cost,
+        new_capacity,
+    })
+}
+
+fn build_expand_idempotency_key(group_id: i64, raw_key: &str) -> Result<String, CustomError> {
+    let raw_key = raw_key.trim();
+    if raw_key.is_empty() {
+        return Err(CustomError::invalid_parameter("idempotencyKey 不能为空"));
+    }
+
+    let key = format!("footprint_expand_{group_id}_{raw_key}");
+    if key.chars().count() > MAX_IDEMPOTENCY_KEY_CHARS {
+        return Err(CustomError::invalid_parameter(
+            "idempotencyKey 超出 128 字符限制",
+        ));
+    }
+    Ok(key)
+}
+
+async fn read_global_int_in_tx(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    key: &str,
+    default: i32,
+) -> Result<i32, CustomError> {
+    let value = sqlx::query_scalar::<_, Option<serde_json::Value>>(
+        "SELECT config_value FROM global_configs WHERE config_key = $1",
+    )
+    .bind(key)
+    .fetch_optional(&mut **tx)
+    .await?
+    .flatten();
+
+    Ok(value
+        .and_then(|value| value.as_i64())
+        .and_then(|value| i32::try_from(value).ok())
+        .unwrap_or(default))
 }
 
 /// 配置足迹路由
@@ -54,11 +124,6 @@ pub fn configure(cfg: &mut ServiceConfig) {
     cfg.service(
         web::resource("/api/groups/{group_id}/footprints/capacity/expand")
             .route(web::post().to(expand_capacity)),
-    );
-    // 2026-07-06 新增: 列出"本组可选的足迹分组" (公用分组 + 本组自建)
-    cfg.service(
-        web::resource("/api/groups/{group_id}/footprint-groups")
-            .route(web::get().to(list_available_groups)),
     );
 }
 
@@ -204,18 +269,7 @@ pub async fn create_footprint(
     let db = &state.db_pool;
     let user_id = token.user_id;
 
-    // 检查用户是否是组成员
-    let is_member: bool = sqlx::query_scalar::<_, bool>(
-        "SELECT EXISTS(SELECT 1 FROM association_group_members WHERE group_id=$1 AND user_id=$2 AND member_status='ACTIVE'::group_member_status_enum)",
-    )
-    .bind(gid)
-    .bind(user_id)
-    .fetch_one(db)
-    .await?;
-
-    if !is_member {
-        return Err(CustomError::Forbidden("非组成员".into()));
-    }
+    require_active_target_group_member(db, user_id, gid).await?;
 
     // 检查容量
     // - 当前足迹总数 (用子查询避免 LEFT JOIN + COUNT 的 GROUP BY 报错)
@@ -262,12 +316,11 @@ pub async fn create_footprint(
     //   - is_global=true 时 group_id=NULL, 任何组都能用
     //   - is_global=false 时 group_id 必须等于本组的 gid
     if let Some(rg_id) = input.record_group_id {
-        let row: Option<(bool, Option<i64>, i16)> = sqlx::query_as(
-            "SELECT is_global, group_id, status FROM record_group WHERE id=$1"
-        )
-        .bind(rg_id)
-        .fetch_optional(db)
-        .await?;
+        let row: Option<(bool, Option<i64>, i16)> =
+            sqlx::query_as("SELECT is_global, group_id, status FROM record_group WHERE id=$1")
+                .bind(rg_id)
+                .fetch_optional(db)
+                .await?;
 
         match row {
             None => return Err(CustomError::BadRequest("足迹分组不存在".into())),
@@ -277,7 +330,7 @@ pub async fn create_footprint(
             Some((false, Some(rg_gid), 0)) if rg_gid == gid => {
                 return Err(CustomError::BadRequest("该足迹分组已停用".into()));
             }
-            Some((false, Some(rg_gid), _) ) if rg_gid != gid => {
+            Some((false, Some(rg_gid), _)) if rg_gid != gid => {
                 return Err(CustomError::BadRequest("该足迹分组不属于本组".into()));
             }
             _ => {} // OK
@@ -358,18 +411,7 @@ pub async fn list_footprints(
     let user_id = token.user_id;
     let limit = query.limit.unwrap_or(20).min(100);
 
-    // 检查用户是否是组成员
-    let is_member: bool = sqlx::query_scalar::<_, bool>(
-        "SELECT EXISTS(SELECT 1 FROM association_group_members WHERE group_id=$1 AND user_id=$2 AND member_status='ACTIVE'::group_member_status_enum)",
-    )
-    .bind(gid)
-    .bind(user_id)
-    .fetch_one(db)
-    .await?;
-
-    if !is_member {
-        return Err(CustomError::Forbidden("非组成员".into()));
-    }
+    require_active_target_group_member(db, user_id, gid).await?;
 
     // 参数化查询:user_id 与 cursor 都走占位符,cursor 必须是数字
     let cursor_id: Option<i64> = match query.cursor.as_deref() {
@@ -382,8 +424,9 @@ pub async fn list_footprints(
 
     // 4 种组合 (user_id × cursor) 全部参数化
     let rows = match (query.user_id, cursor_id) {
-        (Some(uid), Some(cid)) => sqlx::query(
-            r#"
+        (Some(uid), Some(cid)) => {
+            sqlx::query(
+                r#"
             SELECT f.footprint_id, f.user_id, f.content, f.location, f.images,
                    f.related_order_id, f.related_wish_id, f.created_at,
                    u.nick_name as user_nickname, u.avatar as user_avatar
@@ -393,15 +436,17 @@ pub async fn list_footprints(
             ORDER BY f.footprint_id DESC
             LIMIT $4
             "#,
-        )
-        .bind(gid)
-        .bind(uid)
-        .bind(cid)
-        .bind(limit + 1)
-        .fetch_all(db)
-        .await?,
-        (Some(uid), None) => sqlx::query(
-            r#"
+            )
+            .bind(gid)
+            .bind(uid)
+            .bind(cid)
+            .bind(limit + 1)
+            .fetch_all(db)
+            .await?
+        }
+        (Some(uid), None) => {
+            sqlx::query(
+                r#"
             SELECT f.footprint_id, f.user_id, f.content, f.location, f.images,
                    f.related_order_id, f.related_wish_id, f.created_at,
                    u.nick_name as user_nickname, u.avatar as user_avatar
@@ -411,14 +456,16 @@ pub async fn list_footprints(
             ORDER BY f.footprint_id DESC
             LIMIT $3
             "#,
-        )
-        .bind(gid)
-        .bind(uid)
-        .bind(limit + 1)
-        .fetch_all(db)
-        .await?,
-        (None, Some(cid)) => sqlx::query(
-            r#"
+            )
+            .bind(gid)
+            .bind(uid)
+            .bind(limit + 1)
+            .fetch_all(db)
+            .await?
+        }
+        (None, Some(cid)) => {
+            sqlx::query(
+                r#"
             SELECT f.footprint_id, f.user_id, f.content, f.location, f.images,
                    f.related_order_id, f.related_wish_id, f.created_at,
                    u.nick_name as user_nickname, u.avatar as user_avatar
@@ -428,14 +475,16 @@ pub async fn list_footprints(
             ORDER BY f.footprint_id DESC
             LIMIT $3
             "#,
-        )
-        .bind(gid)
-        .bind(cid)
-        .bind(limit + 1)
-        .fetch_all(db)
-        .await?,
-        (None, None) => sqlx::query(
-            r#"
+            )
+            .bind(gid)
+            .bind(cid)
+            .bind(limit + 1)
+            .fetch_all(db)
+            .await?
+        }
+        (None, None) => {
+            sqlx::query(
+                r#"
             SELECT f.footprint_id, f.user_id, f.content, f.location, f.images,
                    f.related_order_id, f.related_wish_id, f.created_at,
                    u.nick_name as user_nickname, u.avatar as user_avatar
@@ -445,11 +494,12 @@ pub async fn list_footprints(
             ORDER BY f.footprint_id DESC
             LIMIT $2
             "#,
-        )
-        .bind(gid)
-        .bind(limit + 1)
-        .fetch_all(db)
-        .await?,
+            )
+            .bind(gid)
+            .bind(limit + 1)
+            .fetch_all(db)
+            .await?
+        }
     };
 
     let has_more = rows.len() > limit as usize;
@@ -506,15 +556,14 @@ pub async fn list_footprints(
 
     // 2026-07-08: 拿组钻石余额 (扩容量扣的就是这个)
     // 之前前端 footprint 页的 loadOverview 写的是 hardcoded 0, 导致扩容按钮永远显示 0 钻石
-    let diamond_balance: i64 = sqlx::query_scalar(
-        "SELECT diamond::BIGINT FROM association_groups WHERE group_id = $1"
-    )
-    .bind(gid)
-    .fetch_optional(db)
-    .await
-    .ok()
-    .flatten()
-    .unwrap_or(0);
+    let diamond_balance: i64 =
+        sqlx::query_scalar("SELECT diamond::BIGINT FROM association_groups WHERE group_id = $1")
+            .bind(gid)
+            .fetch_optional(db)
+            .await
+            .ok()
+            .flatten()
+            .unwrap_or(0);
 
     Ok(ApiResponse::success(FootprintsListResponse {
         footprints,
@@ -557,18 +606,7 @@ pub async fn delete_footprint(
     let db = &state.db_pool;
     let user_id = token.user_id;
 
-    // 检查用户是否是组成员
-    let is_member: bool = sqlx::query_scalar::<_, bool>(
-        "SELECT EXISTS(SELECT 1 FROM association_group_members WHERE group_id=$1 AND user_id=$2 AND member_status='ACTIVE'::group_member_status_enum)",
-    )
-    .bind(gid)
-    .bind(user_id)
-    .fetch_one(db)
-    .await?;
-
-    if !is_member {
-        return Err(CustomError::Forbidden("非组成员".into()));
-    }
+    require_active_target_group_member(db, user_id, gid).await?;
 
     // 检查是否是创建者（仅创建者可删除）
     let is_owner: bool = sqlx::query_scalar::<_, bool>(
@@ -633,190 +671,192 @@ pub async fn expand_capacity(
     let input = body.into_inner();
     let db = &state.db_pool;
     let user_id = token.user_id;
+    require_active_target_group_member(db, user_id, gid).await?;
 
-    // 构造完整的幂等 key (跟下面 INSERT 用的 key 一致, 才能查得到)
-    // 2026-07-09: idempotency_key 是必填, 不要再 unwrap_or_else 兜底
-    let idempotency_key = format!("footprint_expand_{}_{}", gid, input.idempotency_key);
+    if !(1..=MAX_EXPAND_BY).contains(&input.expand_by) {
+        return Err(CustomError::invalid_parameter(
+            "expandBy 必须在 1 到 100 之间",
+        ));
+    }
+    let idempotency_key = build_expand_idempotency_key(gid, &input.idempotency_key)?;
 
-    // 2026-07-09: 幂等检查
-    // 命中已存在的 idempotency_key → 直接返回之前的结果 (re-derive), 不再扣钻
-    // 适用场景: 用户双击"确定"、网络重试、多端并发
-    // 设计: 前端在 openExpandPanel 时生成 key, 整个 panel 会话共用一个 key
-    //   关闭弹窗/扩容成功后重置 key
-    if let Some(prev) = sqlx::query_as::<_, (i64, i64)>(
-        "SELECT amount, balance_after FROM diamond_transactions WHERE idempotency_key = $1"
+    let mut tx = db.begin().await?;
+
+    // 必须先锁组行。相同组的并发扩容会在此串行化，后续幂等检查能看到先提交的流水。
+    let (current_diamond, stored_capacity): (i32, Option<i32>) = sqlx::query_as(
+        r#"SELECT diamond, footprint_capacity
+           FROM association_groups
+           WHERE group_id = $1
+           FOR UPDATE"#,
+    )
+    .bind(gid)
+    .fetch_optional(&mut *tx)
+    .await?
+    .ok_or_else(|| CustomError::resource_not_found("组不存在"))?;
+
+    // 锁后再检查幂等键；同 key 的并发请求只会有一个进入扣款路径。
+    if let Some((prev_cost, prev_balance_after)) = sqlx::query_as::<_, (i64, i64)>(
+        r#"SELECT amount, balance_after
+           FROM diamond_transactions
+           WHERE idempotency_key = $1
+             AND group_id = $2
+             AND biz_type = 'FOOTPRINT_CAPACITY_EXPANSION'
+           LIMIT 1"#,
     )
     .bind(&idempotency_key)
-    .fetch_optional(db)
+    .bind(gid)
+    .fetch_optional(&mut *tx)
     .await?
     {
-        let (prev_cost, prev_balance_after) = prev;
-        // 从当前状态 re-derive 完整响应 (capacity 是稳定的, 直接读 group)
-        let current_capacity: i32 = sqlx::query_scalar(
-            "SELECT COALESCE(footprint_capacity, 50)::INT FROM association_groups WHERE group_id = $1"
-        )
-        .bind(gid)
-        .fetch_optional(db)
-        .await
-        .ok()
-        .flatten()
-        .unwrap_or(50);
-        // 旧容量 = 新容量 - expand_by, 但我们没存 expand_by
-        // 用 prev_balance_after + prev_cost 推算 balance_before 即可推算 expand_by
-        // 但为了简单, 直接返回 "already done" 让前端知道不用再扣
+        let prev_cost = i32::try_from(prev_cost)
+            .map_err(|_| CustomError::internal_error("历史扩容价格超出支持范围"))?;
+        let prev_balance_after = i32::try_from(prev_balance_after)
+            .map_err(|_| CustomError::internal_error("历史钻石余额超出支持范围"))?;
+        let current_capacity = match stored_capacity {
+            Some(capacity) => capacity,
+            None => {
+                read_global_int_in_tx(
+                    &mut tx,
+                    "defaultFootprintCapacity",
+                    DEFAULT_FOOTPRINT_CAPACITY,
+                )
+                .await?
+            }
+        };
+
         log::info!(
             "[expand_capacity] 命中幂等 key={} amount={} balance_after={}, 跳过扣钻",
-            idempotency_key, prev_cost, prev_balance_after
+            idempotency_key,
+            prev_cost,
+            prev_balance_after
         );
+        tx.commit().await?;
         return Ok(ApiResponse::success(ExpandCapacityResponse {
             group_id: gid,
-            old_capacity: current_capacity, // 简化: 不算 expand_by, 用当前容量做兜底
+            old_capacity: current_capacity,
             new_capacity: current_capacity,
-            diamond_cost: prev_cost as i32,
-            diamond_balance_after: prev_balance_after as i32,
+            diamond_cost: prev_cost,
+            diamond_balance_after: prev_balance_after,
         }));
     }
 
-    // 检查用户是否是组成员
-    let is_member: bool = sqlx::query_scalar::<_, bool>(
-        "SELECT EXISTS(SELECT 1 FROM association_group_members WHERE group_id=$1 AND user_id=$2 AND member_status='ACTIVE'::group_member_status_enum)",
+    // 配置读取和后续余额/容量变更都处于同一事务。
+    let cost_per_slot = read_global_int_in_tx(
+        &mut tx,
+        "footprintExpandDiamondCost",
+        DEFAULT_EXPAND_COST_PER_SLOT,
     )
-    .bind(gid)
-    .bind(user_id)
-    .fetch_one(db)
     .await?;
+    let current_capacity = match stored_capacity {
+        Some(capacity) => capacity,
+        None => {
+            read_global_int_in_tx(
+                &mut tx,
+                "defaultFootprintCapacity",
+                DEFAULT_FOOTPRINT_CAPACITY,
+            )
+            .await?
+        }
+    };
+    let expansion = calculate_capacity_expansion(current_capacity, input.expand_by, cost_per_slot)?;
 
-    if !is_member {
-        return Err(CustomError::Forbidden("非组成员".into()));
-    }
-
-    // 获取组当前钻石和容量 (容量 fallback 同 create/list)
-    let (current_diamond, current_capacity): (i32, i32) = sqlx::query_as(
-        r#"SELECT diamond,
-                  COALESCE(
-                      footprint_capacity,
-                      (SELECT (config_value #>> '{}')::int FROM global_configs WHERE config_key='defaultFootprintCapacity'),
-                      50
-                  ) AS capacity
-           FROM association_groups WHERE group_id = $1"#
-    )
-    .bind(gid)
-    .fetch_optional(db)
-    .await?
-    .unwrap_or((0, 50));
-
-    // 钻石单价从 global_configs.footprintExpandDiamondCost 读 (默认 5)
-    // 总花费 = expand_by * 单价
-    let cost_per_slot: i32 = read_global_int(db, "footprintExpandDiamondCost", 5).await;
-    let diamond_cost = input.expand_by * cost_per_slot;
-    let new_capacity = current_capacity + input.expand_by;
-
-    if current_diamond < diamond_cost {
+    if current_diamond < expansion.diamond_cost {
         return Err(CustomError::Forbidden("组钻石不足".into()));
     }
+    let balance_after = current_diamond
+        .checked_sub(expansion.diamond_cost)
+        .ok_or_else(|| CustomError::internal_error("组钻石余额计算溢出"))?;
 
-    // 扣除钻石并更新容量
+    // 行已锁定，写入计算后的确定值，避免并发下的读改写丢失。
     sqlx::query(
         r#"UPDATE association_groups
-           SET diamond = diamond - $1,
+           SET diamond = $1,
                footprint_capacity = $2,
                updated_at = NOW()
            WHERE group_id = $3"#,
     )
-    .bind(diamond_cost)
-    .bind(new_capacity)
+    .bind(balance_after)
+    .bind(expansion.new_capacity)
     .bind(gid)
-    .execute(db)
+    .execute(&mut *tx)
     .await?;
 
-    // 写钻石流水
-    // 2026-07-09: idempotency_key 在函数开头已构造, 上面也用它做幂等检查
-    //   没传时用 "ts-{ms}" 兜底, 避免重复点击产生相同 key 触发 UNIQUE 冲突
+    // v3 必填字段：组级 subject、类型、金额、变更前后余额及业务类型。
+    // 不使用 ON CONFLICT；若唯一索引兜底触发，整个事务（含扣钻/扩容）会回滚。
     sqlx::query(
-        r#"INSERT INTO diamond_transactions (group_id, type, amount, balance_before, balance_after, biz_type, idempotency_key, created_at)
-           VALUES ($1, 'CONSUME'::diamond_tx_type_enum, $2, $3, $3 - $2, 'FOOTPRINT_CAPACITY_EXPANSION', $4, NOW())"#
+        r#"INSERT INTO diamond_transactions
+               (group_id, type, amount, balance_before, balance_after, biz_type, idempotency_key)
+           VALUES
+               ($1, 'CONSUME'::diamond_tx_type_enum, $2, $3, $4,
+                'FOOTPRINT_CAPACITY_EXPANSION', $5)"#,
     )
     .bind(gid)
-    .bind(diamond_cost)
-    .bind(current_diamond)
+    .bind(i64::from(expansion.diamond_cost))
+    .bind(i64::from(current_diamond))
+    .bind(i64::from(balance_after))
     .bind(&idempotency_key)
-    .execute(db)
+    .execute(&mut *tx)
     .await?;
+
+    tx.commit().await?;
 
     Ok(ApiResponse::success(ExpandCapacityResponse {
         group_id: gid,
         old_capacity: current_capacity,
-        new_capacity,
-        diamond_cost,
-        diamond_balance_after: current_diamond - diamond_cost,
+        new_capacity: expansion.new_capacity,
+        diamond_cost: expansion.diamond_cost,
+        diamond_balance_after: balance_after,
     }))
 }
 
-/// 足迹分组项 (用户端可见版本)
-#[derive(Debug, Serialize, ToSchema)]
-#[serde(rename_all = "camelCase")]
-pub struct FootprintGroupItem {
-    pub id: i64,
-    pub group_name: String,
-    pub group_type: i16,
-    pub is_global: bool,
-}
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-/// 列出本组可选的足迹分组
-/// GET /api/groups/{group_id}/footprint-groups
-///
-/// 用户发布足迹时, 从这个接口拉可选分组下拉框:
-/// - 公用分组 (is_global=true, group_id=NULL)
-/// - 本组自建分组 (is_global=false, group_id=gid, 后续阶段启用)
-/// - 仅返回 status=1 (启用中)
-async fn list_available_groups(
-    state: State<Arc<AppState>>,
-    token: UserToken,
-    _require: RequireGroup,
-    group_id: Path<i64>,
-) -> Result<impl Responder, CustomError> {
-    let gid = *group_id;
-    let user_id = token.user_id;
-    let db = &state.db_pool;
-
-    // 检查组成员
-    let is_member: bool = sqlx::query_scalar::<_, bool>(
-        "SELECT EXISTS(SELECT 1 FROM association_group_members WHERE group_id=$1 AND user_id=$2 AND member_status='ACTIVE'::group_member_status_enum)",
-    )
-    .bind(gid)
-    .bind(user_id)
-    .fetch_one(db)
-    .await?;
-
-    if !is_member {
-        return Err(CustomError::Forbidden("非组成员".into()));
+    #[test]
+    fn expansion_accepts_strict_bounds() {
+        assert_eq!(
+            calculate_capacity_expansion(50, 1, 5).unwrap(),
+            CapacityExpansion {
+                diamond_cost: 5,
+                new_capacity: 51,
+            }
+        );
+        assert_eq!(
+            calculate_capacity_expansion(50, 100, 5).unwrap(),
+            CapacityExpansion {
+                diamond_cost: 500,
+                new_capacity: 150,
+            }
+        );
     }
 
-    // 公用分组 (is_global=true) + 本组自建分组 (is_global=false AND group_id=gid)
-    // 按"公用在前, 自建在后"排序
-    let rows = sqlx::query(
-        r#"SELECT id, group_name, group_type, is_global
-           FROM record_group
-           WHERE status = 1
-             AND (
-                 is_global = TRUE
-                 OR (is_global = FALSE AND group_id = $1)
-             )
-           ORDER BY is_global DESC, id ASC"#,
-    )
-    .bind(gid)
-    .fetch_all(db)
-    .await?;
+    #[test]
+    fn expansion_rejects_out_of_range_expand_by() {
+        for expand_by in [-1, 0, 101] {
+            assert!(calculate_capacity_expansion(50, expand_by, 5).is_err());
+        }
+    }
 
-    let items: Vec<FootprintGroupItem> = rows
-        .into_iter()
-        .map(|r| FootprintGroupItem {
-            id: r.get("id"),
-            group_name: r.get("group_name"),
-            group_type: r.get("group_type"),
-            is_global: r.get("is_global"),
-        })
-        .collect();
+    #[test]
+    fn expansion_rejects_checked_arithmetic_overflow() {
+        assert!(calculate_capacity_expansion(50, 100, i32::MAX).is_err());
+        assert!(calculate_capacity_expansion(i32::MAX, 1, 5).is_err());
+    }
 
-    Ok(ApiResponse::success(items))
+    #[test]
+    fn expand_idempotency_key_is_stable_and_group_scoped() {
+        let first = build_expand_idempotency_key(7, "request-1").unwrap();
+        let retry = build_expand_idempotency_key(7, "request-1").unwrap();
+        let other_group = build_expand_idempotency_key(8, "request-1").unwrap();
+
+        assert_eq!(first, retry);
+        assert_ne!(first, other_group);
+    }
+
+    #[test]
+    fn expand_idempotency_key_rejects_empty_or_oversized_values() {
+        assert!(build_expand_idempotency_key(7, "   ").is_err());
+        assert!(build_expand_idempotency_key(7, &"x".repeat(129)).is_err());
+    }
 }

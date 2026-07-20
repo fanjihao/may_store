@@ -208,20 +208,6 @@ pub async fn get_today_todos(
         });
     }
 
-    if unread_count > 0 {
-        items.push(TodoItem {
-            r#type: TodoType::UnreadNotifications,
-            priority: 4,
-            group_id: None,
-            group_name: None,
-            title: format!("{} 条未读消息", unread_count),
-            subtitle: None,
-            ref_id: None,
-            action_url: "/pages/notifications/index".to_string(),
-            is_my_action: true, // 看消息永远是用户自己的事
-        });
-    }
-
     items.sort_by(|a, b| {
         a.priority
             .cmp(&b.priority)

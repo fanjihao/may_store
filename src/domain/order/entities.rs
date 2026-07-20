@@ -4,10 +4,10 @@
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use utoipa::ToSchema;
 use sqlx::FromRow;
+use utoipa::ToSchema;
 
-use super::{OrderStatus, OrderType, PointGrantStatus, ExpGrantStatus, RiskStatus};
+use super::{ExpGrantStatus, OrderStatus, OrderType, PointGrantStatus, RiskStatus};
 
 /// 订单记录 - 从数据库查询得到的订单完整信息
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema, FromRow)]
@@ -86,12 +86,9 @@ pub struct OrderItemRecord {
 #[serde(rename_all = "camelCase")]
 pub struct OrderCreateInput {
     pub group_id: Option<i64>,
-    pub invite_code: Option<String>,
     pub goal_time: Option<DateTime<Utc>>,
     pub items: Vec<OrderItemCreateInput>,
     pub remark: Option<String>,
-    pub points_reward: Option<i32>,
-    pub is_guest: Option<bool>,
 }
 
 /// 订单项创建输入
@@ -109,7 +106,6 @@ pub struct OrderStatusUpdateInput {
     pub order_id: i64,
     pub to_status: OrderStatus,
     pub remark: Option<String>,
-    pub points_reward: Option<i32>,
 }
 
 /// 订单查询参数
@@ -240,6 +236,37 @@ impl From<OrderRecord> for OrderOutNew {
             receiver_avatar: None,
             daily_cap_warning: None,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{OrderCreateInput, OrderStatusUpdateInput};
+
+    #[test]
+    fn order_create_input_does_not_expose_points_reward() {
+        let input: OrderCreateInput = serde_json::from_value(serde_json::json!({
+            "groupId": 7,
+            "items": [{ "foodId": 11, "quantity": 1 }],
+            "pointsReward": 999_999
+        }))
+        .unwrap();
+
+        let serialized = serde_json::to_value(input).unwrap();
+        assert!(serialized.get("pointsReward").is_none());
+    }
+
+    #[test]
+    fn order_status_input_does_not_expose_points_reward() {
+        let input: OrderStatusUpdateInput = serde_json::from_value(serde_json::json!({
+            "orderId": 9,
+            "toStatus": "CONFIRMED_COMPLETED",
+            "pointsReward": 999_999
+        }))
+        .unwrap();
+
+        let serialized = serde_json::to_value(input).unwrap();
+        assert!(serialized.get("pointsReward").is_none());
     }
 }
 

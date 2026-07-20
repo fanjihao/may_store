@@ -4,11 +4,14 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::{broadcast, mpsc, RwLock};
+use uuid::Uuid;
 
 /// WebSocket 连接信息
 #[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct ConnectionInfo {
+    /// 每次认证注册生成的唯一连接 ID
+    pub connection_id: Uuid,
     /// 用户 ID
     pub user_id: Option<i64>,
     /// 连接建立时间戳
@@ -24,6 +27,7 @@ impl Default for ConnectionInfo {
         // 仅占位用,真实连接走 process_messages 里创建
         let (tx, _rx) = mpsc::unbounded_channel();
         Self {
+            connection_id: Uuid::new_v4(),
             user_id: None,
             connected_at: chrono::Utc::now(),
             authenticated: false,
@@ -57,15 +61,39 @@ impl ConnectionManager {
     /// 添加新连接
     pub async fn add_connection(&self, user_id: i64, info: ConnectionInfo) {
         let mut users = self.users.write().await;
+        let connection_id = info.connection_id;
         users.insert(user_id, info);
-        log::info!("WebSocket 连接已添加: user_id={}", user_id);
+        log::info!(
+            "WebSocket 连接已添加: user_id={}, connection_id={}",
+            user_id,
+            connection_id
+        );
     }
 
-    /// 移除连接
-    pub async fn remove_connection(&self, user_id: i64) {
+    /// 仅当连接 ID 仍与当前连接一致时移除
+    pub async fn remove_connection(&self, user_id: i64, connection_id: Uuid) -> bool {
         let mut users = self.users.write().await;
-        users.remove(&user_id);
-        log::info!("WebSocket 连接已移除: user_id={}", user_id);
+        let is_current = users
+            .get(&user_id)
+            .map(|info| info.connection_id == connection_id)
+            .unwrap_or(false);
+
+        if is_current {
+            users.remove(&user_id);
+            log::info!(
+                "WebSocket 连接已移除: user_id={}, connection_id={}",
+                user_id,
+                connection_id
+            );
+        } else {
+            log::debug!(
+                "跳过过期 WebSocket 连接清理: user_id={}, connection_id={}",
+                user_id,
+                connection_id
+            );
+        }
+
+        is_current
     }
 
     /// 更新用户认证状态
@@ -120,5 +148,57 @@ impl ConnectionManager {
 impl Default for ConnectionManager {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn stale_cleanup_keeps_latest_connection_online() {
+        let manager = ConnectionManager::new();
+        let user_id = 42;
+        let connection_a = Uuid::new_v4();
+        let connection_b = Uuid::new_v4();
+        let (sender_a, mut receiver_a) = mpsc::unbounded_channel();
+        let (sender_b, mut receiver_b) = mpsc::unbounded_channel();
+
+        manager
+            .add_connection(
+                user_id,
+                ConnectionInfo {
+                    connection_id: connection_a,
+                    user_id: Some(user_id),
+                    connected_at: chrono::Utc::now(),
+                    authenticated: true,
+                    sender: sender_a,
+                },
+            )
+            .await;
+        manager
+            .add_connection(
+                user_id,
+                ConnectionInfo {
+                    connection_id: connection_b,
+                    user_id: Some(user_id),
+                    connected_at: chrono::Utc::now(),
+                    authenticated: true,
+                    sender: sender_b,
+                },
+            )
+            .await;
+
+        assert!(!manager.remove_connection(user_id, connection_a).await);
+        assert!(manager.is_connected(user_id).await);
+        assert_eq!(manager.online_count().await, 1);
+        assert!(manager.send_to_user(user_id, "to-latest").await);
+        assert_eq!(receiver_b.recv().await.as_deref(), Some("to-latest"));
+        assert!(receiver_a.try_recv().is_err());
+
+        assert!(manager.remove_connection(user_id, connection_b).await);
+        assert!(!manager.is_connected(user_id).await);
+        assert_eq!(manager.online_count().await, 0);
+        assert!(!manager.send_to_user(user_id, "after-close").await);
     }
 }

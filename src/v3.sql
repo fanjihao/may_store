@@ -47,6 +47,7 @@ DROP TABLE IF EXISTS foods CASCADE;
 DROP TABLE IF EXISTS tags CASCADE;
 DROP TABLE IF EXISTS guest_invitations CASCADE;
 DROP TABLE IF EXISTS user_group_points CASCADE;
+DROP TABLE IF EXISTS partner_invitations CASCADE;
 DROP TABLE IF EXISTS association_group_members CASCADE;
 DROP TABLE IF EXISTS group_level_configs CASCADE;
 DROP TABLE IF EXISTS association_groups CASCADE;
@@ -207,7 +208,7 @@ CREATE TYPE notification_type_enum AS ENUM ('ORDER', 'WISH', 'SIGN_IN', 'SYSTEM'
 CREATE TYPE content_check_status_enum AS ENUM ('PENDING', 'PASS', 'REJECTED');
 
 -- Upload file business ref type (FSD §11.19)
-CREATE TYPE upload_business_ref_enum AS ENUM ('food', 'footprint', 'checkin', 'avatar');
+CREATE TYPE upload_business_ref_enum AS ENUM ('food', 'footprint', 'checkin', 'avatar', 'group_avatar');
 
 -- Audit log action type (FSD §11.20)
 CREATE TYPE audit_action_enum AS ENUM (
@@ -418,6 +419,29 @@ COMMENT ON COLUMN association_group_members.is_primary IS '是否主成员标记
 COMMENT ON COLUMN association_group_members.joined_at IS '添加时间';
 CREATE INDEX idx_gm_user_status ON association_group_members(user_id, member_status);
 CREATE INDEX idx_gm_group_status ON association_group_members(group_id, member_status);
+
+-- ================= PARTNER INVITATIONS =================
+-- 伙伴绑定邀请仅保存 token 的 SHA-256，不落原始凭证。
+CREATE TABLE partner_invitations (
+    invitation_id BIGSERIAL PRIMARY KEY,
+    token_hash CHAR(64) NOT NULL UNIQUE,
+    inviter_user_id BIGINT NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+    target_group_id BIGINT REFERENCES association_groups(group_id) ON DELETE CASCADE,
+    expires_at TIMESTAMPTZ NOT NULL,
+    consumed_at TIMESTAMPTZ,
+    consumed_by BIGINT REFERENCES users(user_id) ON DELETE SET NULL,
+    revoked_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CHECK (expires_at > created_at),
+    CHECK ((consumed_at IS NULL) = (consumed_by IS NULL))
+);
+COMMENT ON TABLE partner_invitations IS '伙伴绑定的一次性服务端邀请凭证';
+COMMENT ON COLUMN partner_invitations.token_hash IS '原始邀请 token 的 SHA-256 十六进制摘要';
+CREATE INDEX idx_partner_inviter_created
+    ON partner_invitations(inviter_user_id, created_at DESC);
+CREATE INDEX idx_partner_active_expiry
+    ON partner_invitations(expires_at)
+    WHERE consumed_at IS NULL AND revoked_at IS NULL;
 
 -- ================= GROUP LEVEL CONFIGS =================
 -- 组升级的"阶梯表": level 升到这一级需要的累计 exp。
@@ -734,7 +758,15 @@ CREATE TABLE wishes (
     closed_at TIMESTAMPTZ,
     version INT NOT NULL DEFAULT 1,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CONSTRAINT wishes_wish_cost_range_check
+        CHECK (wish_cost BETWEEN 1 AND 1000000),
+    CONSTRAINT wishes_initial_cost_range_check
+        CHECK (initial_cost BETWEEN 1 AND 1000000),
+    CONSTRAINT wishes_final_cost_range_check
+        CHECK (final_cost BETWEEN 1 AND 1000000),
+    CONSTRAINT wishes_claim_cost_range_check
+        CHECK (claim_cost BETWEEN 1 AND 1000000)
 );
 COMMENT ON TABLE wishes IS '心愿模板及状态 - 7状态模型';
 COMMENT ON COLUMN wishes.wish_id IS '心愿ID';
@@ -783,7 +815,9 @@ CREATE TABLE wish_negotiations (
     cost INT,
     deadline_hours INT,
     remark TEXT,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CONSTRAINT wish_negotiations_cost_range_check
+        CHECK (cost BETWEEN 1 AND 1000000)
 );
 COMMENT ON TABLE wish_negotiations IS '心愿协商记录';
 CREATE INDEX idx_wn_wish ON wish_negotiations(wish_id);

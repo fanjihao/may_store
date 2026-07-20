@@ -228,11 +228,13 @@ impl NotificationService {
         user_id: i64,
         notification_id: i64,
     ) -> Result<(), CustomError> {
-        sqlx::query("UPDATE notifications SET is_read = true WHERE id = $1 AND user_id = $2")
-            .bind(notification_id)
-            .bind(user_id as i64)
-            .execute(db)
-            .await?;
+        sqlx::query(
+            "UPDATE notifications SET is_read = true WHERE notification_id = $1 AND user_id = $2",
+        )
+        .bind(notification_id)
+        .bind(user_id as i64)
+        .execute(db)
+        .await?;
         Ok(())
     }
 }

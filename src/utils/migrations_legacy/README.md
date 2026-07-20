@@ -2,13 +2,13 @@
 
 ⚠️ **These files are historical reference only. Do not apply them to a database.**
 
-The canonical, single-source-of-truth schema is [`src/v3.sql`](../../v3.sql). It is self-contained: every enum, table, index, foreign key, and seed row needed to bootstrap a working database is defined there.
+The clean-install end state is [`src/v3.sql`](../../v3.sql). Production upgrades use the forward-only migrations in [`migrations/`](../../../migrations/); every new migration must also be reflected in `v3.sql`.
 
 ## Why these are archived
 
 Both `001_v1_260423.sql` and `002_phase1_foundation.sql` are **strictly redundant** with `v3.sql`. `v3.sql` is a superset of every object they create. The binary does not load any file from this directory at startup; schema bootstrap is a manual `psql -f src/v3.sql` step.
 
-Keeping these files in a `migrations/` subfolder next to live code made them look authoritative, which contributed to past bugs where the code and the live schema drifted (see git history for the `is_active` / `user_status_enum` mismatch).
+These two historical files predate the current baseline and are not compatible with the versioned migration chain. Keeping them beside live code made them look executable, which contributed to past schema drift.
 
 ## What they contain
 

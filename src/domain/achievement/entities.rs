@@ -11,14 +11,16 @@ use utoipa::ToSchema;
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct AchievementDefinition {
-    pub id: i64,
-    pub slug: String,
+    pub achievement_id: i64,
+    pub code: String,
     pub name: String,
-    pub icon: Option<String>,
     pub description: Option<String>,
-    pub requirement_type: String,
-    pub requirement_value: i32,
-    pub create_time: DateTime<Utc>,
+    pub category: String,
+    pub rule_type: String,
+    pub rule_config: Option<serde_json::Value>,
+    pub icon: Option<String>,
+    pub is_enabled: bool,
+    pub created_at: DateTime<Utc>,
 }
 
 /// 用户成就记录
@@ -29,5 +31,7 @@ pub struct UserAchievement {
     pub id: i64,
     pub user_id: i64,
     pub achievement_id: i64,
-    pub unlocked_at: DateTime<Utc>,
+    pub progress: i32,
+    pub unlocked_at: Option<DateTime<Utc>>,
+    pub created_at: DateTime<Utc>,
 }

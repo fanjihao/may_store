@@ -9,8 +9,8 @@ Rust + ntex 的后端服务，包含用户/菜品/订单/心愿/看板接口，�
 
 ## API 文档
 
-- Swagger UI：`http://localhost:9831/swagger-ui/`
-- OpenAPI JSON：`http://localhost:9831/api-doc/openapi.json`
+- Swagger UI：`http://localhost:9831/swagger/index.html`
+- OpenAPI JSON：`http://localhost:9831/swagger/openapi.json`
 
 ## 快速开始（本地）
 
@@ -20,9 +20,9 @@ Rust + ntex 的后端服务，包含用户/菜品/订单/心愿/看板接口，�
 - PostgreSQL（建议 15+）
 - Redis
 
-### 2) 初始化数据库
+### 2) 初始化或升级数据库
 
-项目自带 PostgreSQL schema：
+全新数据库先执行最终结构快照：
 
 - [src/v3.sql](src/v3.sql)
 
@@ -31,6 +31,8 @@ Rust + ntex 的后端服务，包含用户/菜品/订单/心愿/看板接口，�
 ```bash
 psql "postgres://postgres:<password>@localhost:5432/store_v2" -f src/v3.sql
 ```
+
+服务启动时会自动执行 `migrations/` 中尚未应用的前向迁移；已有数据库无需再次运行会清表的 `v3.sql`。每次结构变更都必须同时更新 `v3.sql` 和新增 migration。
 
 历史迁移脚本（已归档，仅作存档参考，不要在干净的 v3 数据库上执行）：
 

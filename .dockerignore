@@ -4,6 +4,5 @@ node_modules
 logs
 target
 .env
-Cargo.lock
 README.md
 docs

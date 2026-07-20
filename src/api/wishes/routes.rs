@@ -13,12 +13,17 @@ use utoipa::ToSchema;
 
 use crate::application::wish_service::WishService;
 use crate::domain::wish::{
-    WishCreateInput, WishDeadlineInput, WishFeedbackInput, WishOut, WishQuoteInput, WishRejectInput,
-    WishStatus,
+    WishCreateInput, WishDeadlineInput, WishFeedbackInput, WishOut, WishQuoteInput,
+    WishRejectInput, WishStatus,
 };
 use crate::{
-    config::AppState, errors::CustomError, middlewares::auth::UserToken,
-    middlewares::require_group::RequireGroup, utils::response::ApiResponse,
+    config::AppState,
+    errors::CustomError,
+    middlewares::auth::UserToken,
+    middlewares::idempotency::{self, IdempotencyKey, ReservationOutcome},
+    middlewares::require_group::RequireGroup,
+    middlewares::target_group::require_active_target_group_member,
+    utils::response::ApiResponse,
 };
 
 /// 配置心愿路由
@@ -60,7 +65,8 @@ pub fn configure(cfg: &mut ServiceConfig) {
         web::resource("/api/wishes/{wish_id}/close").route(web::post().to(wish_close)), // FSD v2 7.11 关闭心愿
     );
     cfg.service(
-        web::resource("/api/wishes/{wish_id}/confirm-completion").route(web::post().to(wish_confirm_completion)), // FSD v2 7.13 接单人确认完成
+        web::resource("/api/wishes/{wish_id}/confirm-completion")
+            .route(web::post().to(wish_confirm_completion)), // FSD v2 7.13 接单人确认完成
     );
 }
 
@@ -111,6 +117,7 @@ pub struct WishCloseInput {
 pub async fn create_group_wish(
     user_token: UserToken,
     _require: RequireGroup,
+    idempotency_key: IdempotencyKey,
     state: State<Arc<AppState>>,
     group_id: Path<i64>,
     data: Json<WishCreateInput>,
@@ -118,18 +125,7 @@ pub async fn create_group_wish(
     let gid = *group_id;
     let db = &state.db_pool;
 
-    // 检查用户是否是组成员
-    let is_member: bool = sqlx::query_scalar::<_, bool>(
-        "SELECT EXISTS(SELECT 1 FROM association_group_members WHERE group_id=$1 AND user_id=$2 AND member_status='ACTIVE'::group_member_status_enum)",
-    )
-    .bind(gid)
-    .bind(user_token.user_id)
-    .fetch_one(db)
-    .await?;
-
-    if !is_member {
-        return Err(CustomError::Forbidden("非组成员".into()));
-    }
+    require_active_target_group_member(db, user_token.user_id, gid).await?;
 
     // 校验: 组内至少 2 人才能创建心愿
     let member_count: i64 = sqlx::query_scalar(
@@ -146,8 +142,39 @@ pub async fn create_group_wish(
         ));
     }
 
-    let rec = WishService::create_wish(db, user_token.user_id, &data.into_inner()).await?;
-    Ok(ApiResponse::success(WishOut::from_record(rec, None)))
+    let route = format!("/api/groups/{gid}/wishes");
+    let reservation = match idempotency::reserve(
+        &state.redis_cache,
+        user_token.user_id,
+        "POST",
+        &route,
+        idempotency_key.0.as_deref(),
+    )
+    .await?
+    {
+        ReservationOutcome::Bypass => None,
+        ReservationOutcome::Acquired(reservation) => Some(reservation),
+        ReservationOutcome::Completed(cached) => {
+            return Ok(ApiResponse::success(cached.body));
+        }
+    };
+
+    let input = data.into_inner();
+    let rec = match WishService::create_wish(db, user_token.user_id, gid, &input).await {
+        Ok(rec) => rec,
+        Err(error) => {
+            if let Some(reservation) = reservation.as_ref() {
+                reservation.release().await;
+            }
+            return Err(error);
+        }
+    };
+    let payload = serde_json::to_value(WishOut::from_record(rec, None))
+        .map_err(|e| CustomError::internal(format!("心愿响应序列化失败: {e}")))?;
+    if let Some(reservation) = reservation.as_ref() {
+        reservation.complete(200, &payload).await?;
+    }
+    Ok(ApiResponse::success(payload))
 }
 
 /// 获取组内心愿列表
@@ -180,18 +207,7 @@ pub async fn list_group_wishes(
     let db = &state.db_pool;
     let limit = query.limit.unwrap_or(20).min(100);
 
-    // 检查用户是否是组成员
-    let is_member: bool = sqlx::query_scalar::<_, bool>(
-        "SELECT EXISTS(SELECT 1 FROM association_group_members WHERE group_id=$1 AND user_id=$2 AND member_status='ACTIVE'::group_member_status_enum)",
-    )
-    .bind(gid)
-    .bind(user_token.user_id)
-    .fetch_one(db)
-    .await?;
-
-    if !is_member {
-        return Err(CustomError::Forbidden("非组成员".into()));
-    }
+    require_active_target_group_member(db, user_token.user_id, gid).await?;
 
     // 参数化查询:状态/角色/游标全部使用占位符 + 枚举白名单
     let status_filter: Option<&str> = match query.status.as_deref() {
@@ -767,12 +783,12 @@ pub async fn list_group_wishes(
     security(("bearer_auth" = []))
 )]
 pub async fn get_wish(
-    _user_token: UserToken,
-    _require: RequireGroup,
+    user_token: UserToken,
     state: State<Arc<AppState>>,
     id: Path<i64>,
 ) -> Result<impl Responder, CustomError> {
-    let (rec, negotiations) = WishService::get_wish(&state.db_pool, *id).await?;
+    let (rec, negotiations) =
+        WishService::get_wish(&state.db_pool, user_token.user_id, *id).await?;
     let wish_out = WishOut::from_record(rec, None);
     Ok(ApiResponse::success(
         crate::domain::wish::entities::WishOutWithNegotiations {
@@ -863,7 +879,8 @@ pub async fn wish_confirm_agreement(
     id: Path<i64>,
 ) -> Result<impl Responder, CustomError> {
     let wish_id = *id;
-    let out: crate::domain::wish::entities::WishOut = WishService::confirm_agreement(&state.db_pool, user_token.user_id, wish_id).await?;
+    let out: crate::domain::wish::entities::WishOut =
+        WishService::confirm_agreement(&state.db_pool, user_token.user_id, wish_id).await?;
     Ok(ApiResponse::success(out))
 }
 
@@ -892,22 +909,8 @@ pub async fn wish_reject(
 ) -> Result<impl Responder, CustomError> {
     let wish_id = *id;
     let input = body.into_inner();
-    // P3-1: 入口处先校验调用方是协商双方之一,避免 service 写权限前的无效调用
     let caller_id = user_token.user_id;
-    let party: Option<(i64, i64)> = sqlx::query_as(
-        "SELECT requester_id, fulfiller_id FROM wishes WHERE wish_id = $1"
-    )
-    .bind(wish_id)
-    .fetch_optional(&state.db_pool)
-    .await?;
-    if let Some((req, ful)) = party {
-        if caller_id != req && caller_id != ful {
-            return Err(CustomError::Forbidden(
-                "只有心愿协商双方可以拒绝".into(),
-            ));
-        }
-    }
-    let out = WishService::reject_wish(&state.db_pool, caller_id, wish_id, &input, "REJECT").await?;
+    let out = WishService::reject_wish(&state.db_pool, caller_id, wish_id, &input).await?;
     Ok(ApiResponse::success(out))
 }
 
@@ -929,12 +932,43 @@ pub async fn wish_reject(
 pub async fn wish_select(
     user_token: UserToken,
     _require: RequireGroup,
+    idempotency_key: IdempotencyKey,
     state: State<Arc<AppState>>,
     id: Path<i64>,
 ) -> Result<impl Responder, CustomError> {
     let wish_id = *id;
-    let out = WishService::select_wish(&state.db_pool, user_token.user_id, wish_id).await?;
-    Ok(ApiResponse::success(out))
+    let route = format!("/api/wishes/{wish_id}/select");
+    let reservation = match idempotency::reserve(
+        &state.redis_cache,
+        user_token.user_id,
+        "POST",
+        &route,
+        idempotency_key.0.as_deref(),
+    )
+    .await?
+    {
+        ReservationOutcome::Bypass => None,
+        ReservationOutcome::Acquired(reservation) => Some(reservation),
+        ReservationOutcome::Completed(cached) => {
+            return Ok(ApiResponse::success(cached.body));
+        }
+    };
+
+    let out = match WishService::select_wish(&state.db_pool, user_token.user_id, wish_id).await {
+        Ok(out) => out,
+        Err(error) => {
+            if let Some(reservation) = reservation.as_ref() {
+                reservation.release().await;
+            }
+            return Err(error);
+        }
+    };
+    let payload = serde_json::to_value(out)
+        .map_err(|e| CustomError::internal(format!("心愿响应序列化失败: {e}")))?;
+    if let Some(reservation) = reservation.as_ref() {
+        reservation.complete(200, &payload).await?;
+    }
+    Ok(ApiResponse::success(payload))
 }
 
 /// 接单人确认履约完成 — 心愿从 CLAIMED 推到 FINISHED
@@ -969,7 +1003,7 @@ pub async fn wish_confirm_completion(
 /// POST /api/wishes/{wish_id}/feedback
 /// FSD v2 7.9
 #[utoipa::path(
-    put,
+    post,
     path = "/api/wishes/{wish_id}/feedback",
     tag = "心愿",
     params(("wish_id" = i64, Path, description = "心愿ID")),
@@ -1019,14 +1053,13 @@ pub async fn wish_close(
 ) -> Result<impl Responder, CustomError> {
     let wish_id = *id;
     let input = body.into_inner();
-    let out = WishService::reject_wish(
+    let out = WishService::close_wish(
         &state.db_pool,
         user_token.user_id,
         wish_id,
         &WishRejectInput {
             reason: input.reason,
         },
-        "CLOSE",  // P3-4: /close 走 CLOSE 路径,允许任意非终态并自动解冻
     )
     .await?;
     Ok(ApiResponse::success(out))
@@ -1054,42 +1087,9 @@ pub async fn wish_expire(
     id: Path<i64>,
 ) -> Result<impl Responder, CustomError> {
     let wish_id = *id;
-    let db = &state.db_pool;
+    let result = WishService::expire_wish(&state.db_pool, user_token.user_id, wish_id).await?;
 
-    // P2-2: 加载心愿并校验权限 - 只有 requester/fulfiller 可以触发逾期
-    let row =
-        sqlx::query("SELECT status::text, requester_id, fulfiller_id, group_id FROM wishes WHERE wish_id = $1")
-            .bind(wish_id)
-            .fetch_optional(db)
-            .await?
-            .ok_or_else(|| CustomError::NotFound("心愿不存在".into()))?;
-
-    let status: String = row.get("status");
-    let requester_id: i64 = row.get("requester_id");
-    let fulfiller_id: i64 = row.get("fulfiller_id");
-    let group_id: i64 = row.get("group_id");
-
-    let caller_id = user_token.user_id;
-    if caller_id != requester_id && caller_id != fulfiller_id {
-        return Err(CustomError::Forbidden(
-            "只有心愿的发起方或履约方可以处理逾期".into(),
-        ));
-    }
-
-    if status != "CLAIMED" {
-        return Err(CustomError::BadRequest("心愿状态不允许逾期处理".into()));
-    }
-
-    // P2-3: 用条件 UPDATE 保证幂等,防止 TOCTOU 双重处理
-    let expired_rows = sqlx::query(
-        "UPDATE wishes SET status='EXPIRED'::wish_status_enum, expired_at=NOW(), updated_at=NOW() \
-         WHERE wish_id=$1 AND status='CLAIMED'::wish_status_enum RETURNING wish_id"
-    )
-    .bind(wish_id)
-    .fetch_optional(db)
-    .await?;
-    if expired_rows.is_none() {
-        // 已经被其他并发请求处理过
+    if result.already_processed {
         return Ok(ApiResponse::success(serde_json::json!({
             "wishId": wish_id,
             "status": "EXPIRED",
@@ -1098,72 +1098,9 @@ pub async fn wish_expire(
         })));
     }
 
-    // 获取冻结金额并解冻(用 idempotency_key 二次防护)
-    let frozen_amount: i64 = sqlx::query_scalar::<_, i64>(
-        r#"SELECT COALESCE(SUM(CASE WHEN type='FREEZE'::love_point_tx_type_enum THEN amount ELSE 0 END)::bigint - SUM(CASE WHEN type='UNFREEZE'::love_point_tx_type_enum THEN amount ELSE 0 END)::bigint, 0::bigint) FROM love_point_transactions WHERE user_id=$1 AND group_id=$2 AND biz_id=$3 AND biz_type = 'wish'"#
-    )
-    .bind(requester_id)
-    .bind(group_id)
-    .bind(wish_id)
-    .fetch_optional(db)
-    .await?
-    .unwrap_or(0);
-
-    if frozen_amount > 0 {
-        let idempotency_key = format!("wish_expire_{}", wish_id);
-        let row = sqlx::query_as::<_, (i64, i64)>(
-            "SELECT COALESCE(SUM(CASE WHEN type IN ('EARN'::love_point_tx_type_enum) THEN amount ELSE 0 END)::bigint, 0::bigint), COALESCE(SUM(CASE WHEN type='FREEZE'::love_point_tx_type_enum THEN amount ELSE 0 END)::bigint - SUM(CASE WHEN type='UNFREEZE'::love_point_tx_type_enum THEN amount ELSE 0 END)::bigint, 0::bigint) FROM love_point_transactions WHERE user_id=$1 AND group_id=$2"
-        )
-        .bind(requester_id)
-        .bind(group_id)
-        .fetch_one(db)
-        .await?;
-        let (available_before, frozen_before) = row;
-
-        sqlx::query(
-            r#"INSERT INTO love_point_transactions (user_id, group_id, type, amount, available_before, available_after, frozen_before, frozen_after, biz_type, biz_id, idempotency_key, created_at)
-               VALUES ($1, $2, 'UNFREEZE'::love_point_tx_type_enum, $3, $4, $4+$3, $5, 0, 'wish', $6, $7, NOW())"#
-        )
-        .bind(requester_id)
-        .bind(group_id)
-        .bind(frozen_amount)
-        .bind(available_before)
-        .bind(frozen_before)
-        .bind(wish_id)
-        .bind(&idempotency_key)
-        .execute(db)
-        .await?;
-    }
-
-    // P1-3:发布逾期事件,通知双方
-    use crate::infrastructure::event::publisher::EventPublisher;
-    let _ = EventPublisher::publish(
-        db,
-        crate::domain::event::EventType::WishExpired,
-        crate::domain::event::WishExpiredPayload {
-            wish_id,
-            requester_id,
-            fulfiller_id: sqlx::query_scalar::<_, i64>(
-                "SELECT COALESCE(fulfiller_id, 0) FROM wishes WHERE wish_id = $1"
-            )
-            .bind(wish_id)
-            .fetch_one(db)
-            .await
-            .unwrap_or(0),
-            group_id,
-            unfrozen_amount: frozen_amount as i32,
-            trace_id: None,
-        },
-        None,
-        Some(group_id),
-        Some("wish"),
-        Some(wish_id),
-    )
-    .await;
-
     Ok(ApiResponse::success(serde_json::json!({
         "wishId": wish_id,
         "status": "EXPIRED",
-        "frozenAmountUnfrozen": frozen_amount
+        "frozenAmountUnfrozen": result.unfrozen_amount
     })))
 }

@@ -4,8 +4,9 @@
 use ntex::web::{
     self,
     types::{Json, Path, State},
-    HttpResponse, Responder, ServiceConfig,
+    Responder, ServiceConfig,
 };
+use qiniu_sdk::objects::{apis::http_client::ResponseErrorKind, ObjectsManager};
 use qiniu_upload_token::{credential::Credential, prelude::*, UploadPolicy};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -27,8 +28,6 @@ pub fn configure(cfg: &mut ServiceConfig) {
             .route("/tokens", web::post().to(get_upload_tokens))
             // 确认上传完成
             .route("/confirm", web::post().to(confirm_upload))
-            // 七牛异步回调
-            .route("/qiniu-callback", web::post().to(qiniu_callback))
             // 删除上传文件
             .route("/{file_key:path}", web::delete().to(delete_file)),
     );
@@ -134,13 +133,22 @@ pub struct ConfirmUploadResponse {
     pub content_check_status: String,
 }
 
-/// 七牛异步回调请求
-#[derive(Debug, Deserialize, Serialize, ToSchema)]
-#[serde(rename_all = "camelCase")]
-pub struct QiniuCallbackRequest {
-    pub file_key: String,
-    pub hash: String,
+#[derive(Debug, sqlx::FromRow)]
+struct UploadRecord {
     pub user_id: i64,
+    pub status: String,
+    pub size: Option<i64>,
+    pub qiniu_hash: Option<String>,
+    pub cdn_url: Option<String>,
+    pub content_check_status: String,
+    pub business_ref_type: Option<String>,
+    pub business_ref_id: Option<i64>,
+}
+
+#[derive(Debug)]
+struct QiniuObjectMetadata {
+    hash: String,
+    size: u64,
 }
 
 /// 删除文件响应
@@ -151,7 +159,7 @@ pub struct DeleteFileResponse {
 
 // ========== 工具函数 ==========
 
-const ALLOWED_MIME: &[&str] = &["image/jpeg", "image/png", "image/gif"];
+const ALLOWED_MIME: &[&str] = &["image/jpeg", "image/png", "image/gif", "image/webp"];
 const MAX_FILE_SIZE: i64 = 5 * 1024 * 1024; // 5MB
 const MAX_BATCH_FILES: usize = 9;
 const MAX_BATCH_TOTAL_SIZE: i64 = 20 * 1024 * 1024; // 20MB
@@ -223,6 +231,172 @@ fn build_upload_token(
         .to_token_string(Default::default())
         .map(|s| s.into_owned())
         .map_err(|e| CustomError::upload_token_invalid(format!("七牛 token 颁发失败: {:?}", e)))
+}
+
+fn build_cdn_url(cfg: &crate::config::QiniuConfig, file_key: &str) -> String {
+    let domain = if cfg.cdn_domain.is_empty() {
+        cfg.bucket.as_str()
+    } else {
+        cfg.cdn_domain.as_str()
+    };
+    let base_url = if domain.starts_with("http://") || domain.starts_with("https://") {
+        domain.trim_end_matches('/').to_string()
+    } else {
+        format!("https://{}", domain.trim_end_matches('/'))
+    };
+    format!("{}/{}", base_url, file_key.trim_start_matches('/'))
+}
+
+async fn stat_qiniu_object(
+    cfg: &crate::config::QiniuConfig,
+    file_key: &str,
+) -> Result<QiniuObjectMetadata, CustomError> {
+    if cfg.access_key.is_empty() || cfg.secret_key.is_empty() {
+        return Err(CustomError::upload_token_invalid(
+            "七牛 AccessKey/SecretKey 未配置".to_string(),
+        ));
+    }
+
+    let access_key = cfg.access_key.clone();
+    let secret_key = cfg.secret_key.clone();
+    let bucket_name = cfg.bucket.clone();
+    let object_key = file_key.to_string();
+    let error_key = object_key.clone();
+
+    tokio::task::spawn_blocking(move || {
+        let credential = Credential::new(access_key, secret_key);
+        let manager = ObjectsManager::new(credential);
+        let bucket = manager.bucket(bucket_name);
+        let response =
+            bucket
+                .stat_object(&object_key)
+                .call()
+                .map_err(|error| match error.kind() {
+                    ResponseErrorKind::StatusCodeError(status)
+                        if status.as_u16() == 404 || status.as_u16() == 612 =>
+                    {
+                        CustomError::upload_file_not_found(format!(
+                            "七牛对象 {} 不存在",
+                            object_key
+                        ))
+                    }
+                    _ => CustomError::internal(format!("七牛对象核验失败: {}", error)),
+                })?;
+
+        let body = response.into_body();
+        let value: &serde_json::Value = body.as_ref();
+        let hash = value
+            .get("hash")
+            .and_then(serde_json::Value::as_str)
+            .filter(|hash| !hash.is_empty())
+            .ok_or_else(|| CustomError::internal("七牛 stat 响应缺少 hash"))?;
+        let size = value
+            .get("fsize")
+            .and_then(serde_json::Value::as_u64)
+            .ok_or_else(|| CustomError::internal("七牛 stat 响应缺少 fsize"))?;
+
+        Ok(QiniuObjectMetadata {
+            hash: hash.to_string(),
+            size,
+        })
+    })
+    .await
+    .map_err(|error| {
+        CustomError::internal(format!("七牛对象 {} 核验任务失败: {}", error_key, error))
+    })?
+}
+
+fn validate_qiniu_object(
+    client_hash: &str,
+    expected_size: i64,
+    object: &QiniuObjectMetadata,
+) -> Result<(), CustomError> {
+    if client_hash.trim().is_empty() {
+        return Err(CustomError::bad_request("七牛 hash 不能为空"));
+    }
+    if expected_size <= 0 {
+        return Err(CustomError::internal("上传记录的预登记大小无效"));
+    }
+    if object.hash != client_hash {
+        return Err(CustomError::upload_content_rejected(
+            "七牛对象 hash 与客户端上传响应不一致",
+        ));
+    }
+    if object.size != expected_size as u64 {
+        return Err(CustomError::upload_content_rejected(format!(
+            "七牛对象大小 {} 与预登记大小 {} 不一致",
+            object.size, expected_size
+        )));
+    }
+    Ok(())
+}
+
+async fn fetch_upload_record(
+    db: &sqlx::Pool<sqlx::Postgres>,
+    file_key: &str,
+) -> Result<Option<UploadRecord>, CustomError> {
+    Ok(sqlx::query_as::<_, UploadRecord>(
+        r#"
+        SELECT user_id, status, size, qiniu_hash, cdn_url,
+               content_check_status::text AS content_check_status,
+               business_ref_type::text AS business_ref_type, business_ref_id
+        FROM upload_files
+        WHERE file_key = $1
+        "#,
+    )
+    .bind(file_key)
+    .fetch_optional(db)
+    .await?)
+}
+
+fn validate_business_ref_type(
+    record: &UploadRecord,
+    requested: Option<&BusinessRefType>,
+) -> Result<String, CustomError> {
+    let registered = record
+        .business_ref_type
+        .as_deref()
+        .ok_or_else(|| CustomError::internal("上传记录缺少预登记业务类型"))?;
+    if let Some(requested) = requested {
+        if requested.as_str() != registered {
+            return Err(CustomError::bad_request(
+                "确认上传的业务类型与预登记类型不一致",
+            ));
+        }
+    }
+    Ok(registered.to_string())
+}
+
+fn active_confirm_response(
+    record: &UploadRecord,
+    input: &ConfirmUploadRequest,
+) -> Result<ConfirmUploadResponse, CustomError> {
+    if record.status != "ACTIVE" {
+        return Err(CustomError::idempotency_conflict(format!(
+            "上传记录状态 {} 不允许确认",
+            record.status
+        )));
+    }
+    if record.qiniu_hash.as_deref() != Some(input.hash.as_str()) {
+        return Err(CustomError::idempotency_conflict(
+            "该文件已使用不同 hash 完成确认",
+        ));
+    }
+    if input.business_ref_id.is_some() && record.business_ref_id != input.business_ref_id {
+        return Err(CustomError::idempotency_conflict(
+            "该文件已绑定不同业务记录",
+        ));
+    }
+    let cdn_url = record
+        .cdn_url
+        .clone()
+        .ok_or_else(|| CustomError::internal("已激活上传记录缺少 CDN URL"))?;
+
+    Ok(ConfirmUploadResponse {
+        file_key: input.file_key.clone(),
+        cdn_url,
+        content_check_status: record.content_check_status.clone(),
+    })
 }
 
 /// 写 upload_files 表（PENDING 状态）
@@ -297,12 +471,8 @@ pub async fn get_upload_token(
     validate_size(input.size)?;
 
     let file_key = generate_file_key(&input.business_ref_type, &input.filename);
-    let upload_token = build_upload_token(
-        &state.qiniu,
-        &file_key,
-        &input.content_type,
-        input.size,
-    )?;
+    let upload_token =
+        build_upload_token(&state.qiniu, &file_key, &input.content_type, input.size)?;
 
     // 写 upload_files 表
     insert_upload_record(
@@ -316,8 +486,8 @@ pub async fn get_upload_token(
     )
     .await?;
 
-    let expires_at = chrono::Utc::now()
-        + chrono::Duration::seconds(state.qiniu.token_expire_secs as i64);
+    let expires_at =
+        chrono::Utc::now() + chrono::Duration::seconds(state.qiniu.token_expire_secs as i64);
 
     let upload_host = if state.qiniu.upload_host.is_empty() {
         state.qiniu.region.upload_host().to_string()
@@ -378,20 +548,16 @@ pub async fn get_upload_tokens(
         state.qiniu.upload_host.clone()
     };
 
-    let expires_at = chrono::Utc::now()
-        + chrono::Duration::seconds(state.qiniu.token_expire_secs as i64);
+    let expires_at =
+        chrono::Utc::now() + chrono::Duration::seconds(state.qiniu.token_expire_secs as i64);
 
     let mut items = Vec::with_capacity(input.files.len());
     for file in &input.files {
         validate_mime(&file.content_type)?;
         validate_size(file.size)?;
         let file_key = generate_file_key(&file.business_ref_type, &file.filename);
-        let upload_token = build_upload_token(
-            &state.qiniu,
-            &file_key,
-            &file.content_type,
-            file.size,
-        )?;
+        let upload_token =
+            build_upload_token(&state.qiniu, &file_key, &file.content_type, file.size)?;
         insert_upload_record(
             &state.db_pool,
             token.user_id,
@@ -411,7 +577,9 @@ pub async fn get_upload_tokens(
         });
     }
 
-    Ok(ApiResponse::success(UploadTokensResponse { uploads: items }))
+    Ok(ApiResponse::success(UploadTokensResponse {
+        uploads: items,
+    }))
 }
 
 /// 确认上传完成
@@ -439,69 +607,88 @@ pub async fn confirm_upload(
     let input = body.into_inner();
     let db = &state.db_pool;
 
-    // 校验所有权与状态
-    let row: Option<(i64, String)> = sqlx::query_as(
-        "SELECT user_id, status FROM upload_files WHERE file_key = $1",
-    )
-    .bind(&input.file_key)
-    .fetch_optional(db)
-    .await?;
+    if input.hash.trim().is_empty() {
+        return Err(CustomError::bad_request("七牛 hash 不能为空"));
+    }
 
-    let (owner_id, _status) = row.ok_or_else(|| {
-        CustomError::upload_file_not_found(format!("file_key {} 不存在", input.file_key))
-    })?;
+    let record = fetch_upload_record(db, &input.file_key)
+        .await?
+        .ok_or_else(|| {
+            CustomError::upload_file_not_found(format!("file_key {} 不存在", input.file_key))
+        })?;
 
-    if owner_id != token.user_id {
+    if record.user_id != token.user_id {
         return Err(CustomError::upload_permission_denied(
             "无权操作该文件".to_string(),
         ));
     }
 
-    // 更新为 ACTIVE
-    sqlx::query(
+    if record.status != "PENDING" && record.status != "ACTIVE" {
+        return Err(CustomError::idempotency_conflict(format!(
+            "上传记录状态 {} 不允许确认",
+            record.status
+        )));
+    }
+
+    let expected_size = record
+        .size
+        .ok_or_else(|| CustomError::internal("上传记录缺少预登记大小"))?;
+    let business_ref_type = validate_business_ref_type(&record, input.business_ref_type.as_ref())?;
+    let object = stat_qiniu_object(&state.qiniu, &input.file_key).await?;
+    validate_qiniu_object(&input.hash, expected_size, &object)?;
+
+    // ACTIVE 只作为相同参数重试的幂等成功，不再执行状态转换。
+    if record.status == "ACTIVE" {
+        return Ok(ApiResponse::success(active_confirm_response(
+            &record, &input,
+        )?));
+    }
+
+    let cdn_url = build_cdn_url(&state.qiniu, &input.file_key);
+    let result = sqlx::query(
         r#"
         UPDATE upload_files
-        SET status = 'ACTIVE'::user_status_enum, updated_at = NOW()
-        WHERE file_key = $1
+        SET status = 'ACTIVE',
+            qiniu_hash = $3,
+            cdn_url = $4,
+            business_ref_type = $5::upload_business_ref_enum,
+            business_ref_id = $6,
+            updated_at = NOW()
+        WHERE file_key = $1 AND user_id = $2 AND status = 'PENDING'
         "#,
     )
     .bind(&input.file_key)
+    .bind(token.user_id)
+    .bind(&object.hash)
+    .bind(&cdn_url)
+    .bind(&business_ref_type)
+    .bind(input.business_ref_id)
     .execute(db)
     .await?;
 
-    let cdn_url = if state.qiniu.cdn_domain.is_empty() {
-        format!("https://{}/{}", state.qiniu.bucket, input.file_key)
-    } else {
-        format!("https://{}/{}", state.qiniu.cdn_domain, input.file_key)
-    };
+    if result.rows_affected() == 0 {
+        // 并发的相同确认可能已经完成；仅在落库值一致时按幂等成功返回。
+        let current = fetch_upload_record(db, &input.file_key)
+            .await?
+            .ok_or_else(|| {
+                CustomError::upload_file_not_found(format!("file_key {} 不存在", input.file_key))
+            })?;
+        if current.user_id != token.user_id {
+            return Err(CustomError::upload_permission_denied(
+                "无权操作该文件".to_string(),
+            ));
+        }
+        validate_business_ref_type(&current, input.business_ref_type.as_ref())?;
+        return Ok(ApiResponse::success(active_confirm_response(
+            &current, &input,
+        )?));
+    }
 
     Ok(ApiResponse::success(ConfirmUploadResponse {
         file_key: input.file_key,
         cdn_url,
         content_check_status: "PENDING".to_string(),
     }))
-}
-
-/// 七牛异步回调
-/// POST /api/uploads/qiniu-callback
-/// FSD §16.3.9
-pub async fn qiniu_callback(
-    state: State<Arc<AppState>>,
-    body: Json<QiniuCallbackRequest>,
-) -> Result<impl Responder, CustomError> {
-    let input = body.into_inner();
-    sqlx::query(
-        r#"
-        UPDATE upload_files
-        SET status = 'ACTIVE'::user_status_enum, updated_at = NOW()
-        WHERE file_key = $1 AND user_id = $2
-        "#,
-    )
-    .bind(&input.file_key)
-    .bind(input.user_id)
-    .execute(&state.db_pool)
-    .await?;
-    Ok(HttpResponse::Ok().json(&serde_json::json!({ "code": 0, "message": "ok" })))
 }
 
 /// 删除上传文件（同步七牛 delete + 软删除记录）
@@ -531,16 +718,14 @@ pub async fn delete_file(
     let db = &state.db_pool;
     let key = file_key.into_inner();
 
-    let row: Option<(i64, String)> = sqlx::query_as(
-        "SELECT user_id, status FROM upload_files WHERE file_key = $1",
-    )
-    .bind(&key)
-    .fetch_optional(db)
-    .await?;
+    let row: Option<(i64, String)> =
+        sqlx::query_as("SELECT user_id, status FROM upload_files WHERE file_key = $1")
+            .bind(&key)
+            .fetch_optional(db)
+            .await?;
 
-    let (owner_id, _status) = row.ok_or_else(|| {
-        CustomError::upload_file_not_found(format!("file_key {} 不存在", key))
-    })?;
+    let (owner_id, _status) =
+        row.ok_or_else(|| CustomError::upload_file_not_found(format!("file_key {} 不存在", key)))?;
 
     if owner_id != token.user_id {
         return Err(CustomError::upload_permission_denied(
@@ -552,7 +737,7 @@ pub async fn delete_file(
     sqlx::query(
         r#"
         UPDATE upload_files
-        SET status = 'DELETED'::user_status_enum, deleted_at = NOW(), updated_at = NOW()
+        SET status = 'DELETED', deleted_at = NOW(), updated_at = NOW()
         WHERE file_key = $1
         "#,
     )
@@ -571,4 +756,45 @@ pub async fn delete_file(
 pub struct ErrorBody {
     pub code: u16,
     pub message: String,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn qiniu_object_metadata_must_match_client_hash() {
+        let object = QiniuObjectMetadata {
+            hash: "server-hash".to_string(),
+            size: 42,
+        };
+        assert!(matches!(
+            validate_qiniu_object("client-hash", 42, &object),
+            Err(CustomError::UploadContentRejected(_))
+        ));
+    }
+
+    #[test]
+    fn qiniu_object_metadata_must_match_registered_size() {
+        let object = QiniuObjectMetadata {
+            hash: "same-hash".to_string(),
+            size: 43,
+        };
+        assert!(matches!(
+            validate_qiniu_object("same-hash", 42, &object),
+            Err(CustomError::UploadContentRejected(_))
+        ));
+    }
+
+    #[test]
+    fn qiniu_hash_cannot_be_empty() {
+        let object = QiniuObjectMetadata {
+            hash: "server-hash".to_string(),
+            size: 42,
+        };
+        assert!(matches!(
+            validate_qiniu_object("  ", 42, &object),
+            Err(CustomError::BadRequest(_))
+        ));
+    }
 }

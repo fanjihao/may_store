@@ -11,6 +11,7 @@ use utoipa::ToSchema;
 
 use crate::config::AppState;
 use crate::errors::CustomError;
+use crate::middlewares::jwt;
 use crate::utils::response::ApiResponse;
 
 /// user_role_enum 合法值(查 v3.sql L332)
@@ -18,6 +19,23 @@ const VALID_ROLES: &[&str] = &["ORDERING", "RECEIVING", "ADMIN"];
 
 /// user_status_enum 合法值(查 v3.sql L327)
 const VALID_STATUSES: &[&str] = &["ACTIVE", "BANNED", "DELETED"];
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PostCommitStatusAction {
+    None,
+    ClearCache,
+    RevokeAndClearCache,
+}
+
+fn post_commit_status_action(old_status: &str, new_status: &str) -> PostCommitStatusAction {
+    if old_status == "ACTIVE" && matches!(new_status, "BANNED" | "DELETED") {
+        PostCommitStatusAction::RevokeAndClearCache
+    } else if old_status != new_status && new_status == "ACTIVE" {
+        PostCommitStatusAction::ClearCache
+    } else {
+        PostCommitStatusAction::None
+    }
+}
 
 /// 用户名最大长度(查 users.username VARCHAR(64))
 const USERNAME_MAX_LEN: usize = 64;
@@ -177,6 +195,7 @@ pub async fn update_user(
     let new_nick_name = input.nick_name.clone().or_else(|| old_nick_name.clone());
     let new_role = input.role.clone().unwrap_or_else(|| old_role.clone());
     let new_status = input.status.clone().unwrap_or_else(|| old_status.clone());
+    let status_action = post_commit_status_action(&old_status, &new_status);
 
     sqlx::query(
         r#"UPDATE users
@@ -213,6 +232,22 @@ pub async fn update_user(
     .await;
 
     tx.commit().await?;
+
+    // 外部副作用必须在事务提交后执行，避免回滚时误撤销 token。
+    match status_action {
+        PostCommitStatusAction::RevokeAndClearCache => {
+            // 即使其中一个 Redis 操作失败，也尝试完成另一个。
+            let revoke_result = jwt::set_user_revoked_at(user_id, &state.redis_cache).await;
+            let cache_result = state.redis_cache.delete_user(&user_id.to_string()).await;
+            revoke_result?;
+            cache_result?;
+        }
+        PostCommitStatusAction::ClearCache => {
+            // 恢复 ACTIVE 时不能复用封禁/注销前留下的 UserPublic。
+            state.redis_cache.delete_user(&user_id.to_string()).await?;
+        }
+        PostCommitStatusAction::None => {}
+    }
 
     let out: (i64, String, Option<String>, String, String, i32, i32, chrono::DateTime<chrono::Utc>) =
         sqlx::query_as(
@@ -320,5 +355,33 @@ mod tests {
             ..empty_input()
         };
         assert!(validate_user_update(&input).is_ok());
+    }
+
+    #[test]
+    fn active_to_inactive_revokes_and_clears_cache() {
+        for status in ["BANNED", "DELETED"] {
+            assert_eq!(
+                post_commit_status_action("ACTIVE", status),
+                PostCommitStatusAction::RevokeAndClearCache
+            );
+        }
+    }
+
+    #[test]
+    fn restoring_active_only_clears_cache() {
+        for status in ["BANNED", "DELETED"] {
+            assert_eq!(
+                post_commit_status_action(status, "ACTIVE"),
+                PostCommitStatusAction::ClearCache
+            );
+        }
+    }
+
+    #[test]
+    fn unchanged_status_has_no_side_effect() {
+        assert_eq!(
+            post_commit_status_action("ACTIVE", "ACTIVE"),
+            PostCommitStatusAction::None
+        );
     }
 }

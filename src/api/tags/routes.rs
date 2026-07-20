@@ -16,6 +16,7 @@ use crate::config::AppState;
 use crate::errors::CustomError;
 use crate::middlewares::auth::UserToken;
 use crate::middlewares::require_group::RequireGroup;
+use crate::middlewares::target_group::require_active_target_group_member;
 use crate::models::pagination::{decode_cursor, encode_cursor, CursorPage};
 use crate::utils::response::ApiResponse;
 
@@ -40,16 +41,16 @@ pub struct TagOut {
     pub icon: Option<String>,
     pub group_id: Option<i64>,
     pub sort: i32,
-    pub food_count: i64,             // 该标签下菜品数（聚合）
+    pub food_count: i64, // 该标签下菜品数（聚合）
     pub created_at: chrono::DateTime<chrono::Utc>,
 }
 
 #[derive(Debug, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct CreateTagInput {
-    pub tag_name: String,              // 1-32 字符
-    pub icon: Option<String>,          // URL
-    pub sort: Option<i32>,            // 默认 0
+    pub tag_name: String,     // 1-32 字符
+    pub icon: Option<String>, // URL
+    pub sort: Option<i32>,    // 默认 0
 }
 
 #[derive(Debug, Deserialize, ToSchema)]
@@ -64,9 +65,9 @@ pub struct UpdateTagInput {
 #[serde(rename_all = "camelCase")]
 #[into_params(parameter_in = Query)]
 pub struct ListTagsQuery {
-    pub cursor: Option<String>,         // 上一页响应里的 next_cursor
-    pub keyword: Option<String>,        // 按名称模糊搜索
-    pub limit: Option<i64>,            // 默认 50
+    pub cursor: Option<String>,  // 上一页响应里的 next_cursor
+    pub keyword: Option<String>, // 按名称模糊搜索
+    pub limit: Option<i64>,      // 默认 50
 }
 
 /// Cursor payload: 编码 (sort, tag_id) 二元组
@@ -96,12 +97,13 @@ struct TagCursor {
 )]
 pub async fn list_tags(
     state: State<Arc<AppState>>,
-    _token: UserToken,
+    token: UserToken,
     _require: RequireGroup,
     path: Path<i64>,
     query: Query<ListTagsQuery>,
 ) -> Result<impl Responder, CustomError> {
     let group_id = path.into_inner();
+    require_active_target_group_member(&state.db_pool, token.user_id, group_id).await?;
     let limit = query.limit.unwrap_or(50).min(200);
     let cursor = query.cursor.as_deref().and_then(decode_cursor::<TagCursor>);
 
@@ -191,12 +193,13 @@ pub async fn list_tags(
 )]
 pub async fn create_tag(
     state: State<Arc<AppState>>,
-    _token: UserToken,
+    token: UserToken,
     _require: RequireGroup,
     path: Path<i64>,
     body: Json<CreateTagInput>,
 ) -> Result<impl Responder, CustomError> {
     let group_id = path.into_inner();
+    require_active_target_group_member(&state.db_pool, token.user_id, group_id).await?;
     let input = body.into_inner();
 
     if input.tag_name.is_empty() || input.tag_name.len() > 32 {
@@ -205,19 +208,17 @@ pub async fn create_tag(
 
     // 容量校验
     let capacity: i64 = sqlx::query_scalar(
-        "SELECT COALESCE(tag_capacity, 10) FROM group_configs WHERE group_id = $1"
+        "SELECT COALESCE(tag_capacity, 10) FROM group_configs WHERE group_id = $1",
     )
     .bind(group_id)
     .fetch_optional(&state.db_pool)
     .await?
     .unwrap_or(10);
 
-    let count: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM tags WHERE group_id = $1"
-    )
-    .bind(group_id)
-    .fetch_one(&state.db_pool)
-    .await?;
+    let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM tags WHERE group_id = $1")
+        .bind(group_id)
+        .fetch_one(&state.db_pool)
+        .await?;
 
     if count >= capacity {
         return Err(CustomError::food_capacity_exceeded("标签数量已达上限"));
@@ -241,12 +242,11 @@ pub async fn create_tag(
         _ => CustomError::from(e),
     })?;
 
-    let today_count: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM foods WHERE tag_id = $1 AND is_del = 0"
-    )
-    .bind(row.get::<i64, _>("tag_id"))
-    .fetch_one(&state.db_pool)
-    .await?;
+    let today_count: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM foods WHERE tag_id = $1 AND is_del = 0")
+            .bind(row.get::<i64, _>("tag_id"))
+            .fetch_one(&state.db_pool)
+            .await?;
 
     Ok(ApiResponse::success(TagOut {
         tag_id: row.get("tag_id"),
@@ -273,12 +273,13 @@ pub async fn create_tag(
 )]
 pub async fn update_tag(
     state: State<Arc<AppState>>,
-    _token: UserToken,
+    token: UserToken,
     _require: RequireGroup,
     path: Path<(i64, i64)>,
     body: Json<UpdateTagInput>,
 ) -> Result<impl Responder, CustomError> {
     let (group_id, tag_id) = path.into_inner();
+    require_active_target_group_member(&state.db_pool, token.user_id, group_id).await?;
     let input = body.into_inner();
 
     if let Some(name) = &input.tag_name {
@@ -304,12 +305,11 @@ pub async fn update_tag(
     .await?
     .ok_or_else(|| CustomError::resource_not_found("标签不存在"))?;
 
-    let today_count: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM foods WHERE tag_id = $1 AND is_del = 0"
-    )
-    .bind(tag_id)
-    .fetch_one(&state.db_pool)
-    .await?;
+    let today_count: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM foods WHERE tag_id = $1 AND is_del = 0")
+            .bind(tag_id)
+            .fetch_one(&state.db_pool)
+            .await?;
 
     Ok(ApiResponse::success(TagOut {
         tag_id: row.get("tag_id"),
@@ -335,19 +335,19 @@ pub async fn update_tag(
 )]
 pub async fn delete_tag(
     state: State<Arc<AppState>>,
-    _token: UserToken,
+    token: UserToken,
     _require: RequireGroup,
     path: Path<(i64, i64)>,
 ) -> Result<impl Responder, CustomError> {
     let (group_id, tag_id) = path.into_inner();
+    require_active_target_group_member(&state.db_pool, token.user_id, group_id).await?;
 
     // 检查是否仍有菜品引用
-    let in_use: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM foods WHERE tag_id = $1 AND is_del = 0"
-    )
-    .bind(tag_id)
-    .fetch_one(&state.db_pool)
-    .await?;
+    let in_use: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM foods WHERE tag_id = $1 AND is_del = 0")
+            .bind(tag_id)
+            .fetch_one(&state.db_pool)
+            .await?;
 
     if in_use > 0 {
         return Err(CustomError::food_capacity_exceeded(
@@ -355,14 +355,12 @@ pub async fn delete_tag(
         ));
     }
 
-    let rows_affected = sqlx::query(
-        "DELETE FROM tags WHERE tag_id = $1 AND group_id = $2"
-    )
-    .bind(tag_id)
-    .bind(group_id)
-    .execute(&state.db_pool)
-    .await?
-    .rows_affected();
+    let rows_affected = sqlx::query("DELETE FROM tags WHERE tag_id = $1 AND group_id = $2")
+        .bind(tag_id)
+        .bind(group_id)
+        .execute(&state.db_pool)
+        .await?
+        .rows_affected();
 
     if rows_affected == 0 {
         return Err(CustomError::resource_not_found("标签不存在"));

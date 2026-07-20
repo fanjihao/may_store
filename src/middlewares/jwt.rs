@@ -17,7 +17,7 @@
 //! 撤销机制:
 //! - 单 token 撤销:Redis key `token_blacklist:{jti}`,TTL = token 剩余有效期
 //! - 用户级全撤销:Redis key `user_revoked_at:{user_id}`,值=Unix 时间戳;
-//!   校验时 `claims.iat < revoked_at` 则拒绝(注销时刻之前签发的全部失效)
+//!   校验时 `claims.iat <= revoked_at` 则拒绝(注销时刻及之前签发的全部失效)
 
 use chrono::Utc;
 use jsonwebtoken::{decode, encode, Algorithm, DecodingKey, EncodingKey, Header, Validation};
@@ -71,6 +71,10 @@ impl Claims {
             .parse::<i64>()
             .map_err(|_| CustomError::auth_invalid_token("token sub 非合法整数"))
     }
+}
+
+fn revoked_by_user_cutoff(issued_at: i64, revoked_at: i64) -> bool {
+    issued_at <= revoked_at
 }
 
 /// 内部签发函数,统一 `Header::new(HS256)` + 标准 claim 填充
@@ -162,7 +166,9 @@ pub async fn verify(
         .await
         .map_err(|e| CustomError::internal(format!("Redis 全撤销查询失败: {}", e)))?;
     if let Some(t) = revoked_at {
-        if claims.iat < t {
+        // iat 与撤销时间都是秒级；相等时也必须拒绝，否则同一秒签发的旧 token
+        // 会在封禁/注销后继续有效。
+        if revoked_by_user_cutoff(claims.iat, t) {
             return Err(CustomError::auth_token_revoked("用户已全设备注销"));
         }
     }
@@ -190,7 +196,7 @@ pub async fn blacklist_jti(jti: &str, exp: i64, redis: &RedisCache) -> Result<()
 /// 用户级全撤销:写入当前时间戳到 `user_revoked_at:{user_id}`,
 /// TTL = REFRESH_TTL_SECS(覆盖任何仍可能存在的有效 token)。
 ///
-/// 此后所有 `iat < 写入时刻` 的 token 都会在 [`verify`] 中被拒绝。
+/// 此后所有 `iat <= 写入时刻` 的 token 都会在 [`verify`] 中被拒绝。
 pub async fn set_user_revoked_at(user_id: i64, redis: &RedisCache) -> Result<(), CustomError> {
     let now = Utc::now().timestamp();
     let mut conn = redis
@@ -202,4 +208,16 @@ pub async fn set_user_revoked_at(user_id: i64, redis: &RedisCache) -> Result<(),
         .await
         .map_err(|e| CustomError::internal(format!("写入全设备撤销失败: {}", e)))?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::revoked_by_user_cutoff;
+
+    #[test]
+    fn user_revocation_includes_tokens_from_same_second() {
+        assert!(revoked_by_user_cutoff(100, 100));
+        assert!(revoked_by_user_cutoff(99, 100));
+        assert!(!revoked_by_user_cutoff(101, 100));
+    }
 }

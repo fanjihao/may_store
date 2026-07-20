@@ -175,7 +175,7 @@ def main() -> int:
     for f in files:
         if f.is_dir():
             continue
-        content = f.read_text()
+        content = f.read_text(encoding='utf-8')
         all_structs.update(parse_structs(content))
 
     # 扫描所有 query_as 调用
@@ -183,7 +183,7 @@ def main() -> int:
     for f in files:
         if f.is_dir():
             continue
-        content = f.read_text()
+        content = f.read_text(encoding='utf-8')
         for m in QUERY_AS_RE.finditer(content):
             result = extract_sql(content, m.start())
             if not result:

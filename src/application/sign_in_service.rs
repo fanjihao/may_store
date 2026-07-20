@@ -56,10 +56,10 @@ impl SignService {
     /// 每日签到(加组钻石 + 全组满签奖励)
     ///
     /// `group_id` 由调用方从 URL 路径传入 (POST /api/groups/{group_id}/sign-in)。
-    /// 不再从 `is_primary=1` 反查用户的主组 —— joiner (seller) 在数据库里
-    /// is_primary=0 (见 `join_group` 路由),反查会返回 None,导致 sign_in_records
+    /// 不再从 `is_primary=1` 反查用户的主组 —— 非主成员在数据库里
+    /// is_primary=0,反查会返回 None,导致 sign_in_records
     /// 插入 NULL 触发 NOT NULL 约束。
-    /// 鉴权由 `RequireGroup` 中间件保证:用户必须是该组成员才会调到这里。
+    /// 路由层会用目标组守卫查询数据库，确认用户是该 URL 组的 ACTIVE 成员。
     pub async fn daily_checkin(
         token: crate::middlewares::auth::UserToken,
         group_id: i64,

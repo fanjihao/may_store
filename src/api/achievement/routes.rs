@@ -11,6 +11,7 @@ use crate::config::AppState;
 use crate::errors::CustomError;
 use crate::middlewares::auth::UserToken;
 use crate::middlewares::require_group::RequireGroup;
+use crate::middlewares::target_group::require_active_target_group_member;
 use crate::utils::response::ApiResponse;
 
 /// 配置成就路由
@@ -62,7 +63,8 @@ pub struct NextUnlockItem {
     pub achievement_id: String,
     pub name: String,
     pub progress: i32,
-    pub total: i32,
+    /// v3 仅定义 rule_config JSONB，未定义可通用解码的目标值字段。
+    pub total: Option<i32>,
 }
 
 // ========== 处理器 ==========
@@ -95,18 +97,7 @@ pub async fn get_achievements(
     let gid = *group_id;
     let db = &state.db_pool;
 
-    // 检查用户是否是组成员
-    let is_member: bool = sqlx::query_scalar::<_, bool>(
-        "SELECT EXISTS(SELECT 1 FROM association_group_members WHERE group_id=$1 AND user_id=$2 AND member_status='ACTIVE'::group_member_status_enum)"
-    )
-    .bind(gid)
-    .bind(token.user_id)
-    .fetch_one(db)
-    .await?;
-
-    if !is_member {
-        return Err(CustomError::Forbidden("非组成员".into()));
-    }
+    require_active_target_group_member(db, token.user_id, gid).await?;
 
     // 参数化查询 + 枚举白名单,避免 SQL 注入
     let category_filter: Option<&str> = match query.category.as_deref() {
@@ -115,18 +106,20 @@ pub async fn get_achievements(
         None => None,
     };
 
-    // 获取成就定义和用户解锁状态
-    // category 是自定义枚举,SELECT 必须 ::text 强转,否则 sqlx 解不出
+    // 获取成就定义和用户解锁状态。
+    // category 是自定义枚举，读取时必须 ::text；筛选 bind 也必须转回 enum。
     let rows = match category_filter {
         Some(c) => sqlx::query(
             r#"
             SELECT a.code as achievement_id, a.name, a.description, a.category::text AS category, a.icon,
-                   ua.unlocked_at,
-                   CASE WHEN ua.id IS NOT NULL THEN true ELSE false END as unlocked
+                   ua.progress, ua.unlocked_at,
+                   (ua.unlocked_at IS NOT NULL) AS unlocked
             FROM achievements a
-            LEFT JOIN user_achievements ua ON ua.achievement_id = a.id AND ua.user_id = $1
-            WHERE a.is_active = true AND a.category = $2
-            ORDER BY a.category, a.display_order
+            LEFT JOIN user_achievements ua
+              ON ua.achievement_id = a.achievement_id AND ua.user_id = $1
+            WHERE a.is_enabled = true
+              AND a.category = $2::achievement_category_enum
+            ORDER BY a.category, a.created_at, a.achievement_id
             "#,
         )
         .bind(token.user_id)
@@ -136,12 +129,13 @@ pub async fn get_achievements(
         None => sqlx::query(
             r#"
             SELECT a.code as achievement_id, a.name, a.description, a.category::text AS category, a.icon,
-                   ua.unlocked_at,
-                   CASE WHEN ua.id IS NOT NULL THEN true ELSE false END as unlocked
+                   ua.progress, ua.unlocked_at,
+                   (ua.unlocked_at IS NOT NULL) AS unlocked
             FROM achievements a
-            LEFT JOIN user_achievements ua ON ua.achievement_id = a.id AND ua.user_id = $1
-            WHERE a.is_active = true
-            ORDER BY a.category, a.display_order
+            LEFT JOIN user_achievements ua
+              ON ua.achievement_id = a.achievement_id AND ua.user_id = $1
+            WHERE a.is_enabled = true
+            ORDER BY a.category, a.created_at, a.achievement_id
             "#,
         )
         .bind(token.user_id)
@@ -162,7 +156,7 @@ pub async fn get_achievements(
                 icon: r.get("icon"),
                 unlocked,
                 unlocked_at: unlocked_at.map(|dt| dt.to_rfc3339()),
-                progress: None,
+                progress: r.get("progress"),
                 total: None,
             }
         })
@@ -197,27 +191,19 @@ pub async fn get_achievement_wall(
     let gid = *group_id;
     let db = &state.db_pool;
 
-    // 检查用户是否是组成员
-    let is_member: bool = sqlx::query_scalar::<_, bool>(
-        "SELECT EXISTS(SELECT 1 FROM association_group_members WHERE group_id=$1 AND user_id=$2 AND member_status='ACTIVE'::group_member_status_enum)"
-    )
-    .bind(gid)
-    .bind(token.user_id)
-    .fetch_one(db)
-    .await?;
-
-    if !is_member {
-        return Err(CustomError::Forbidden("非组成员".into()));
-    }
+    require_active_target_group_member(db, token.user_id, gid).await?;
 
     // 获取总成就数和已解锁数
     let total_count: i32 =
-        sqlx::query_scalar("SELECT COUNT(*) FROM achievements WHERE is_active = true")
+        sqlx::query_scalar("SELECT COUNT(*)::INT FROM achievements WHERE is_enabled = true")
             .fetch_one(db)
             .await?;
 
     let unlocked_count: i32 = sqlx::query_scalar(
-        "SELECT COUNT(DISTINCT ua.achievement_id) FROM user_achievements ua JOIN achievements a ON a.id = ua.achievement_id WHERE ua.user_id = $1 AND a.is_active = true"
+        "SELECT COUNT(DISTINCT ua.achievement_id)::INT \
+         FROM user_achievements ua \
+         JOIN achievements a ON a.achievement_id = ua.achievement_id \
+         WHERE ua.user_id = $1 AND ua.unlocked_at IS NOT NULL AND a.is_enabled = true",
     )
     .bind(token.user_id)
     .fetch_one(db)
@@ -226,10 +212,13 @@ pub async fn get_achievement_wall(
     // 获取已解锁成就
     let unlocked_rows = sqlx::query(
         r#"
-        SELECT a.code as achievement_id, a.name, a.category, ua.unlocked_at
+        SELECT a.code as achievement_id, a.name, a.description,
+               a.category::text AS category, a.icon, ua.progress, ua.unlocked_at
         FROM user_achievements ua
-        JOIN achievements a ON a.id = ua.achievement_id
-        WHERE ua.user_id = $1 AND a.is_active = true
+        JOIN achievements a ON a.achievement_id = ua.achievement_id
+        WHERE ua.user_id = $1
+          AND ua.unlocked_at IS NOT NULL
+          AND a.is_enabled = true
         ORDER BY ua.unlocked_at DESC
         LIMIT 20
         "#,
@@ -245,26 +234,31 @@ pub async fn get_achievement_wall(
             AchievementItem {
                 achievement_id: r.get("achievement_id"),
                 name: r.get("name"),
-                description: None,
+                description: r.get("description"),
                 category: r.get("category"),
-                icon: None,
+                icon: r.get("icon"),
                 unlocked: true,
                 unlocked_at: unlocked_at.map(|dt| dt.to_rfc3339()),
-                progress: None,
+                progress: Some(r.get("progress")),
                 total: None,
             }
         })
         .collect();
 
-    // 查找下一个可解锁成就（简化：取第一个未解锁的 USER 类型）
+    // 查找下一个可解锁成就（取第一个未解锁的 USER 类型）。
+    // progress 来自 user_achievements；没有进度行时明确为 0。
+    // v3 未规定 rule_config 的统一阈值键，因此 total 明确返回 null。
     let next_unlock = if unlocked_count < total_count {
         let next_rows = sqlx::query(
             r#"
-            SELECT a.code as achievement_id, a.name, 0 as progress, a.requirement_value as total
+            SELECT a.code as achievement_id, a.name, COALESCE(ua.progress, 0)::INT AS progress
             FROM achievements a
-            LEFT JOIN user_achievements ua ON ua.achievement_id = a.id AND ua.user_id = $1
-            WHERE a.is_active = true AND ua.id IS NULL AND a.category = 'USER'
-            ORDER BY a.display_order
+            LEFT JOIN user_achievements ua
+              ON ua.achievement_id = a.achievement_id AND ua.user_id = $1
+            WHERE a.is_enabled = true
+              AND ua.unlocked_at IS NULL
+              AND a.category = 'USER'::achievement_category_enum
+            ORDER BY a.created_at, a.achievement_id
             LIMIT 1
             "#,
         )
@@ -276,7 +270,7 @@ pub async fn get_achievement_wall(
             achievement_id: r.get("achievement_id"),
             name: r.get("name"),
             progress: r.get("progress"),
-            total: r.get("total"),
+            total: None,
         })
     } else {
         None

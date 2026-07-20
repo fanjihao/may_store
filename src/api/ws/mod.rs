@@ -9,15 +9,25 @@ use ntex::web::{self, ServiceConfig};
 use std::sync::Arc;
 use tokio::net::TcpListener;
 use tokio_tungstenite::{accept_async, tungstenite::Message};
+use uuid::Uuid;
 
-use crate::api::ws::connection::ConnectionManager;
+use crate::api::ws::connection::{ConnectionInfo, ConnectionManager};
 use crate::config::AppState;
+use crate::middlewares::auth::ensure_active_account;
 use crate::middlewares::jwt;
 use crate::utils::response::ApiResponse;
 
 /// WebSocket 全局连接管理器
 static CONNECTION_MANAGER: once_cell::sync::OnceCell<Arc<ConnectionManager>> =
     once_cell::sync::OnceCell::new();
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct WsStatusPublic {
+    status: &'static str,
+    online_count: usize,
+    server_time: String,
+}
 
 /// 获取全局连接管理器
 pub fn get_connection_manager() -> Arc<ConnectionManager> {
@@ -81,20 +91,18 @@ pub async fn ws_info() -> impl web::Responder {
 pub async fn ws_status() -> impl web::Responder {
     let manager = get_connection_manager();
     let online_count = manager.online_count().await;
-    let online_users = manager.online_users().await;
 
-    ApiResponse::success(serde_json::json!({
-        "status": "running",
-        "onlineCount": online_count,
-        "onlineUsers": online_users,
-        "serverTime": chrono::Utc::now().to_rfc3339()
-    }))
+    ApiResponse::success(WsStatusPublic {
+        status: "running",
+        online_count,
+        server_time: chrono::Utc::now().to_rfc3339(),
+    })
 }
 
 /// 启动 WebSocket 服务器（在独立端口）
 ///
 /// 接收 `Arc<AppState>` 而非裸 jwt_secret —— 这样 `process_messages` 才能
-/// 调用统一的 `jwt::verify`(同时校验签名、类型、黑名单和全设备撤销)。
+/// 调用统一的 `jwt::verify`，并直接查询 DB 校验账号仍为 ACTIVE。
 pub async fn start_websocket_server(
     addr: &str,
     app_state: Arc<AppState>,
@@ -144,12 +152,11 @@ async fn process_messages(
     state: Arc<AppState>,
 ) {
     let (mut ws_tx, mut ws_rx) = ws_stream.split();
-    let mut user_id: Option<i64> = None;
+    let mut authenticated_connection: Option<(i64, Uuid)> = None;
 
     // 每条连接的内部消息通道。auth 成功时把 sender 交给 ConnectionManager,
     // 之后服务端就能通过 send_to_user(uid, ...) 把消息投到这条通道
-    let (internal_tx, mut internal_rx) =
-        tokio::sync::mpsc::unbounded_channel::<String>();
+    let (internal_tx, mut internal_rx) = tokio::sync::mpsc::unbounded_channel::<String>();
 
     // 发送连接成功消息
     let _ = ws_tx
@@ -177,23 +184,29 @@ async fn process_messages(
                                 "auth" => {
                                     if let Some(token) = envelope.data.get("token").and_then(|t| t.as_str())
                                     {
-                                        // 统一走 jwt::verify —— 包括 jti 黑名单 + 全设备撤销
-                                        let result = jwt::verify(
-                                            token,
-                                            &state.jwt_secret,
-                                            jwt::TokenType::Access,
-                                            &state.redis_cache,
-                                        )
-                                        .await
-                                        .and_then(|c| c.user_id());
+                                        // JWT 撤销校验后还要直接查 DB；账号非 ACTIVE 时绝不登记连接。
+                                        let result: Result<i64, crate::errors::CustomError> = async {
+                                            let claims = jwt::verify(
+                                                token,
+                                                &state.jwt_secret,
+                                                jwt::TokenType::Access,
+                                                &state.redis_cache,
+                                            )
+                                            .await?;
+                                            let uid = claims.user_id()?;
+                                            ensure_active_account(&state, uid).await?;
+                                            Ok(uid)
+                                        }
+                                        .await;
 
                                         match result {
                                             Ok(uid) => {
-                                                user_id = Some(uid);
+                                                let connection_id = Uuid::new_v4();
                                                 manager
                                                     .add_connection(
                                                         uid,
-                                                        crate::api::ws::connection::ConnectionInfo {
+                                                        ConnectionInfo {
+                                                            connection_id,
                                                             user_id: Some(uid),
                                                             connected_at: chrono::Utc::now(),
                                                             authenticated: true,
@@ -201,6 +214,17 @@ async fn process_messages(
                                                         },
                                                     )
                                                     .await;
+                                                if let Some((previous_user_id, previous_connection_id)) =
+                                                    authenticated_connection
+                                                        .replace((uid, connection_id))
+                                                {
+                                                    manager
+                                                        .remove_connection(
+                                                            previous_user_id,
+                                                            previous_connection_id,
+                                                        )
+                                                        .await;
+                                                }
                                                 let _ = ws_tx.send(Message::Text(format!(
                                                     r#"{{"type":"auth_resp","data":{{"success":true,"userId":{}}}}}"#,
                                                     uid
@@ -208,16 +232,21 @@ async fn process_messages(
                                                 log::info!("用户 {} 认证成功 from {}", uid, peer_addr);
                                             }
                                             Err(e) => {
-                                                let _ = ws_tx.send(Message::Text(format!(
-                                                    r#"{{"type":"auth_resp","data":{{"success":false,"message":"{}"}}}}"#,
+                                                log::warn!(
+                                                    "WebSocket 用户认证失败 from {}: {}",
+                                                    peer_addr,
                                                     e
-                                                ).into())).await;
+                                                );
+                                                let _ = ws_tx.send(Message::Text(
+                                                    r#"{"type":"auth_resp","data":{"success":false,"message":"认证失败，请重新登录"}}"#
+                                                        .into(),
+                                                )).await;
                                             }
                                         }
                                     }
                                 }
                                 _ => {
-                                    if user_id.is_none() {
+                                    if authenticated_connection.is_none() {
                                         let _ = ws_tx.send(Message::Text(r#"{"type":"error","data":{"code":401,"message":"请先认证"}}"#.into())).await;
                                     }
                                 }
@@ -258,10 +287,33 @@ async fn process_messages(
     }
 
     // 清理连接
-    if let Some(uid) = user_id {
-        manager.remove_connection(uid).await;
-        log::info!("用户 {} 连接已清理", uid);
+    if let Some((uid, connection_id)) = authenticated_connection {
+        if manager.remove_connection(uid, connection_id).await {
+            log::info!("用户 {} 连接已清理", uid);
+        }
     }
 }
 
 // 私有 `verify_token` 已删除 —— WS 与 HTTP 统一走 `crate::middlewares::jwt::verify`
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn public_status_omits_online_user_ids() {
+        let value = serde_json::to_value(WsStatusPublic {
+            status: "running",
+            online_count: 2,
+            server_time: "2026-07-20T00:00:00Z".to_string(),
+        })
+        .unwrap();
+        let object = value.as_object().unwrap();
+
+        assert_eq!(object.len(), 3);
+        assert!(object.contains_key("status"));
+        assert!(object.contains_key("onlineCount"));
+        assert!(object.contains_key("serverTime"));
+        assert!(!object.contains_key("onlineUsers"));
+    }
+}

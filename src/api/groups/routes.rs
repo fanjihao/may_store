@@ -1,33 +1,29 @@
 // API - 双人组管理路由
 // FSD.latest.md compliant endpoints
 
-use chrono::Utc;
+use ntex::web::guard;
 use ntex::web::{
     self,
     types::{Json, Path, State},
     HttpResponse, Responder, ServiceConfig,
 };
-use ntex::web::guard;
 use serde::{Deserialize, Serialize};
 use sqlx::Row;
 use std::sync::Arc;
 use utoipa::ToSchema;
 
 use crate::api::ws::get_connection_manager;
-use crate::api::ws::messages::{
-    WsEnvelope, WsGroupMemberChangeData, WsGroupMemberInfo,
-};
+use crate::api::ws::messages::{WsEnvelope, WsGroupMemberChangeData, WsGroupMemberInfo};
 use crate::config::AppState;
-use crate::domain::group::entities::{
-    FulfillmentStats, GroupDetailInfo, SettlementCheckResult,
-};
+use crate::domain::group::entities::{FulfillmentStats, GroupDetailInfo, SettlementCheckResult};
 use crate::errors::CustomError;
 use crate::middlewares::auth::UserToken;
 use crate::middlewares::require_group::RequireGroup;
+use crate::middlewares::target_group::require_active_target_group_member;
 use crate::utils::response::ApiResponse;
 
 /// 路由守卫: 检查动态段 `{group_id}` 是不是 i64 数字
-/// 作用: `/api/groups/join`、`/api/groups/invite` 等字面量路径不会匹配到
+/// 作用: `/api/groups/partner-invitations` 等字面量路径不会匹配到
 ///       `/api/groups/{group_id}` 这条动态资源,避免被误路由到 swap_role 等
 ///       需要 RequireGroup 的 handler 而返回 403 USER_NOT_IN_GROUP
 fn group_id_is_numeric() -> impl ntex::web::guard::Guard {
@@ -41,6 +37,66 @@ fn group_id_is_numeric() -> impl ntex::web::guard::Guard {
     })
 }
 
+fn resolve_frozen_points(
+    stored_balance: Option<i64>,
+    freeze_total: i64,
+    unfreeze_total: i64,
+) -> Option<i64> {
+    match stored_balance {
+        Some(balance) => (balance >= 0).then_some(balance),
+        None => freeze_total
+            .checked_sub(unfreeze_total)
+            .filter(|balance| *balance >= 0),
+    }
+}
+
+async fn read_frozen_points(
+    db: &sqlx::PgPool,
+    user_id: i64,
+    group_id: i64,
+) -> Result<i64, CustomError> {
+    let stored_balance: Option<i64> = sqlx::query_scalar(
+        r#"SELECT frozen_love_point
+           FROM user_group_points
+           WHERE user_id = $1 AND group_id = $2"#,
+    )
+    .bind(user_id)
+    .bind(group_id)
+    .fetch_optional(db)
+    .await?;
+
+    if stored_balance.is_some() {
+        return resolve_frozen_points(stored_balance, 0, 0)
+            .ok_or_else(|| CustomError::internal_error("冻结积分余额异常"));
+    }
+
+    // 兼容尚未建立 user_group_points 行的历史数据；解冻流水必须从冻结流水中扣除。
+    let (freeze_total, unfreeze_total): (i64, i64) = sqlx::query_as(
+        r#"SELECT
+               COALESCE(
+                   SUM(amount) FILTER (
+                       WHERE type = 'FREEZE'::love_point_tx_type_enum
+                   ),
+                   0
+               )::BIGINT,
+               COALESCE(
+                   SUM(amount) FILTER (
+                       WHERE type = 'UNFREEZE'::love_point_tx_type_enum
+                   ),
+                   0
+               )::BIGINT
+           FROM love_point_transactions
+           WHERE user_id = $1 AND group_id = $2"#,
+    )
+    .bind(user_id)
+    .bind(group_id)
+    .fetch_one(db)
+    .await?;
+
+    resolve_frozen_points(None, freeze_total, unfreeze_total)
+        .ok_or_else(|| CustomError::internal_error("冻结积分流水聚合异常"))
+}
+
 /// 配置双人组路由
 pub fn configure(cfg: &mut ServiceConfig) {
     // 写法说明:ntex 2.1 中,`web::scope("/prefix").route("/{param}", ...)` 这种
@@ -50,16 +106,7 @@ pub fn configure(cfg: &mut ServiceConfig) {
     // - 静态路由用独立 resource(避免与 {group_id} 动态段冲突)
     // - 动态参数路由用独立 resource 挂在 cfg 上
     //
-    // 重要: `/api/groups/join` 必须用 web::resource 单独挂,不能放进 scope。
-    // 否则 ntex 2.1 会把 POST /api/groups/join 路由到 `/api/groups/{group_id}` 的
-    // swap_role handler,被 RequireGroup 误判为 403 USER_NOT_IN_GROUP。
-    //
-    // 双保险: 即使静态路由因 ntex 内部原因没匹配上,动态资源上挂了
-    // group_id_is_numeric guard,会拒绝匹配 "/api/groups/join" 这种非数字段
-    cfg.service(
-        web::resource("/api/groups/join")
-            .route(web::post().to(join_group)),
-    );
+    // 伙伴绑定统一由 partner_invitations 模块处理；旧的裸 user_id join 路由不再注册。
     cfg.service(
         web::resource("/api/groups/{group_id}")
             .guard(group_id_is_numeric())
@@ -80,25 +127,20 @@ pub fn configure(cfg: &mut ServiceConfig) {
         web::resource("/api/groups/{group_id}/swap-role/check")
             .route(web::get().to(swap_role_check)),
     );
-    cfg.service(
-        web::resource("/api/groups/{group_id}/exit")
-            .route(web::post().to(exit_group)),
-    );
+    cfg.service(web::resource("/api/groups/{group_id}/exit").route(web::post().to(exit_group)));
     cfg.service(
         web::resource("/api/groups/{group_id}/settlement-check")
             .route(web::get().to(settlement_check)),
     );
     cfg.service(
-        web::resource("/api/groups/{group_id}/members")
-            .route(web::get().to(get_group_members)),
+        web::resource("/api/groups/{group_id}/members").route(web::get().to(get_group_members)),
     );
     cfg.service(
         web::resource("/api/groups/{group_id}/fulfillment-stats")
             .route(web::get().to(fulfillment_stats)),
     );
     cfg.service(
-        web::resource("/api/groups/{group_id}/orders")
-            .route(web::post().to(create_group_order)),
+        web::resource("/api/groups/{group_id}/orders").route(web::post().to(create_group_order)),
     );
     // 注: 之前有 GET/PATCH /api/groups/{group_id}/point-config,允许组员调整积分配置。
     // MVP 阶段默认配置已合理,该入口用户基本不会用,且增加前后端维护成本。
@@ -137,18 +179,7 @@ async fn get_group(
     let db = &state.db_pool;
     let gid = group_id.into_inner();
 
-    // 检查用户是否是组成员
-    let is_member: bool = sqlx::query_scalar::<_, bool>(
-        "SELECT EXISTS(SELECT 1 FROM association_group_members WHERE group_id=$1 AND user_id=$2)",
-    )
-    .bind(gid)
-    .bind(token.user_id)
-    .fetch_one(db)
-    .await?;
-
-    if !is_member {
-        return Err(CustomError::Forbidden("无权访问该组".into()));
-    }
+    require_active_target_group_member(db, token.user_id, gid).await?;
 
     // 获取组信息
     let group_row = sqlx::query(
@@ -243,18 +274,7 @@ async fn swap_role(
     let db = &state.db_pool;
     let gid = group_id.into_inner();
 
-    // 检查用户是否是组成员
-    let is_member: bool = sqlx::query_scalar::<_, bool>(
-        "SELECT EXISTS(SELECT 1 FROM association_group_members WHERE group_id=$1 AND user_id=$2)",
-    )
-    .bind(gid)
-    .bind(token.user_id)
-    .fetch_one(db)
-    .await?;
-
-    if !is_member {
-        return Err(CustomError::Forbidden("无权访问该组".into()));
-    }
+    require_active_target_group_member(db, token.user_id, gid).await?;
 
     let mut tx = db.begin().await?;
 
@@ -283,14 +303,16 @@ async fn swap_role(
             'REJECTED','CANCELLED','CANCELED',\
             'SYSTEM_CLOSED','BREEDER_CLOSED',\
             'TIMEOUT'\
-        )"
+        )",
     )
     .bind(gid)
     .fetch_one(&mut *tx)
     .await?;
 
     if pending_orders > 0 {
-        return Err(CustomError::role_swap_blocked_by_order("存在未完结订单，禁止互换"));
+        return Err(CustomError::role_swap_blocked_by_order(
+            "存在未完结订单，禁止互换",
+        ));
     }
 
     // 协商中的心愿(DRAFT/NEGOTIATING)不允许切换 role：
@@ -323,7 +345,9 @@ async fn swap_role(
         .await?;
 
         if pending_wishes > 0 {
-            return Err(CustomError::role_swap_blocked_by_wish("存在在途心愿，禁止互换"));
+            return Err(CustomError::role_swap_blocked_by_wish(
+                "存在在途心愿，禁止互换",
+            ));
         }
     }
 
@@ -377,10 +401,17 @@ async fn swap_role(
     // 关键: 失效双方 UserPublic Redis 缓存
     // 否则下次 silentLogin 还会读到旧 users.role,前端看起来"没切换成功"
     for uid in [new_buyer, new_seller].into_iter().flatten() {
-        let _ = state.redis_cache
+        let _ = state
+            .redis_cache
             .delete_user(&uid.to_string())
             .await
-            .map_err(|e| log::warn!("[swap_role] failed to invalidate user cache for {}: {}", uid, e));
+            .map_err(|e| {
+                log::warn!(
+                    "[swap_role] failed to invalidate user cache for {}: {}",
+                    uid,
+                    e
+                )
+            });
     }
 
     // 通知组里所有人 —— 角色互换了
@@ -432,18 +463,7 @@ async fn settlement_check(
     let db = &state.db_pool;
     let gid = group_id.into_inner();
 
-    // 检查用户是否是组成员
-    let is_member: bool = sqlx::query_scalar::<_, bool>(
-        "SELECT EXISTS(SELECT 1 FROM association_group_members WHERE group_id=$1 AND user_id=$2)",
-    )
-    .bind(gid)
-    .bind(token.user_id)
-    .fetch_one(db)
-    .await?;
-
-    if !is_member {
-        return Err(CustomError::Forbidden("无权访问该组".into()));
-    }
+    require_active_target_group_member(db, token.user_id, gid).await?;
 
     let mut reasons = Vec::new();
 
@@ -469,16 +489,8 @@ async fn settlement_check(
     .await?
     .unwrap_or(0);
 
-    // 检查冻结爱心积分(SUM 返回 NUMERIC,::BIGINT 强转)
-    let frozen_points: i64 = sqlx::query_scalar::<_, Option<i64>>(
-        r#"SELECT COALESCE(SUM(amount), 0)::BIGINT FROM love_point_transactions
-           WHERE user_id=$1 AND group_id=$2 AND type='FREEZE'::love_point_tx_type_enum"#,
-    )
-    .bind(token.user_id)
-    .bind(gid)
-    .fetch_one(db)
-    .await?
-    .unwrap_or(0);
+    // 优先使用当前冻结余额；无余额行时才按 FREEZE - UNFREEZE 回放历史流水。
+    let frozen_points = read_frozen_points(db, token.user_id, gid).await?;
 
     let can_exit = pending_initiated == 0 && pending_as_fulfiller == 0 && frozen_points == 0;
 
@@ -538,18 +550,7 @@ async fn fulfillment_stats(
     let db = &state.db_pool;
     let gid = group_id.into_inner();
 
-    // 检查用户是否是组成员
-    let is_member: bool = sqlx::query_scalar::<_, bool>(
-        "SELECT EXISTS(SELECT 1 FROM association_group_members WHERE group_id=$1 AND user_id=$2)",
-    )
-    .bind(gid)
-    .bind(token.user_id)
-    .fetch_one(db)
-    .await?;
-
-    if !is_member {
-        return Err(CustomError::Forbidden("无权访问该组".into()));
-    }
+    require_active_target_group_member(db, token.user_id, gid).await?;
 
     // 获取组内所有用户
     let members: Vec<(i64,)> =
@@ -625,7 +626,9 @@ async fn fulfillment_stats(
         );
     }
 
-    Ok(ApiResponse::success(FulfillmentStatsListResponse { stats: stats_map }))
+    Ok(ApiResponse::success(FulfillmentStatsListResponse {
+        stats: stats_map,
+    }))
 }
 
 /// 履约统计列表响应
@@ -676,30 +679,23 @@ async fn create_group_order(
     let gid = group_id.into_inner();
     let input = body.into_inner();
 
-    // 检查用户是否是组成员
-    let is_member: bool = sqlx::query_scalar::<_, bool>(
-        "SELECT EXISTS(SELECT 1 FROM association_group_members WHERE group_id=$1 AND user_id=$2)",
-    )
-    .bind(gid)
-    .bind(token.user_id)
-    .fetch_one(db)
-    .await?;
+    require_active_target_group_member(db, token.user_id, gid).await?;
 
-    if !is_member {
-        return Err(CustomError::Forbidden("无权访问该组".into()));
-    }
-
-    // 检查用户角色是否为 BUYER
+    // 数据库存储的真实组内下单方角色是 ORDERING（BUYER 仅为前端业务称谓）。
     // role_in_group 是 PG 自定义枚举,SELECT 必须 ::text 强转,否则 sqlx 解不出
     let user_role: Option<String> = sqlx::query_scalar(
-        "SELECT role_in_group::text FROM association_group_members WHERE group_id=$1 AND user_id=$2",
+        r#"SELECT role_in_group::text
+           FROM association_group_members
+           WHERE group_id = $1
+             AND user_id = $2
+             AND member_status = 'ACTIVE'::group_member_status_enum"#,
     )
     .bind(gid)
     .bind(token.user_id)
     .fetch_one(db)
     .await?;
 
-    if user_role.as_deref() != Some("BUYER") {
+    if user_role.as_deref() != Some("ORDERING") {
         return Err(CustomError::Forbidden("只有Buyer可以创建订单".into()));
     }
 
@@ -770,18 +766,7 @@ async fn create_group_wish(
     let gid = group_id.into_inner();
     let input = body.into_inner();
 
-    // 检查用户是否是组成员
-    let is_member: bool = sqlx::query_scalar::<_, bool>(
-        "SELECT EXISTS(SELECT 1 FROM association_group_members WHERE group_id=$1 AND user_id=$2)",
-    )
-    .bind(gid)
-    .bind(token.user_id)
-    .fetch_one(db)
-    .await?;
-
-    if !is_member {
-        return Err(CustomError::Forbidden("无权访问该组".into()));
-    }
+    require_active_target_group_member(db, token.user_id, gid).await?;
 
     // 获取组内另一成员作为默认履约人
     let other_member: Option<i64> = sqlx::query_scalar(
@@ -828,260 +813,6 @@ async fn create_group_wish(
 
 // ============== FSD v2 新增端点 ==============
 
-/// 通过邀请人用户 ID 加入组
-/// POST /api/groups/join
-///
-/// B 点 A 分享的链接进入 → B 确认 → 调这个接口。
-/// 根据 A、B 各自"是否在组里"自动判断:
-/// - A 没组 + B 没组 → 服务端自动建一个新组(A 当 buyer, B 当 seller),两人都是成员
-/// - A 有组 + B 没组 + 组未满 → B 加进 A 的组(B 当 seller)
-/// - A 已满(2人) → 拒绝 (INVITER_HAS_PARTNER)
-/// - B 自己已在任何组 → 拒绝 (USER_ALREADY_IN_GROUP)
-#[utoipa::path(
-    post,
-    path = "/api/groups/join",
-    tag = "双人组",
-    request_body = JoinGroupInput,
-    responses(
-        (status = 200, description = "加入成功"),
-        (status = 400, description = "已在其他组"),
-        (status = 403, description = "对方已经有厨房了")
-    ),
-    security(("bearer_auth" = []))
-)]
-async fn join_group(
-    token: UserToken,
-    state: State<Arc<AppState>>,
-    body: Json<JoinGroupInput>,
-) -> Result<HttpResponse, CustomError> {
-    let db = &state.db_pool;
-    let input = body.into_inner();
-    let inviter_id = input.invitee_user_id;
-    let joiner_id = token.user_id;
-
-    log::info!(
-        "[join_group] ENTER inviter_id={} joiner_id={}",
-        inviter_id, joiner_id
-    );
-
-    // 不能邀请自己
-    if inviter_id == joiner_id {
-        log::warn!("[join_group] REJECT: inviter_id == joiner_id == {}", joiner_id);
-        return Err(CustomError::BadRequest("不能邀请自己".into()));
-    }
-
-    // 1) B 自己是否已在任何组(任意 ACTIVE 组)
-    let joiner_group: Option<(i64,)> = sqlx::query_as(
-        "SELECT group_id FROM association_group_members
-         WHERE user_id = $1 AND member_status = 'ACTIVE'::group_member_status_enum"
-    )
-    .bind(joiner_id)
-    .fetch_optional(db)
-    .await?;
-
-    if joiner_group.is_some() {
-        log::warn!(
-            "[join_group] REJECT: joiner_id={} 已在组中 ({:?})",
-            joiner_id, joiner_group
-        );
-        return Err(CustomError::user_already_in_group("你已在其他组中"));
-    }
-
-    // 2) 查 A 当前是否在组里(决定走"自动建组"还是"加成员")
-    let inviter_group: Option<(i64,)> = sqlx::query_as(
-        "SELECT group_id FROM association_group_members
-         WHERE user_id = $1 AND member_status = 'ACTIVE'::group_member_status_enum"
-    )
-    .bind(inviter_id)
-    .fetch_optional(db)
-    .await?;
-
-    let mut tx = db.begin().await?;
-
-    match inviter_group {
-        None => {
-            // ============ 分支 A: A 也没组 → 服务端自动建组 ============
-            log::info!(
-                "[join_group] AUTO_CREATE: inviter_id={} joiner_id={} 都无组",
-                inviter_id, joiner_id
-            );
-
-            // 邀请码字段表里 NOT NULL,自动建组时塞一个随机 8 位 hex 兜底
-            let placeholder_invite_code = format!("{:08x}", rand::random::<u32>());
-            let group_name = format!("{}和{}的厨房", inviter_id, joiner_id);
-            let now = Utc::now();
-
-            let new_group_id: i64 = sqlx::query_scalar(
-                r#"INSERT INTO association_groups
-                     (group_name, group_type, status, invite_code,
-                      diamond, footprint_capacity, footprint_count,
-                      buyer_user_id, seller_user_id,
-                      level, exp, created_at, updated_at)
-                   VALUES ($1, 'PAIR'::group_type_enum, 'ACTIVE'::user_status_enum, $2,
-                           0, 50, 0,
-                           $3, $4,
-                           1, 0, $5, $5)
-                   RETURNING group_id"#
-            )
-            .bind(&group_name)
-            .bind(&placeholder_invite_code)
-            .bind(inviter_id) // A 当 buyer
-            .bind(joiner_id)  // B 当 seller
-            .bind(now)
-            .fetch_one(&mut *tx)
-            .await?;
-
-            // 加 A 为 member (buyer, is_primary=1)
-            sqlx::query(
-                r#"INSERT INTO association_group_members (user_id, group_id, role_in_group, is_primary, member_status, joined_at)
-                   VALUES ($1, $2, 'ORDERING'::group_member_role_enum, 1, 'ACTIVE'::group_member_status_enum, $3)"#
-            )
-            .bind(inviter_id)
-            .bind(new_group_id)
-            .bind(now)
-            .execute(&mut *tx)
-            .await?;
-
-            // 加 B 为 member (seller, is_primary=0)
-            sqlx::query(
-                r#"INSERT INTO association_group_members (user_id, group_id, role_in_group, is_primary, member_status, joined_at)
-                   VALUES ($1, $2, 'RECEIVING'::group_member_role_enum, 0, 'ACTIVE'::group_member_status_enum, $3)"#
-            )
-            .bind(joiner_id)
-            .bind(new_group_id)
-            .bind(now)
-            .execute(&mut *tx)
-            .await?;
-
-            // 更新 A 的 role = ORDERING
-            sqlx::query(
-                "UPDATE users SET role='ORDERING'::user_role_enum, last_role_switch_at=NOW() WHERE user_id=$1"
-            )
-            .bind(inviter_id)
-            .execute(&mut *tx)
-            .await?;
-
-            // 更新 B 的 role = RECEIVING
-            sqlx::query(
-                "UPDATE users SET role='RECEIVING'::user_role_enum, last_role_switch_at=NOW() WHERE user_id=$1"
-            )
-            .bind(joiner_id)
-            .execute(&mut *tx)
-            .await?;
-
-            tx.commit().await?;
-
-            // 双侧失效缓存(两人都是"是否在组里"状态翻转)
-            let _ = state.redis_cache
-                .delete_user(&inviter_id.to_string())
-                .await
-                .map_err(|e| log::warn!("[join_group] failed to invalidate inviter cache: {}", e));
-            let _ = state.redis_cache
-                .delete_user(&joiner_id.to_string())
-                .await
-                .map_err(|e| log::warn!("[join_group] failed to invalidate joiner cache: {}", e));
-
-            // 推 socket (B 入组通知)
-            push_group_member_change_notice(
-                db,
-                new_group_id,
-                "joined",
-                joiner_id,
-                None,
-                Some(joiner_id),
-            )
-            .await;
-
-            log::info!(
-                "[join_group] SUCCESS (auto-create) group_id={} inviter={} joiner={}",
-                new_group_id, inviter_id, joiner_id
-            );
-
-            Ok(ApiResponse::success(serde_json::json!({
-                "groupId": new_group_id,
-                "role": "RECEIVING",
-                "status": "ok"
-            })))
-        }
-        Some((inviter_gid,)) => {
-            // ============ 分支 B: A 有组 → 看是否已满 ============
-            let member_count: i64 = sqlx::query_scalar(
-                "SELECT COUNT(*) FROM association_group_members WHERE group_id=$1 AND member_status = 'ACTIVE'::group_member_status_enum"
-            )
-            .bind(inviter_gid)
-            .fetch_one(&mut *tx)
-            .await?;
-
-            if member_count >= 2 {
-                log::warn!(
-                    "[join_group] REJECT: inviter_id={} 组已满 group_id={} (member_count={})",
-                    inviter_id, inviter_gid, member_count
-                );
-                // tx 还没 commit, 直接 return Err, ntex 会 rollback
-                return Err(CustomError::inviter_has_partner("对方已经有厨房了"));
-            }
-
-            // A 组只有自己 → 把 B 加进去
-            sqlx::query(
-                r#"INSERT INTO association_group_members (user_id, group_id, role_in_group, is_primary, member_status, joined_at)
-                   VALUES ($1, $2, 'RECEIVING'::group_member_role_enum, 0, 'ACTIVE'::group_member_status_enum, $3)"#
-            )
-            .bind(joiner_id)
-            .bind(inviter_gid)
-            .bind(Utc::now())
-            .execute(&mut *tx)
-            .await?;
-
-            // 更新组的 seller_user_id
-            sqlx::query(
-                "UPDATE association_groups SET seller_user_id=$1, updated_at=NOW() WHERE group_id=$2"
-            )
-            .bind(joiner_id)
-            .bind(inviter_gid)
-            .execute(&mut *tx)
-            .await?;
-
-            // 更新 B 的 role
-            sqlx::query(
-                "UPDATE users SET role='RECEIVING'::user_role_enum, last_role_switch_at=NOW() WHERE user_id=$1"
-            )
-            .bind(joiner_id)
-            .execute(&mut *tx)
-            .await?;
-
-            tx.commit().await?;
-
-            // 失效 B 的缓存
-            let _ = state.redis_cache
-                .delete_user(&joiner_id.to_string())
-                .await
-                .map_err(|e| log::warn!("[join_group] failed to invalidate joiner cache: {}", e));
-
-            // 推 socket (B 入组通知)
-            push_group_member_change_notice(
-                db,
-                inviter_gid,
-                "joined",
-                joiner_id,
-                None,
-                Some(joiner_id),
-            )
-            .await;
-
-            log::info!(
-                "[join_group] SUCCESS (join existing) group_id={} inviter={} joiner={}",
-                inviter_gid, inviter_id, joiner_id
-            );
-
-            Ok(ApiResponse::success(serde_json::json!({
-                "groupId": inviter_gid,
-                "role": "RECEIVING",
-                "status": "ok"
-            })))
-        }
-    }
-}
-
 /// 退出双人组
 /// POST /api/groups/{group_id}/exit
 ///
@@ -1109,23 +840,14 @@ async fn exit_group(
     let db = &state.db_pool;
     let gid = group_id.into_inner();
 
-    // 检查用户是否是组成员
-    let is_member: bool = sqlx::query_scalar::<_, bool>(
-        "SELECT EXISTS(SELECT 1 FROM association_group_members WHERE group_id=$1 AND user_id=$2 AND member_status = 'ACTIVE'::group_member_status_enum)",
-    )
-    .bind(gid)
-    .bind(token.user_id)
-    .fetch_one(db)
-    .await?;
-
-    if !is_member {
-        return Err(CustomError::Forbidden("无权访问该组".into()));
-    }
+    require_active_target_group_member(db, token.user_id, gid).await?;
 
     // 结清检查
     let settlement = settlement_check_impl(db, gid, token.user_id).await?;
     if !settlement.can_exit {
-        return Err(CustomError::BadRequest(settlement.reasons.join("; ").into()));
+        return Err(CustomError::BadRequest(
+            settlement.reasons.join("; ").into(),
+        ));
     }
 
     let mut tx = db.begin().await?;
@@ -1150,15 +872,19 @@ async fn exit_group(
 
     // 清空组的 buyer 或 seller 引用
     if user_role.as_deref() == Some("ORDERING") {
-        sqlx::query("UPDATE association_groups SET buyer_user_id=NULL, updated_at=NOW() WHERE group_id=$1")
-            .bind(gid)
-            .execute(&mut *tx)
-            .await?;
+        sqlx::query(
+            "UPDATE association_groups SET buyer_user_id=NULL, updated_at=NOW() WHERE group_id=$1",
+        )
+        .bind(gid)
+        .execute(&mut *tx)
+        .await?;
     } else {
-        sqlx::query("UPDATE association_groups SET seller_user_id=NULL, updated_at=NOW() WHERE group_id=$1")
-            .bind(gid)
-            .execute(&mut *tx)
-            .await?;
+        sqlx::query(
+            "UPDATE association_groups SET seller_user_id=NULL, updated_at=NOW() WHERE group_id=$1",
+        )
+        .bind(gid)
+        .execute(&mut *tx)
+        .await?;
     }
 
     tx.commit().await?;
@@ -1200,7 +926,8 @@ async fn exit_group(
     // 关键: 失效该用户的 UserPublic Redis 缓存,否则下一次请求 RequireGroup
     // 还会读到旧 group_id=Some(gid),继续允许访问旧组,或在某些边界下报错。
     // exit_group 也是"是否在组里"状态的翻转点,必须清缓存。
-    let _ = state.redis_cache
+    let _ = state
+        .redis_cache
         .delete_user(&token.user_id.to_string())
         .await
         .map_err(|e| log::warn!("[exit_group] failed to invalidate user cache: {}", e));
@@ -1236,18 +963,7 @@ async fn get_group_members(
     let db = &state.db_pool;
     let gid = group_id.into_inner();
 
-    // 检查用户是否是组成员
-    let is_member: bool = sqlx::query_scalar::<_, bool>(
-        "SELECT EXISTS(SELECT 1 FROM association_group_members WHERE group_id=$1 AND user_id=$2 AND member_status = 'ACTIVE'::group_member_status_enum)",
-    )
-    .bind(gid)
-    .bind(token.user_id)
-    .fetch_one(db)
-    .await?;
-
-    if !is_member {
-        return Err(CustomError::Forbidden("无权访问该组".into()));
-    }
+    require_active_target_group_member(db, token.user_id, gid).await?;
 
     // 获取组成员列表(role_in_group 自定义枚举,::text 强转)
     let members = sqlx::query(
@@ -1310,17 +1026,8 @@ async fn settlement_check_impl(
     .await?
     .unwrap_or(0);
 
-    // 检查冻结爱心积分
-    // SUM 在 PostgreSQL 返回 NUMERIC,::BIGINT 强转才能解 i64
-    let frozen_points: i64 = sqlx::query_scalar::<_, Option<i64>>(
-        r#"SELECT COALESCE(SUM(amount)::BIGINT, 0) FROM love_point_transactions
-           WHERE user_id=$1 AND group_id=$2 AND type='FREEZE'::love_point_tx_type_enum"#
-    )
-    .bind(user_id)
-    .bind(group_id)
-    .fetch_one(db)
-    .await?
-    .unwrap_or(0);
+    // 优先使用当前冻结余额；无余额行时才按 FREEZE - UNFREEZE 回放历史流水。
+    let frozen_points = read_frozen_points(db, user_id, group_id).await?;
 
     let can_exit = pending_initiated == 0 && pending_as_fulfiller == 0 && frozen_points == 0;
 
@@ -1363,18 +1070,6 @@ pub struct GroupOrderInput {
 pub struct GroupWishInput {
     pub name: String,
     pub initial_cost: i32,
-}
-
-/// 通过邀请码加入组输入
-/// `group_id` 来自邀请链接 (前端拼链接时带上), 后端仍以 invite_code 反查的
-/// group_id 为准; group_id 仅用于日志/审计, 以及让前端"已在同群"幂等判断
-/// 时的请求语义自洽。
-/// 通过邀请人用户 ID 加入组的入参
-/// invitee_user_id = A 的 user_id(分享链接的人)
-#[derive(Debug, Deserialize, Serialize, ToSchema)]
-#[serde(rename_all = "camelCase")]
-pub struct JoinGroupInput {
-    pub invitee_user_id: i64,
 }
 
 // 注: GroupPointConfigResponse / GroupPointConfigUpdateRequest 已被删除
@@ -1439,6 +1134,7 @@ async fn swap_role_check(
     let db = &state.db_pool;
     let gid = group_id.into_inner();
     let user_id = token.user_id;
+    require_active_target_group_member(db, user_id, gid).await?;
 
     // Q1：取组信息 + 用户角色 + ignore 配置
     // role_in_group 自定义枚举,::text 强转
@@ -1466,7 +1162,12 @@ async fn swap_role_check(
     .fetch_optional(db)
     .await
     .map_err(|e| {
-        log::error!("[swap_role_check] Q1 failed: gid={} user_id={} err={:?}", gid, user_id, e);
+        log::error!(
+            "[swap_role_check] Q1 failed: gid={} user_id={} err={:?}",
+            gid,
+            user_id,
+            e
+        );
         CustomError::from(e)
     })?;
 
@@ -1505,7 +1206,7 @@ async fn swap_role_check(
     let current_role = match row.get::<String, _>("current_role").as_str() {
         "ORDERING" => "BUYER".to_string(),
         "RECEIVING" => "SELLER".to_string(),
-        _ => "SELLER".to_string(),  // unreachable in practice
+        _ => "SELLER".to_string(), // unreachable in practice
     };
     let would_be_role = if current_role == "BUYER" {
         "SELLER".to_string()
@@ -1513,9 +1214,9 @@ async fn swap_role_check(
         "BUYER".to_string()
     };
 
-    // Q2-Q4 并行
+    // Q2-Q3 并行
     // 终态集合与 swap_role 实际接口对齐 —— 避免预检通过但实际被拦的体验割裂
-    let (active_orders, pending_wishes, frozen_points): (i64, i64, i64) = tokio::try_join!(
+    let (active_orders, pending_wishes): (i64, i64) = tokio::try_join!(
         sqlx::query_scalar::<_, i64>(
             r#"SELECT COUNT(*) FROM orders
                WHERE group_id = $1
@@ -1550,19 +1251,19 @@ async fn swap_role_check(
             .await?;
             Ok(n_negotiating + n_claimed)
         },
-        sqlx::query_scalar::<_, i64>(
-            // SUM 在 PostgreSQL 返回 NUMERIC,不是 BIGINT,直接解码 i64 会炸
-            // 加 ::BIGINT 显式强转,COALESCE 在 SUM 为 NULL 时(理论上不会)回退到 0
-            r#"SELECT COALESCE(SUM(amount)::BIGINT, 0) FROM love_point_transactions
-               WHERE user_id = $1 AND group_id = $2 AND type = 'FREEZE'::love_point_tx_type_enum"#,
-        )
-        .bind(user_id)
-        .bind(gid)
-        .fetch_one(db),
     )
     .map_err(|e| {
-        log::error!("[swap_role_check] Q2-Q4 failed: gid={} user_id={} err={:?}", gid, user_id, e);
+        log::error!("[swap_role_check] Q2-Q3 failed: gid={} user_id={} err={:?}", gid, user_id, e);
         CustomError::from(e)
+    })?;
+    let frozen_points = read_frozen_points(db, user_id, gid).await.map_err(|e| {
+        log::error!(
+            "[swap_role_check] frozen points failed: gid={} user_id={} err={:?}",
+            gid,
+            user_id,
+            e
+        );
+        e
     })?;
 
     // 拼装 reasons
@@ -1591,7 +1292,10 @@ async fn swap_role_check(
         .await
         .unwrap_or(0);
         if negotiating_n > 0 {
-            reasons.push(format!("存在 {} 个协商中的心愿(请先同意或拒绝)", negotiating_n));
+            reasons.push(format!(
+                "存在 {} 个协商中的心愿(请先同意或拒绝)",
+                negotiating_n
+            ));
         }
         if claimed_n > 0 {
             reasons.push(format!("存在 {} 个在途心愿(已兑换未确认完成)", claimed_n));
@@ -1621,18 +1325,14 @@ async fn swap_role_check(
 
 /// 查用户的昵称和头像(用于通知里展示)。
 /// 查不到时返回 None,调用方决定要不要兜底。
-async fn fetch_user_info_for_notice(
-    db: &sqlx::PgPool,
-    user_id: i64,
-) -> Option<WsGroupMemberInfo> {
-    let row: Option<(Option<String>, Option<String>)> = sqlx::query_as(
-        "SELECT nick_name, avatar FROM users WHERE user_id = $1",
-    )
-    .bind(user_id)
-    .fetch_optional(db)
-    .await
-    .ok()
-    .flatten();
+async fn fetch_user_info_for_notice(db: &sqlx::PgPool, user_id: i64) -> Option<WsGroupMemberInfo> {
+    let row: Option<(Option<String>, Option<String>)> =
+        sqlx::query_as("SELECT nick_name, avatar FROM users WHERE user_id = $1")
+            .bind(user_id)
+            .fetch_optional(db)
+            .await
+            .ok()
+            .flatten();
 
     row.map(|(nick_name, avatar)| WsGroupMemberInfo {
         user_id,
@@ -1651,7 +1351,7 @@ async fn fetch_user_info_for_notice(
 ///
 /// 设计:不再让调用方手撸"目标 user_id Vec", 而是按 group_id 反查。
 /// PAIR 组目前 2 人, FUTURE 多人组 (FAMILY/TEAM) 也能直接复用。
-async fn push_group_member_change_notice(
+pub(super) async fn push_group_member_change_notice(
     db: &sqlx::PgPool,
     group_id: i64,
     action: &str,
@@ -1659,11 +1359,13 @@ async fn push_group_member_change_notice(
     buyer_id: Option<i64>,
     seller_id: Option<i64>,
 ) {
-    let actor = fetch_user_info_for_notice(db, actor_id).await.unwrap_or(WsGroupMemberInfo {
-        user_id: actor_id,
-        nick_name: None,
-        avatar: None,
-    });
+    let actor = fetch_user_info_for_notice(db, actor_id)
+        .await
+        .unwrap_or(WsGroupMemberInfo {
+            user_id: actor_id,
+            nick_name: None,
+            avatar: None,
+        });
     let buyer = match buyer_id {
         Some(id) => fetch_user_info_for_notice(db, id).await,
         None => None,
@@ -1692,7 +1394,7 @@ async fn push_group_member_change_notice(
     // 落到 association_groups.buyer/seller 字段的瞬间状态。
     let target_ids: Vec<i64> = sqlx::query_scalar(
         "SELECT user_id FROM association_group_members
-         WHERE group_id = $1 AND member_status = 'ACTIVE'::group_member_status_enum"
+         WHERE group_id = $1 AND member_status = 'ACTIVE'::group_member_status_enum",
     )
     .bind(group_id)
     .fetch_all(db)
@@ -1700,7 +1402,8 @@ async fn push_group_member_change_notice(
     .unwrap_or_else(|e| {
         log::error!(
             "[push_group_member_change] 查 group_id={} 成员失败: {:?}",
-            group_id, e
+            group_id,
+            e
         );
         Vec::new()
     });
@@ -1711,7 +1414,9 @@ async fn push_group_member_change_notice(
         if !sent {
             log::debug!(
                 "组员变化通知未送达(用户 {} 不在线): group_id={} action={}",
-                target_id, group_id, action
+                target_id,
+                group_id,
+                action
             );
         }
     }
@@ -1767,7 +1472,9 @@ pub fn validate_group_avatar_url(url: &str) -> Result<(), CustomError> {
         return Err(CustomError::BadRequest("头像 URL 过长（>512 字符）".into()));
     }
     if !url.starts_with("https://") {
-        return Err(CustomError::BadRequest("头像 URL 必须以 https:// 开头".into()));
+        return Err(CustomError::BadRequest(
+            "头像 URL 必须以 https:// 开头".into(),
+        ));
     }
     Ok(())
 }
@@ -1814,18 +1521,7 @@ pub async fn update_group_name(
     // 校验组名
     validate_group_name(&input.name)?;
 
-    // 鉴权: 必须是该组 ACTIVE 成员
-    let is_member: Option<(i64,)> = sqlx::query_as(
-        "SELECT user_id FROM association_group_members
-         WHERE group_id = $1 AND user_id = $2 AND member_status = 'ACTIVE'::group_member_status_enum"
-    )
-    .bind(group_id)
-    .bind(token.user_id)
-    .fetch_optional(db)
-    .await?;
-    if is_member.is_none() {
-        return Err(CustomError::Forbidden("不是该组成员".into()));
-    }
+    require_active_target_group_member(db, token.user_id, group_id).await?;
 
     // 更新 group_name
     let affected: u64 = sqlx::query(
@@ -1911,18 +1607,7 @@ pub async fn update_group(
         validate_group_avatar_url(url)?;
     }
 
-    // 鉴权：必须是该组 ACTIVE 成员
-    let is_member: Option<(i64,)> = sqlx::query_as(
-        "SELECT user_id FROM association_group_members
-         WHERE group_id = $1 AND user_id = $2 AND member_status = 'ACTIVE'::group_member_status_enum",
-    )
-    .bind(group_id)
-    .bind(token.user_id)
-    .fetch_optional(db)
-    .await?;
-    if is_member.is_none() {
-        return Err(CustomError::Forbidden("不是该组成员".into()));
-    }
+    require_active_target_group_member(db, token.user_id, group_id).await?;
 
     // 局部更新：用 COALESCE 让 None 跳过
     let updated: Option<(Option<String>, Option<String>)> = sqlx::query_as(
@@ -1954,6 +1639,19 @@ pub async fn update_group(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn frozen_aggregation_prefers_current_balance_over_historical_freezes() {
+        assert_eq!(resolve_frozen_points(Some(0), 500, 0), Some(0));
+        assert_eq!(resolve_frozen_points(Some(25), 500, 500), Some(25));
+    }
+
+    #[test]
+    fn frozen_aggregation_subtracts_unfreeze_history() {
+        assert_eq!(resolve_frozen_points(None, 500, 500), Some(0));
+        assert_eq!(resolve_frozen_points(None, 500, 125), Some(375));
+        assert_eq!(resolve_frozen_points(None, 100, 125), None);
+    }
 
     #[test]
     fn validate_group_name_ok_chinese() {

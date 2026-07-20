@@ -8,7 +8,7 @@ use sqlx::types::Json;
 use sqlx::FromRow;
 use utoipa::ToSchema;
 
-use super::{WishStatus, WishQualityStatus};
+use super::{WishQualityStatus, WishStatus};
 
 /// 心愿记录 - FSD v2版本
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow, ToSchema)]
@@ -137,8 +137,8 @@ impl From<WishFeedbackRecord> for WishFeedbackOut {
 #[serde(rename_all = "camelCase")]
 pub struct WishCreateInput {
     pub wish_name: String,
+    #[schema(minimum = 1, maximum = 1000000)]
     pub wish_cost: i32,
-    pub group_id: i64,
 }
 
 /// 心愿更新输入
@@ -146,6 +146,7 @@ pub struct WishCreateInput {
 #[serde(rename_all = "camelCase")]
 pub struct WishUpdateInput {
     pub wish_name: Option<String>,
+    #[schema(minimum = 1, maximum = 1000000)]
     pub wish_cost: Option<i32>,
     pub status: Option<WishStatus>,
 }
@@ -162,6 +163,7 @@ pub struct WishFeedbackInput {
 #[derive(Debug, Deserialize, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct WishQuoteInput {
+    #[schema(minimum = 1, maximum = 1000000)]
     pub cost: i32,
 }
 

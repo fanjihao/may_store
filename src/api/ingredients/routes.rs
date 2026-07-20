@@ -16,6 +16,7 @@ use crate::config::AppState;
 use crate::errors::CustomError;
 use crate::middlewares::auth::UserToken;
 use crate::middlewares::require_group::RequireGroup;
+use crate::middlewares::target_group::require_active_target_group_member;
 use crate::utils::response::ApiResponse;
 
 use crate::application::food_service::IngredientService;
@@ -50,20 +51,7 @@ async fn ensure_member(
     user_id: i64,
     group_id: i64,
 ) -> Result<(), CustomError> {
-    let ok: bool = sqlx::query_scalar(
-        r#"SELECT EXISTS(
-             SELECT 1 FROM association_group_members
-             WHERE user_id = $1 AND group_id = $2 AND member_status = 'ACTIVE'::group_member_status_enum
-           )"#,
-    )
-    .bind(user_id)
-    .bind(group_id)
-    .fetch_one(&state.db_pool)
-    .await?;
-    if !ok {
-        return Err(CustomError::permission_denied("不是该组的活跃成员"));
-    }
-    Ok(())
+    require_active_target_group_member(&state.db_pool, user_id, group_id).await
 }
 
 /// 校验食材存在并属于指定组（不暴露存在性 → 任何"非本组 ID"都返回 404）
@@ -140,7 +128,10 @@ pub async fn list_ingredients(
     ensure_member(&state, token.user_id, group_id).await?;
 
     let limit = q.limit.unwrap_or(50).clamp(1, 200);
-    let cursor = q.cursor.as_deref().and_then(decode_cursor::<IngredientCursor>);
+    let cursor = q
+        .cursor
+        .as_deref()
+        .and_then(decode_cursor::<IngredientCursor>);
     let (c_sort, c_created): (Option<i32>, Option<chrono::DateTime<chrono::Utc>>) = match &cursor {
         Some(c) => (Some(c.sort), Some(c.created_at)),
         None => (None, None),
@@ -431,14 +422,13 @@ pub async fn delete_ingredient(
     let (group_id, ingredient_id) = path.into_inner();
     ensure_member(&state, token.user_id, group_id).await?;
 
-    let rows_affected = sqlx::query(
-        "DELETE FROM ingredients WHERE ingredient_id = $1 AND group_id = $2",
-    )
-    .bind(ingredient_id)
-    .bind(group_id)
-    .execute(&state.db_pool)
-    .await?
-    .rows_affected();
+    let rows_affected =
+        sqlx::query("DELETE FROM ingredients WHERE ingredient_id = $1 AND group_id = $2")
+            .bind(ingredient_id)
+            .bind(group_id)
+            .execute(&state.db_pool)
+            .await?
+            .rows_affected();
 
     if rows_affected == 0 {
         return Err(CustomError::food_not_found("食材不存在"));
@@ -488,5 +478,7 @@ pub async fn sort_ingredients(
     }
 
     IngredientService::update_ingredients_sort(&state.db_pool, &input).await?;
-    Ok(ApiResponse::success(serde_json::json!({ "updated": input.items.len() })))
+    Ok(ApiResponse::success(
+        serde_json::json!({ "updated": input.items.len() }),
+    ))
 }

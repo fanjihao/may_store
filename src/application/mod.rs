@@ -4,7 +4,6 @@
 pub mod couple_space_service; // 情侣空间服务
 pub mod dashboard_service; // 看板服务
 pub mod food_service; // 菜品服务
-pub mod footprint_service; // 足迹服务
 pub mod group_level_service; // 组等级服务
 pub mod notification_service; // 通知服务
 pub mod order_service; // 订单服务

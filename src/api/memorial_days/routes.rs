@@ -16,6 +16,7 @@ use crate::config::AppState;
 use crate::errors::CustomError;
 use crate::middlewares::auth::UserToken;
 use crate::middlewares::require_group::RequireGroup;
+use crate::middlewares::target_group::require_active_target_group_member;
 use crate::models::pagination::{decode_cursor, encode_cursor, CursorPage};
 use crate::utils::response::ApiResponse;
 
@@ -54,12 +55,12 @@ pub struct MemorialDayOut {
     pub name: String,
     pub description: Option<String>,
     pub memorial_date: NaiveDate,
-    pub calendar_type: String,        // SOLAR / LUNAR
+    pub calendar_type: String, // SOLAR / LUNAR
     pub lunar_month: Option<i16>,
     pub lunar_day: Option<i16>,
     pub is_leap_month: bool,
     pub is_default: i16,
-    pub days_until: i64,             // 距离今天还有几天（负数=已过）
+    pub days_until: i64, // 距离今天还有几天（负数=已过）
     pub created_at: chrono::DateTime<chrono::Utc>,
 }
 
@@ -84,13 +85,13 @@ pub struct UnpinResponse {
 #[derive(Debug, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct CreateMemorialDayInput {
-    pub name: String,                  // 1-50 字符
-    pub description: Option<String>,   // <= 500 字符
-    pub memorial_date: NaiveDate,     // 阳历日期
-    pub calendar_type: String,        // SOLAR / LUNAR
-    pub lunar_month: Option<i16>,     // 阴历月（仅 LUNAR）
-    pub lunar_day: Option<i16>,       // 阴历日（仅 LUNAR）
-    pub is_leap_month: Option<bool>,  // 是否闰月（仅 LUNAR）
+    pub name: String,                // 1-50 字符
+    pub description: Option<String>, // <= 500 字符
+    pub memorial_date: NaiveDate,    // 阳历日期
+    pub calendar_type: String,       // SOLAR / LUNAR
+    pub lunar_month: Option<i16>,    // 阴历月（仅 LUNAR）
+    pub lunar_day: Option<i16>,      // 阴历日（仅 LUNAR）
+    pub is_leap_month: Option<bool>, // 是否闰月（仅 LUNAR）
 }
 
 /// 更新纪念日输入
@@ -113,9 +114,9 @@ pub struct UpdateMemorialDayInput {
 #[serde(rename_all = "camelCase")]
 #[into_params(parameter_in = Query)]
 pub struct ListMemorialDaysQuery {
-    pub cursor: Option<String>,         // 上一页响应里的 next_cursor
-    pub limit: Option<i64>,            // 默认 50, 最大 100
-    pub upcoming_days: Option<i64>,    // 只返回 N 天内即将到来的
+    pub cursor: Option<String>,     // 上一页响应里的 next_cursor
+    pub limit: Option<i64>,         // 默认 50, 最大 100
+    pub upcoming_days: Option<i64>, // 只返回 N 天内即将到来的
 }
 
 /// Cursor payload: 编码 (is_default, memorial_date, id) 三元组
@@ -131,7 +132,7 @@ struct MemorialDayCursor {
 #[serde(rename_all = "camelCase")]
 #[into_params(parameter_in = Query)]
 pub struct UpcomingQuery {
-    pub days: Option<i64>,            // 默认 30
+    pub days: Option<i64>, // 默认 30
 }
 
 // ========== 工具函数 ==========
@@ -195,7 +196,9 @@ fn next_solar_occurrence(memorial_date: NaiveDate, today: NaiveDate) -> NaiveDat
     if this_year_date > today {
         this_year_date
     } else {
-        memorial_date.with_year(today.year() + 1).unwrap_or(memorial_date)
+        memorial_date
+            .with_year(today.year() + 1)
+            .unwrap_or(memorial_date)
     }
 }
 
@@ -363,11 +366,15 @@ pub async fn create_memorial_day(
         return Err(CustomError::invalid_parameter("纪念日名称 1-50 字符"));
     }
     if input.calendar_type != "SOLAR" && input.calendar_type != "LUNAR" {
-        return Err(CustomError::invalid_parameter("calendar_type 必须为 SOLAR 或 LUNAR"));
+        return Err(CustomError::invalid_parameter(
+            "calendar_type 必须为 SOLAR 或 LUNAR",
+        ));
     }
     if input.calendar_type == "LUNAR" {
         if input.lunar_month.is_none() || input.lunar_day.is_none() {
-            return Err(CustomError::invalid_parameter("阴历纪念日必须提供 lunar_month 和 lunar_day"));
+            return Err(CustomError::invalid_parameter(
+                "阴历纪念日必须提供 lunar_month 和 lunar_day",
+            ));
         }
     }
 
@@ -469,13 +476,27 @@ pub async fn update_memorial_day(
 
     // 动态更新（仅更新有值的字段）
     let mut updates = Vec::new();
-    if input.name.is_some() { updates.push("name = $3"); }
-    if input.description.is_some() { updates.push("description = $4"); }
-    if input.memorial_date.is_some() { updates.push("memorial_date = $5"); }
-    if input.calendar_type.is_some() { updates.push("calendar_type = $6"); }
-    if input.lunar_month.is_some() { updates.push("lunar_month = $7"); }
-    if input.lunar_day.is_some() { updates.push("lunar_day = $8"); }
-    if input.is_leap_month.is_some() { updates.push("is_leap_month = $9"); }
+    if input.name.is_some() {
+        updates.push("name = $3");
+    }
+    if input.description.is_some() {
+        updates.push("description = $4");
+    }
+    if input.memorial_date.is_some() {
+        updates.push("memorial_date = $5");
+    }
+    if input.calendar_type.is_some() {
+        updates.push("calendar_type = $6");
+    }
+    if input.lunar_month.is_some() {
+        updates.push("lunar_month = $7");
+    }
+    if input.lunar_day.is_some() {
+        updates.push("lunar_day = $8");
+    }
+    if input.is_leap_month.is_some() {
+        updates.push("is_leap_month = $9");
+    }
 
     if updates.is_empty() {
         return Err(CustomError::invalid_parameter("至少更新一个字段"));
@@ -486,18 +507,46 @@ pub async fn update_memorial_day(
         updates.join(", ")
     );
 
-    let mut q = sqlx::query(&sql)
-        .bind(id)
-        .bind(group_id);
-    if let Some(v) = &input.name { q = q.bind(v); } else { q = q.bind(Option::<String>::None); }
-    if let Some(v) = &input.description { q = q.bind(v); } else { q = q.bind(Option::<String>::None); }
-    if let Some(v) = input.memorial_date { q = q.bind(v); } else { q = q.bind(Option::<NaiveDate>::None); }
-    if let Some(v) = &input.calendar_type { q = q.bind(v); } else { q = q.bind(Option::<String>::None); }
-    if let Some(v) = input.lunar_month { q = q.bind(v); } else { q = q.bind(Option::<i16>::None); }
-    if let Some(v) = input.lunar_day { q = q.bind(v); } else { q = q.bind(Option::<i16>::None); }
-    if let Some(v) = input.is_leap_month { q = q.bind(v); } else { q = q.bind(bool::default()); }
+    let mut q = sqlx::query(&sql).bind(id).bind(group_id);
+    if let Some(v) = &input.name {
+        q = q.bind(v);
+    } else {
+        q = q.bind(Option::<String>::None);
+    }
+    if let Some(v) = &input.description {
+        q = q.bind(v);
+    } else {
+        q = q.bind(Option::<String>::None);
+    }
+    if let Some(v) = input.memorial_date {
+        q = q.bind(v);
+    } else {
+        q = q.bind(Option::<NaiveDate>::None);
+    }
+    if let Some(v) = &input.calendar_type {
+        q = q.bind(v);
+    } else {
+        q = q.bind(Option::<String>::None);
+    }
+    if let Some(v) = input.lunar_month {
+        q = q.bind(v);
+    } else {
+        q = q.bind(Option::<i16>::None);
+    }
+    if let Some(v) = input.lunar_day {
+        q = q.bind(v);
+    } else {
+        q = q.bind(Option::<i16>::None);
+    }
+    if let Some(v) = input.is_leap_month {
+        q = q.bind(v);
+    } else {
+        q = q.bind(bool::default());
+    }
 
-    let row = q.fetch_optional(&state.db_pool).await?
+    let row = q
+        .fetch_optional(&state.db_pool)
+        .await?
         .ok_or_else(|| CustomError::resource_not_found("纪念日不存在"))?;
     let today = chrono::Local::now().date_naive();
     Ok(ApiResponse::success(row_to_memorial_out(row, today)))
@@ -597,13 +646,12 @@ pub async fn pin_memorial_day(
     }
 
     // 3) 取回置顶时间（updated_at）作为 pinnedAt 返回
-    let row: (chrono::DateTime<chrono::Utc>,) = sqlx::query_as(
-        "SELECT updated_at FROM memorial_day WHERE id = $1 AND group_id = $2",
-    )
-    .bind(id)
-    .bind(group_id)
-    .fetch_one(&mut *tx)
-    .await?;
+    let row: (chrono::DateTime<chrono::Utc>,) =
+        sqlx::query_as("SELECT updated_at FROM memorial_day WHERE id = $1 AND group_id = $2")
+            .bind(id)
+            .bind(group_id)
+            .fetch_one(&mut *tx)
+            .await?;
 
     tx.commit().await?;
 
@@ -748,18 +796,12 @@ fn row_to_memorial_out(row: sqlx::postgres::PgRow, today: NaiveDate) -> Memorial
     }
 }
 
-async fn verify_group_member(state: &Arc<AppState>, user_id: i64, group_id: i64) -> Result<(), CustomError> {
-    let member: Option<(i64,)> = sqlx::query_as(
-        "SELECT user_id FROM association_group_members WHERE user_id = $1 AND group_id = $2 AND member_status = 'ACTIVE'::group_member_status_enum"
-    )
-    .bind(user_id)
-    .bind(group_id)
-    .fetch_optional(&state.db_pool)
-    .await?;
-    if member.is_none() {
-        return Err(CustomError::permission_denied("不是该组成员"));
-    }
-    Ok(())
+async fn verify_group_member(
+    state: &Arc<AppState>,
+    user_id: i64,
+    group_id: i64,
+) -> Result<(), CustomError> {
+    require_active_target_group_member(&state.db_pool, user_id, group_id).await
 }
 
 #[cfg(test)]
@@ -788,7 +830,10 @@ mod tests {
 
     #[test]
     fn pin_response_optional_pinned_at() {
-        let resp = PinResponse { pinned_id: None, pinned_at: None };
+        let resp = PinResponse {
+            pinned_id: None,
+            pinned_at: None,
+        };
         let json = serde_json::to_string(&resp).unwrap();
         assert_eq!(json, r#"{"pinnedId":null,"pinnedAt":null}"#);
     }
@@ -804,9 +849,8 @@ mod tests {
     fn days_until_solar_future_uses_same_year() {
         let today = date(2026, 6, 19);
         // 纪念日 2026-12-25,今天 6/19 → 用今年,189 天
-        let days = days_until_next_occurrence(
-            date(2025, 12, 25), "SOLAR", None, None, false, today,
-        );
+        let days =
+            days_until_next_occurrence(date(2025, 12, 25), "SOLAR", None, None, false, today);
         assert_eq!(days, 189);
     }
 
@@ -816,9 +860,7 @@ mod tests {
         let today = date(2026, 6, 19);
         // 纪念日 2025-06-10, 今年 6/10 已过 → 算到 2027-06-10
         // 2027-06-10 - 2026-06-19 = 356 天
-        let days = days_until_next_occurrence(
-            date(2025, 6, 10), "SOLAR", None, None, false, today,
-        );
+        let days = days_until_next_occurrence(date(2025, 6, 10), "SOLAR", None, None, false, today);
         assert_eq!(days, 356);
     }
 
@@ -828,9 +870,7 @@ mod tests {
     #[test]
     fn days_until_solar_today_jumps_to_next_year() {
         let today = date(2026, 6, 19);
-        let days = days_until_next_occurrence(
-            date(2024, 6, 19), "SOLAR", None, None, false, today,
-        );
+        let days = days_until_next_occurrence(date(2024, 6, 19), "SOLAR", None, None, false, today);
         assert_eq!(days, 365);
     }
 
@@ -839,9 +879,7 @@ mod tests {
     #[test]
     fn days_until_lunar_mid_autumn_2026() {
         let today = date(2026, 6, 19);
-        let days = days_until_next_occurrence(
-            today, "LUNAR", Some(8), Some(15), false, today,
-        );
+        let days = days_until_next_occurrence(today, "LUNAR", Some(8), Some(15), false, today);
         assert_eq!(days, 98); // 2026-09-25 - 2026-06-19
     }
 
@@ -854,9 +892,7 @@ mod tests {
             .unwrap()
             .to_naive_date();
         let expected = (next_mid_autumn - today).num_days();
-        let days = days_until_next_occurrence(
-            today, "LUNAR", Some(8), Some(15), false, today,
-        );
+        let days = days_until_next_occurrence(today, "LUNAR", Some(8), Some(15), false, today);
         assert_eq!(days, expected);
         assert!(days > 0, "下一个中秋应该在未来,不应是 0 或负数");
     }
@@ -866,9 +902,7 @@ mod tests {
     #[test]
     fn days_until_lunar_invalid_leap_does_not_panic() {
         let today = date(2026, 6, 19);
-        let days = days_until_next_occurrence(
-            today, "LUNAR", Some(6), Some(1), true, today,
-        );
+        let days = days_until_next_occurrence(today, "LUNAR", Some(6), Some(1), true, today);
         // 2026 闰六月不存在 → Err → 试 2027 → 可能 Ok 也可能 Err
         // 不管哪种,函数都不 panic,且返回值 >= 0
         assert!(days >= 0, "闰月 fallback 不应返回负数");
@@ -878,9 +912,7 @@ mod tests {
     #[test]
     fn days_until_lunar_missing_fields_returns_zero() {
         let today = date(2026, 6, 19);
-        let days = days_until_next_occurrence(
-            today, "LUNAR", None, Some(15), false, today,
-        );
+        let days = days_until_next_occurrence(today, "LUNAR", None, Some(15), false, today);
         assert_eq!(days, 0);
     }
 

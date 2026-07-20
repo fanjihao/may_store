@@ -16,6 +16,7 @@ use crate::config::AppState;
 use crate::errors::CustomError;
 use crate::middlewares::auth::UserToken;
 use crate::middlewares::require_group::RequireGroup;
+use crate::middlewares::target_group::require_active_target_group_member;
 use crate::utils::response::ApiResponse;
 
 pub fn configure(cfg: &mut ServiceConfig) {
@@ -46,7 +47,7 @@ impl MarkType {
 #[derive(Debug, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct MarkFoodInput {
-    pub mark_type: MarkType,           // LIKE / NOT_RECOMMEND
+    pub mark_type: MarkType, // LIKE / NOT_RECOMMEND
 }
 
 #[derive(Debug, Serialize, ToSchema)]
@@ -79,6 +80,7 @@ pub async fn mark_food(
 ) -> Result<impl Responder, CustomError> {
     let (group_id, food_id) = path.into_inner();
     let input = body.into_inner();
+    require_active_target_group_member(&state.db_pool, token.user_id, group_id).await?;
 
     // 校验菜品存在
     let food_exists: bool = sqlx::query_scalar(
@@ -91,18 +93,6 @@ pub async fn mark_food(
 
     if !food_exists {
         return Err(CustomError::food_not_found("菜品不存在"));
-    }
-
-    // 校验成员
-    let member: Option<(i64,)> = sqlx::query_as(
-        "SELECT user_id FROM association_group_members WHERE user_id = $1 AND group_id = $2 AND member_status = 'ACTIVE'::group_member_status_enum"
-    )
-    .bind(token.user_id)
-    .bind(group_id)
-    .fetch_optional(&state.db_pool)
-    .await?;
-    if member.is_none() {
-        return Err(CustomError::permission_denied("不是该组成员"));
     }
 
     // 删除旧标记（同用户同菜品只能一个标记）
@@ -150,7 +140,8 @@ pub async fn unmark_food(
     _require: RequireGroup,
     path: Path<(i64, i64)>,
 ) -> Result<impl Responder, CustomError> {
-    let (_group_id, food_id) = path.into_inner();
+    let (group_id, food_id) = path.into_inner();
+    require_active_target_group_member(&state.db_pool, token.user_id, group_id).await?;
 
     let rows = sqlx::query("DELETE FROM user_food_mark WHERE user_id = $1 AND food_id = $2")
         .bind(token.user_id)
@@ -179,7 +170,8 @@ pub async fn get_food_mark(
     _require: RequireGroup,
     path: Path<(i64, i64)>,
 ) -> Result<impl Responder, CustomError> {
-    let (_group_id, food_id) = path.into_inner();
+    let (group_id, food_id) = path.into_inner();
+    require_active_target_group_member(&state.db_pool, token.user_id, group_id).await?;
 
     let row = sqlx::query(
         "SELECT mark_type::text, created_at FROM user_food_mark WHERE user_id = $1 AND food_id = $2"

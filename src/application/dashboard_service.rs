@@ -144,7 +144,7 @@ impl DashboardService {
              LEFT JOIN order_items oi ON o.order_id = oi.order_id
              JOIN foods f ON oi.food_id = f.food_id \
              WHERE o.group_id = $1 AND o.status IN ('COMPLETED'::order_status_enum, 'CONFIRMED_COMPLETED'::order_status_enum) \
-             GROUP BY f.food_id, f.name \
+             GROUP BY f.food_id, f.food_name \
              ORDER BY order_count DESC \
              LIMIT 10",
         )
@@ -156,7 +156,7 @@ impl DashboardService {
             .into_iter()
             .map(|r| FoodRanking {
                 food_id: r.get("food_id"),
-                food_name: r.get("name"),
+                food_name: r.get("food_name"),
                 order_count: r.get("order_count"),
             })
             .collect();
@@ -315,7 +315,7 @@ impl DashboardService {
             .map(|r| {
                 serde_json::json!({
                     "foodId": r.get::<i64, _>("food_id"),
-                    "name": r.get::<String, _>("name"),
+                    "name": r.get::<String, _>("food_name"),
                     "images": r.get::<String, _>("images"),
                     "orderCount": r.get::<i64, _>("order_count"),
                 })

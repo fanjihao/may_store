@@ -12,7 +12,7 @@ use utoipa::ToSchema;
 
 use crate::config::AppState;
 use crate::errors::CustomError;
-use crate::middlewares::auth::UserToken;
+use crate::middlewares::auth::{ensure_active_account, UserToken, ACCOUNT_UNAVAILABLE_MESSAGE};
 use crate::middlewares::jwt;
 use crate::utils::response::ApiResponse;
 
@@ -73,11 +73,14 @@ pub async fn refresh_token(
     .await?;
     let user_id = old.user_id()?;
 
-    // 2. 签发新对
+    // 2. refresh 不能仅信任 JWT/Redis；签发前直接查 DB 确认账号仍为 ACTIVE
+    ensure_active_account(&state, user_id).await?;
+
+    // 3. 签发新对
     let (access_token, _) = jwt::issue_access(user_id, &state.jwt_secret)?;
     let (refresh_token, _) = jwt::issue_refresh(user_id, &state.jwt_secret)?;
 
-    // 3. 旋转策略:旧 refresh 立即拉黑,防止重复使用(RFC 8725 §2.1)
+    // 4. 旋转策略:旧 refresh 立即拉黑,防止重复使用(RFC 8725 §2.1)
     jwt::blacklist_jti(&old.jti, old.exp, &state.redis_cache).await?;
 
     Ok(ApiResponse::success(RefreshTokenResponse {
@@ -122,7 +125,7 @@ pub async fn logout(
     jwt::blacklist_jti(&token.jti, token.exp, redis).await?;
 
     // 2. 可选:全设备撤销
-    //    写入 user_revoked_at:{user_id} = now;此后所有 iat < now 的 token 都会被 jwt::verify 拒绝
+    //    写入 user_revoked_at:{user_id} = now;此后所有 iat <= now 的 token 都会被 jwt::verify 拒绝
     let logout_all = input.logout_all.unwrap_or(false);
     if logout_all {
         jwt::set_user_revoked_at(token.user_id, redis).await?;
@@ -206,14 +209,23 @@ pub async fn wechat_login(
     let db = &state.db_pool;
 
     // 查找已存在用户
-    let existing_user: Option<(i64, String, Option<String>, Option<String>)> =
-        sqlx::query_as("SELECT user_id, open_id, nick_name, avatar FROM users WHERE open_id = $1")
-            .bind(&openid)
-            .fetch_optional(db)
-            .await?;
+    let existing_user: Option<(i64, String, Option<String>, Option<String>, String)> =
+        sqlx::query_as(
+            "SELECT user_id, open_id, nick_name, avatar, status::text \
+             FROM users WHERE open_id = $1",
+        )
+        .bind(&openid)
+        .fetch_optional(db)
+        .await?;
 
     let is_new_user = existing_user.is_none();
-    let (user_id, nickname, avatar_url) = if let Some((uid, _, nick, ava)) = existing_user {
+    let (user_id, nickname, avatar_url) = if let Some((uid, _, nick, ava, status)) = existing_user {
+        if status != "ACTIVE" {
+            // 不向客户端区分封禁、注销等内部账号状态。
+            return Err(CustomError::auth_account_banned(
+                ACCOUNT_UNAVAILABLE_MESSAGE,
+            ));
+        }
         (uid, nick, ava)
     } else {
         // 创建新用户

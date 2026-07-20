@@ -15,6 +15,7 @@ use crate::config::AppState;
 use crate::errors::CustomError;
 use crate::middlewares::auth::UserToken;
 use crate::middlewares::require_group::RequireGroup;
+use crate::middlewares::target_group::require_active_target_group_member;
 use crate::utils::response::ApiResponse;
 
 pub fn configure(cfg: &mut ServiceConfig) {
@@ -184,20 +185,7 @@ async fn ensure_member(
     user_id: i64,
     group_id: i64,
 ) -> Result<(), CustomError> {
-    let ok: bool = sqlx::query_scalar(
-        r#"SELECT EXISTS(
-             SELECT 1 FROM association_group_members
-             WHERE user_id = $1 AND group_id = $2 AND member_status = 'ACTIVE'::group_member_status_enum
-           )"#,
-    )
-    .bind(user_id)
-    .bind(group_id)
-    .fetch_one(&state.db_pool)
-    .await?;
-    if !ok {
-        return Err(CustomError::permission_denied("不是该组的活跃成员"));
-    }
-    Ok(())
+    require_active_target_group_member(&state.db_pool, user_id, group_id).await
 }
 
 /// 把 DB 的 food_status + is_del 映射为 API 层 status 字符串
@@ -312,7 +300,8 @@ pub async fn create_food(
     }
 
     let food_id = idgenerator::IdInstance::next_id();
-    let images_json = serde_json::to_value(input.images.unwrap_or_default()).unwrap_or(serde_json::json!([]));
+    let images_json =
+        serde_json::to_value(input.images.unwrap_or_default()).unwrap_or(serde_json::json!([]));
     let ingredients_text = input
         .ingredients
         .as_ref()
@@ -384,10 +373,7 @@ pub async fn list_foods(
     ensure_member(&state, token.user_id, group_id).await?;
 
     let limit = q.limit.unwrap_or(20).clamp(1, 100);
-    let after_food_id: Option<i64> = q
-        .cursor
-        .as_deref()
-        .and_then(|s| base64_decode_cursor(s));
+    let after_food_id: Option<i64> = q.cursor.as_deref().and_then(|s| base64_decode_cursor(s));
 
     // 仅看"我的最爱"时强制 status=ACTIVE（覆盖请求里的 status 参数）；
     // 不传或 false → 按用户传的 status 走原逻辑
@@ -402,12 +388,7 @@ pub async fn list_foods(
             "ACTIVE" => (Some("NORMAL"), false),
             "AUDITING" => (Some("AUDITING"), false),
             "REJECTED" => (Some("REJECTED"), false),
-            other => {
-                return Err(CustomError::BadRequest(format!(
-                    "未知 status: {}",
-                    other
-                )))
-            }
+            other => return Err(CustomError::BadRequest(format!("未知 status: {}", other))),
         }
     };
 
@@ -619,13 +600,12 @@ pub async fn update_food(
     ensure_member(&state, token.user_id, group_id).await?;
 
     // 检查菜品归属 + 权限(仅创建人或 Seller 角色;此处简化为仅创建人)
-    let row: Option<(i64, i16)> = sqlx::query_as(
-        "SELECT created_by, is_del FROM foods WHERE food_id = $1 AND group_id = $2",
-    )
-    .bind(food_id)
-    .bind(group_id)
-    .fetch_optional(&state.db_pool)
-    .await?;
+    let row: Option<(i64, i16)> =
+        sqlx::query_as("SELECT created_by, is_del FROM foods WHERE food_id = $1 AND group_id = $2")
+            .bind(food_id)
+            .bind(group_id)
+            .fetch_optional(&state.db_pool)
+            .await?;
     let (created_by, is_del) = row.ok_or_else(|| CustomError::food_not_found("菜品不存在"))?;
     if is_del == 1 {
         return Err(CustomError::food_not_found("菜品已删除"));
@@ -740,13 +720,12 @@ pub async fn delete_food(
     ensure_member(&state, token.user_id, group_id).await?;
 
     // 检查归属
-    let row: Option<(i64, i16)> = sqlx::query_as(
-        "SELECT created_by, is_del FROM foods WHERE food_id = $1 AND group_id = $2",
-    )
-    .bind(food_id)
-    .bind(group_id)
-    .fetch_optional(&state.db_pool)
-    .await?;
+    let row: Option<(i64, i16)> =
+        sqlx::query_as("SELECT created_by, is_del FROM foods WHERE food_id = $1 AND group_id = $2")
+            .bind(food_id)
+            .bind(group_id)
+            .fetch_optional(&state.db_pool)
+            .await?;
     let (created_by, is_del) = row.ok_or_else(|| CustomError::food_not_found("菜品不存在"))?;
     if is_del == 1 {
         return Err(CustomError::food_not_found("菜品已删除"));
@@ -777,7 +756,9 @@ pub async fn delete_food(
         .execute(&state.db_pool)
         .await?;
 
-    Ok(ApiResponse::success(serde_json::json!({ "food_id": food_id })))
+    Ok(ApiResponse::success(
+        serde_json::json!({ "food_id": food_id }),
+    ))
 }
 
 // ========== 5.6 POST /api/groups/{group_id}/foods/{food_id}/hide —— 切换隐藏 ==========
@@ -808,13 +789,12 @@ pub async fn hide_food(
     let (group_id, food_id) = path.into_inner();
     ensure_member(&state, token.user_id, group_id).await?;
 
-    let row: Option<(i64, i16)> = sqlx::query_as(
-        "SELECT created_by, is_del FROM foods WHERE food_id = $1 AND group_id = $2",
-    )
-    .bind(food_id)
-    .bind(group_id)
-    .fetch_optional(&state.db_pool)
-    .await?;
+    let row: Option<(i64, i16)> =
+        sqlx::query_as("SELECT created_by, is_del FROM foods WHERE food_id = $1 AND group_id = $2")
+            .bind(food_id)
+            .bind(group_id)
+            .fetch_optional(&state.db_pool)
+            .await?;
     let (created_by, is_del) = row.ok_or_else(|| CustomError::food_not_found("菜品不存在"))?;
     if is_del == 1 {
         return Err(CustomError::food_not_found("菜品已删除"));
@@ -844,23 +824,22 @@ mod tests {
 
     #[test]
     fn food_list_query_deserializes_is_favorite_true() {
-        let q: FoodListQuery = serde_urlencoded::from_str("isFavorite=true&limit=10")
-            .expect("must deserialize");
+        let q: FoodListQuery =
+            serde_urlencoded::from_str("isFavorite=true&limit=10").expect("must deserialize");
         assert_eq!(q.is_favorite, Some(true));
         assert_eq!(q.limit, Some(10));
     }
 
     #[test]
     fn food_list_query_deserializes_is_favorite_false() {
-        let q: FoodListQuery = serde_urlencoded::from_str("isFavorite=false")
-            .expect("must deserialize");
+        let q: FoodListQuery =
+            serde_urlencoded::from_str("isFavorite=false").expect("must deserialize");
         assert_eq!(q.is_favorite, Some(false));
     }
 
     #[test]
     fn food_list_query_omits_is_favorite_when_absent() {
-        let q: FoodListQuery = serde_urlencoded::from_str("limit=20")
-            .expect("must deserialize");
+        let q: FoodListQuery = serde_urlencoded::from_str("limit=20").expect("must deserialize");
         assert_eq!(q.is_favorite, None);
         assert_eq!(q.limit, Some(20));
     }

@@ -2,8 +2,8 @@
 // FSD.latest.md compliant - 用户基础信息
 
 use ntex::web::{self, ServiceConfig};
-use std::sync::Arc;
 use sqlx::Row;
+use std::sync::Arc;
 
 use crate::config::AppState;
 
@@ -18,17 +18,14 @@ pub fn configure(cfg: &mut ServiceConfig) {
             .route("/groups", web::get().to(get_user_groups))
             .route("/delete", web::post().to(delete_account))
             .route("/today-todos", web::get().to(today_todos::get_today_todos))
-            .route(
-                "/points-config",
-                web::get().to(get_points_config),
-            ),
+            .route("/points-config", web::get().to(get_points_config)),
     );
 }
 
 // ========== 用户 Handler 函数 ==========
 
 use ntex::web::{
-    types::{Json, Query, State},
+    types::{Json, State},
     Responder,
 };
 
@@ -37,12 +34,9 @@ use utoipa::ToSchema;
 
 use crate::{
     application::user_service::UserService,
-    domain::user::{
-        IsRegisterQuery, IsRegisterResponse, LoginInput, LoginResponse, ProfileUpdateInput,
-        RegisterInput, UserInfoResponse, UserPublic,
-    },
+    domain::user::{ProfileUpdateInput, UserPublic},
     errors::CustomError,
-    middlewares::auth::UserToken,
+    middlewares::{auth::UserToken, jwt},
     utils::response::ApiResponse,
 };
 
@@ -175,7 +169,9 @@ pub async fn get_user_groups(
             member_count: r.get::<i64, _>("member_count") as i32,
             diamond: r.get::<i32, _>("diamond") as i64,
             level: r.get::<i32, _>("level"),
-            joined_at: r.get::<chrono::DateTime<chrono::Utc>, _>("created_at").to_rfc3339(),
+            joined_at: r
+                .get::<chrono::DateTime<chrono::Utc>, _>("created_at")
+                .to_rfc3339(),
         })
         .collect();
 
@@ -234,6 +230,16 @@ pub async fn delete_account(
     .execute(db)
     .await?;
 
+    // 状态落库后立即撤销该用户的全部旧 token，并清除可能仍含旧资料的缓存。
+    // 两个 Redis 操作都要尝试，避免其中一个失败时跳过另一个。
+    let revoke_result = jwt::set_user_revoked_at(token.user_id, &state.redis_cache).await;
+    let cache_result = state
+        .redis_cache
+        .delete_user(&token.user_id.to_string())
+        .await;
+    revoke_result?;
+    cache_result?;
+
     Ok(ApiResponse::success(DeleteAccountResponse {
         deleted_at: deleted_at.to_rfc3339(),
         recovery_deadline: recovery_deadline.to_rfc3339(),
@@ -278,11 +284,7 @@ pub async fn get_points_config(
 ) -> Result<impl Responder, CustomError> {
     let db = &state.db_pool;
 
-    async fn read_int(
-        db: &sqlx::PgPool,
-        key: &str,
-        default: i32,
-    ) -> i32 {
+    async fn read_int(db: &sqlx::PgPool, key: &str, default: i32) -> i32 {
         sqlx::query_as::<_, (Option<serde_json::Value>,)>(
             "SELECT config_value FROM global_configs WHERE config_key = $1",
         )
