@@ -84,6 +84,7 @@ impl Modify for SecurityAddon {
         // ==================== Tags (菜品标签 §24.4) ====================
         crate::api::tags::routes::list_tags,
         crate::api::tags::routes::create_tag,
+        crate::api::tags::routes::sort_tags,
         crate::api::tags::routes::update_tag,
         crate::api::tags::routes::delete_tag,
         // ==================== Ingredients (食材 §24.5) ====================
@@ -257,6 +258,8 @@ impl Modify for SecurityAddon {
             crate::api::tags::routes::TagOut,
             crate::api::tags::routes::CreateTagInput,
             crate::api::tags::routes::UpdateTagInput,
+            crate::domain::foods::tag::BatchTagSortInput,
+            crate::domain::foods::tag::TagSortItem,
             // -- Ingredients (食材 §24.5) --
             crate::domain::foods::ingredient::IngredientOut,
             crate::domain::foods::ingredient::IngredientCreateInput,

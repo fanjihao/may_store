@@ -13,6 +13,7 @@ use std::sync::Arc;
 use utoipa::ToSchema;
 
 use crate::config::AppState;
+use crate::domain::foods::tag::BatchTagSortInput;
 use crate::errors::CustomError;
 use crate::middlewares::auth::UserToken;
 use crate::middlewares::require_group::RequireGroup;
@@ -26,6 +27,7 @@ pub fn configure(cfg: &mut ServiceConfig) {
             .route(web::get().to(list_tags))
             .route(web::post().to(create_tag)),
     );
+    cfg.service(web::resource("/api/groups/{group_id}/tags/sort").route(web::post().to(sort_tags)));
     cfg.service(
         web::resource("/api/groups/{group_id}/tags/{tag_id}")
             .route(web::patch().to(update_tag))
@@ -257,6 +259,79 @@ pub async fn create_tag(
         food_count: today_count,
         created_at: row.get("created_at"),
     }))
+}
+
+/// 批量更新组内标签排序
+#[utoipa::path(
+    post,
+    path = "/api/groups/{group_id}/tags/sort",
+    tag = "菜品标签 (§24.4)",
+    params(("group_id" = i64, Path, description = "组 ID")),
+    request_body = BatchTagSortInput,
+    responses(
+        (status = 200, description = "排序成功"),
+        (status = 400, description = "排序参数非法"),
+        (status = 403, description = "无权访问该组"),
+        (status = 404, description = "包含非本组标签")
+    ),
+    security(("bearer_auth" = []))
+)]
+pub async fn sort_tags(
+    state: State<Arc<AppState>>,
+    token: UserToken,
+    _require: RequireGroup,
+    path: Path<i64>,
+    body: Json<BatchTagSortInput>,
+) -> Result<impl Responder, CustomError> {
+    let group_id = path.into_inner();
+    let input = body.into_inner();
+    require_active_target_group_member(&state.db_pool, token.user_id, group_id).await?;
+
+    if input.sorts.len() > 200 {
+        return Err(CustomError::invalid_parameter("单次最多排序 200 个标签"));
+    }
+    if input.sorts.iter().any(|item| item.sort < 0) {
+        return Err(CustomError::invalid_parameter("sort 不能为负数"));
+    }
+
+    let ids: Vec<i64> = input.sorts.iter().map(|item| item.id).collect();
+    let mut unique_ids = ids.clone();
+    unique_ids.sort_unstable();
+    unique_ids.dedup();
+    if unique_ids.len() != ids.len() {
+        return Err(CustomError::invalid_parameter("标签 ID 不能重复"));
+    }
+
+    if !ids.is_empty() {
+        let owned_count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM tags WHERE group_id = $1 AND tag_id = ANY($2)",
+        )
+        .bind(group_id)
+        .bind(&ids)
+        .fetch_one(&state.db_pool)
+        .await?;
+        if owned_count as usize != ids.len() {
+            return Err(CustomError::resource_not_found(
+                "部分标签不存在或不属于本组",
+            ));
+        }
+    }
+
+    let updated = input.sorts.len();
+    let mut tx = state.db_pool.begin().await?;
+    for item in input.sorts {
+        sqlx::query("UPDATE tags SET sort = $3 WHERE group_id = $1 AND tag_id = $2")
+            .bind(group_id)
+            .bind(item.id)
+            .bind(item.sort)
+            .execute(&mut *tx)
+            .await?;
+    }
+    tx.commit().await?;
+
+    Ok(ApiResponse::success(
+        serde_json::json!({ "updated": updated }),
+    ))
 }
 
 /// 更新标签
