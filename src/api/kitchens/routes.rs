@@ -122,6 +122,15 @@ fn validate_guest_order_input(input: &GuestOrderInput) -> Result<(), CustomError
     Ok(())
 }
 
+fn validate_guest_order_actor(is_target_group_member: bool) -> Result<(), CustomError> {
+    if is_target_group_member {
+        return Err(CustomError::user_already_in_group(
+            "你已是该厨房成员，请使用普通清单",
+        ));
+    }
+    Ok(())
+}
+
 /// 创建做客邀请
 /// POST /api/groups/{group_id}/guest-invitations
 #[utoipa::path(
@@ -240,10 +249,12 @@ async fn create_guest_invitation(
 pub struct AccessKitchenResponse {
     pub group_id: i64,
     pub group_name: String,
+    pub group_avatar: Option<String>,
     pub buyer_nick_name: Option<String>,
     pub seller_nick_name: Option<String>,
     pub buyer_avatar: Option<String>,
     pub seller_avatar: Option<String>,
+    pub tags: Vec<TagRef>,
     pub invite_code: String,
     pub expires_at: chrono::DateTime<chrono::Utc>,
     pub status: String,
@@ -277,7 +288,7 @@ async fn access_kitchen(
     let row = sqlx::query(
         r#"SELECT gi.group_id, gi.expires_at, gi.max_uses, gi.used_count,
                   gi.status::text AS invite_status,
-                  COALESCE(g.group_name, '主人家厨房') AS group_name,
+                  COALESCE(g.group_name, '主人家厨房') AS group_name, g.group_avatar,
                   buyer.nick_name AS buyer_nick, buyer.avatar AS buyer_avatar,
                   seller.nick_name AS seller_nick, seller.avatar AS seller_avatar
            FROM guest_invitations gi
@@ -307,17 +318,38 @@ async fn access_kitchen(
         InvitationValidityError::Exhausted => CustomError::BadRequest("邀请码已用完".into()),
     })?;
 
-    Ok(ApiResponse::success(serde_json::json!({
-        "groupId": row.get::<i64, _>("group_id"),
-        "groupName": row.get::<String, _>("group_name"),
-        "buyerNickName": row.get::<Option<String>, _>("buyer_nick"),
-        "sellerNickName": row.get::<Option<String>, _>("seller_nick"),
-        "buyerAvatar": row.get::<Option<String>, _>("buyer_avatar"),
-        "sellerAvatar": row.get::<Option<String>, _>("seller_avatar"),
-        "inviteCode": code,
-        "expiresAt": expires_at,
-        "status": "ok"
-    })))
+    let group_id = row.get::<i64, _>("group_id");
+    let tag_rows = sqlx::query(
+        r#"SELECT tag_id, tag_name, icon
+           FROM tags
+           WHERE group_id = $1 OR group_id IS NULL
+           ORDER BY sort ASC, tag_id ASC"#,
+    )
+    .bind(group_id)
+    .fetch_all(db)
+    .await?;
+    let tags = tag_rows
+        .into_iter()
+        .map(|tag| TagRef {
+            tag_id: tag.get("tag_id"),
+            name: tag.get("tag_name"),
+            icon: tag.try_get("icon").ok().flatten(),
+        })
+        .collect();
+
+    Ok(ApiResponse::success(AccessKitchenResponse {
+        group_id,
+        group_name: row.get("group_name"),
+        group_avatar: row.try_get("group_avatar").ok().flatten(),
+        buyer_nick_name: row.try_get("buyer_nick").ok().flatten(),
+        seller_nick_name: row.try_get("seller_nick").ok().flatten(),
+        buyer_avatar: row.try_get("buyer_avatar").ok().flatten(),
+        seller_avatar: row.try_get("seller_avatar").ok().flatten(),
+        tags,
+        invite_code: code,
+        expires_at,
+        status: "ok".to_string(),
+    }))
 }
 
 /// 厨房菜品项
@@ -457,7 +489,8 @@ pub struct CreateGuestOrderResponse {
         (status = 200, description = "创建成功", body = CreateGuestOrderResponse),
         (status = 400, description = "订单内容或菜品无效"),
         (status = 401, description = "未登录"),
-        (status = 404, description = "邀请码无效或已过期")
+        (status = 404, description = "邀请码无效或已过期"),
+        (status = 409, description = "当前用户已是目标厨房成员")
     ),
     security(("bearer_auth" = []))
 )]
@@ -493,6 +526,23 @@ async fn create_guest_order(
     .ok_or_else(|| CustomError::NotFound("邀请码无效或已过期".into()))?;
 
     let (group_id, invite_id) = invite_row;
+
+    // 目标厨房自己的成员不能通过做客链路创建 GUEST 清单；
+    // 用户属于其他厨房不受影响，仍可作为外部访客做客。
+    let is_target_group_member: bool = sqlx::query_scalar(
+        r#"SELECT EXISTS(
+               SELECT 1
+               FROM association_group_members
+               WHERE group_id = $1
+                 AND user_id = $2
+                 AND member_status = 'ACTIVE'::group_member_status_enum
+           )"#,
+    )
+    .bind(group_id)
+    .bind(token.user_id)
+    .fetch_one(&mut *tx)
+    .await?;
+    validate_guest_order_actor(is_target_group_member)?;
 
     // assignee 必须是目标组当前 ACTIVE 的 RECEIVING 成员，并与 group.seller_user_id 一致。
     let assignee_id: i64 = sqlx::query_scalar(
@@ -738,5 +788,12 @@ mod tests {
         let mut empty = valid_order_input();
         empty.items.clear();
         assert!(validate_guest_order_input(&empty).is_err());
+    }
+
+    #[test]
+    fn target_kitchen_members_cannot_create_guest_orders() {
+        assert!(validate_guest_order_actor(false).is_ok());
+        let error = validate_guest_order_actor(true).unwrap_err();
+        assert_eq!(error.fsd_code().as_str(), "USER_ALREADY_IN_GROUP");
     }
 }
