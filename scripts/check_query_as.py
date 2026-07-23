@@ -18,6 +18,13 @@ import sys
 from pathlib import Path
 from collections import defaultdict
 
+# Windows 的默认控制台编码可能是 GBK；测试通过管道捕获输出时，
+# emoji 会触发 UnicodeEncodeError。统一输出 UTF-8，保证脚本跨平台运行。
+if hasattr(sys.stdout, 'reconfigure'):
+    sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+if hasattr(sys.stderr, 'reconfigure'):
+    sys.stderr.reconfigure(encoding='utf-8', errors='replace')
+
 ROOT = Path(__file__).resolve().parent.parent
 
 # ============ 1. 找结构体定义 + #[sqlx(rename)] ============
