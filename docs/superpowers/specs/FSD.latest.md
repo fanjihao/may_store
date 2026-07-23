@@ -397,7 +397,7 @@
 | EX-10    | 心愿状态不允许操作                  | 错误码 `WISH_STATUS_INVALID`                    |
 | EX-11    | 心愿未 FINISHED 即尝试质量评价      | 错误码 `WISH_NOT_FINISHED`                      |
 | EX-12    | 退出前仍有未结清订单/心愿/冻结     | 错误码 `GROUP_EXIT_SETTLEMENT_REQUIRED`         |
-| EX-13    | 上传文件 > 5MB                     | 错误码 `UPLOAD_SIZE_EXCEEDED`                   |
+| EX-13    | 上传文件 > 20MB                    | 错误码 `UPLOAD_SIZE_EXCEEDED`                   |
 | EX-14    | 上传类型非 JPEG/PNG/GIF            | 错误码 `UPLOAD_TYPE_NOT_ALLOWED`                |
 | EX-15    | 图片/文字内容违规                  | 错误码 `UPLOAD_CONTENT_REJECTED`                |
 | EX-16    | 重复 idempotency_key 内容冲突       | 错误码 `IDEMPOTENCY_CONFLICT`                   |
@@ -2010,7 +2010,7 @@ API 设计文档分三部分，保存在 `docs/superpowers/specs/` 目录下：
 | 方法     | 路径                                                          | 说明                                          |
 | -------- | ------------------------------------------------------------- | --------------------------------------------- |
 | `POST`   | `/api/uploads/token`                                          | 申请七牛 upload token（单文件）               |
-| `POST`   | `/api/uploads/tokens`                                         | 批量申请七牛 upload token（≤9 个/20MB）       |
+| `POST`   | `/api/uploads/tokens`                                         | 批量申请七牛 upload token（≤9 个/100MB）      |
 | `POST`   | `/api/uploads/confirm`                                        | 确认上传完成（注册 file_key + 触发内容审核）  |
 | `DELETE` | `/api/uploads/{file_key}`                                     | 删除上传文件（同步七牛删除 + 软删除记录）    |
 
@@ -2086,7 +2086,7 @@ API 设计文档分三部分，保存在 `docs/superpowers/specs/` 目录下：
 | **Sign-in（1）**                    |      |                                                  |
 | `SIGN_IN_ALREADY_DONE`              | 400  | 今天已经签到过了                                 |
 | **Upload（5）**                     |      |                                                  |
-| `UPLOAD_SIZE_EXCEEDED`              | 413  | 文件大小超出限制（最大 5MB）                     |
+| `UPLOAD_SIZE_EXCEEDED`              | 413  | 文件大小超出限制（单张最大 20MB）                 |
 | `UPLOAD_TYPE_NOT_ALLOWED`           | 415  | 不支持的文件类型                                 |
 | `UPLOAD_TOKEN_INVALID`              | 422  | 七牛 upload token 颁发失败或失效                  |
 | `UPLOAD_CONTENT_REJECTED`           | 422  | 上传内容审核未通过                               |
@@ -2567,9 +2567,9 @@ API 设计文档分三部分，保存在 `docs/superpowers/specs/` 目录下：
 
 #### 16.3.4 文件约束
 
-- **支持类型**：JPEG / PNG / GIF 三种 MIME（业务后端预校验）。
-- **单文件大小**：最大 5 MB（5,242,880 字节）。
-- **批量上传**：单次最多 9 个文件，总大小不超过 20 MB。
+- **支持类型**：JPEG / PNG / GIF / WebP（业务后端预校验）。
+- **单文件大小**：最大 20 MB（20,971,520 字节）。
+- **批量上传**：单次最多 9 个文件，总大小不超过 100 MB。
 - **file_key 命名规则**：`{business_ref_type}/{yyyy}/{mm}/{dd}/{uuid}.{ext}`。
   - 例：`food/2026/06/03/abc123def456.jpg`
   - 例：`footprint/2026/06/03/xyz789.jpg`
@@ -2588,8 +2588,8 @@ token 字符串（Base64 编码的 JSON）包含：
   "returnBody": "{\"key\":\"$(key)\",\"hash\":\"$(etag)\",\"size\":$(fsize),\"mimeType\":\"$(mimeType)\"}",
   "insertOnly": 1,
   "detectMime": 1,
-  "mimeLimit": "image/jpeg;image/png;image/gif",
-  "fsizeLimit": 5242880,
+  "mimeLimit": "image/jpeg;image/png;image/gif;image/webp",
+  "fsizeLimit": 20971520,
   "saveKey": "uploads/food/2026/06/03/abc123.jpg",
   "callbackUrl": "https://api.example.com/api/uploads/qiniu-callback",
   "callbackBody": "{\"file_key\":\"$(key)\",\"hash\":\"$(etag)\",\"user_id\":$(x:user_id)}",
@@ -2713,7 +2713,7 @@ const subscription = observable.subscribe({
 
 | 错误码                     | 触发条件                       |
 | -------------------------- | ------------------------------ |
-| `UPLOAD_SIZE_EXCEEDED`     | size > 5MB                     |
+| `UPLOAD_SIZE_EXCEEDED`     | size > 20MB                    |
 | `UPLOAD_TYPE_NOT_ALLOWED`  | MIME 非 JPEG/PNG/GIF           |
 | `UPLOAD_TOKEN_INVALID`     | 七牛 token 校验失败            |
 | `UPLOAD_CONTENT_REJECTED`  | 内容安全审核未通过             |
@@ -3206,7 +3206,7 @@ src/
 - §15.7 UI/UX 规范（设计语言 + 11 个关键页面 + 交互规范）。
 - §15.8 客户端缓存策略（4 级缓存 + 一致性）。
 - §15.9 后台管理端 UI 规范（5 个关键模块 + 快捷键）。
-- §16.3 上传业务规则（5MB / JPEG/PNG/GIF / 9 张 20MB / 30 分钟预签名）。
+- §16.3 上传业务规则（单张 20MB / JPEG/PNG/GIF/WebP / 9 张 100MB / 30 分钟预签名）。
 - §17.5 故障应急 Runbook（4 级故障 + 5 类常见故障 + 通信矩阵）。
 - §17.6 数据迁移与回滚（迁移原则 + 工具 + 预案 + 检查清单）。
 - §17.7 灰度策略细则（5 个阶段 + 回滚决策 + Feature Flag）。
@@ -3251,7 +3251,7 @@ src/
 - §16.3.1 核心原则（业务后端不接收文件流）
 - §16.3.2 整体流程（token 申请 → 七牛直传 → confirm）
 - §16.3.3 七牛配置（AccessKey/SecretKey/Bucket/Region/Host/CDN）
-- §16.3.4 文件约束（5MB/JPEG/PNG/GIF/file_key 命名规则）
+- §16.3.4 文件约束（20MB/JPEG/PNG/GIF/WebP/file_key 命名规则）
 - §16.3.5 七牛 Upload Token 内容（scope/deadline/returnBody/mimeLimit/fsizeLimit/callback）
 - §16.3.6 业务后端 /api/uploads/token 接口
 - §16.3.7 前端上传示例（七牛 JS SDK）

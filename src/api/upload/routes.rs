@@ -160,9 +160,9 @@ pub struct DeleteFileResponse {
 // ========== 工具函数 ==========
 
 const ALLOWED_MIME: &[&str] = &["image/jpeg", "image/png", "image/gif", "image/webp"];
-const MAX_FILE_SIZE: i64 = 5 * 1024 * 1024; // 5MB
+const MAX_FILE_SIZE: i64 = 20 * 1024 * 1024; // 20MB
 const MAX_BATCH_FILES: usize = 9;
-const MAX_BATCH_TOTAL_SIZE: i64 = 20 * 1024 * 1024; // 20MB
+const MAX_BATCH_TOTAL_SIZE: i64 = 100 * 1024 * 1024; // 100MB
 
 /// 校验 MIME 类型
 fn validate_mime(content_type: &str) -> Result<(), CustomError> {
@@ -182,7 +182,7 @@ fn validate_size(size: i64) -> Result<(), CustomError> {
     }
     if size > MAX_FILE_SIZE {
         return Err(CustomError::upload_size_exceeded(format!(
-            "文件大小 {} 超过 5MB 上限",
+            "文件大小 {} 超过 20MB 上限",
             size
         )));
     }
@@ -537,7 +537,7 @@ pub async fn get_upload_tokens(
     let total_size: i64 = input.files.iter().map(|f| f.size).sum();
     if total_size > MAX_BATCH_TOTAL_SIZE {
         return Err(CustomError::upload_size_exceeded(format!(
-            "总大小 {} 超过 20MB 上限",
+            "总大小 {} 超过 100MB 上限",
             total_size
         )));
     }
@@ -795,6 +795,19 @@ mod tests {
         assert!(matches!(
             validate_qiniu_object("  ", 42, &object),
             Err(CustomError::BadRequest(_))
+        ));
+    }
+
+    #[test]
+    fn upload_size_accepts_20mb_inclusive_boundary() {
+        assert!(validate_size(20 * 1024 * 1024).is_ok());
+    }
+
+    #[test]
+    fn upload_size_rejects_values_above_20mb() {
+        assert!(matches!(
+            validate_size(20 * 1024 * 1024 + 1),
+            Err(CustomError::UploadSizeExceeded(_))
         ));
     }
 }

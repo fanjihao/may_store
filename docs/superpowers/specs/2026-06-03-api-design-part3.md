@@ -195,7 +195,7 @@
 | ------------------- | ------- | ---- | --------------------------------------------------- |
 | `filename`          | string  | 是   | 原始文件名                                          |
 | `content_type`      | string  | 是   | MIME 类型，限定 `image/jpeg`、`image/png`、`image/gif` |
-| `size`              | integer | 是   | 文件大小（字节），最大 5,242,880（5MB）             |
+| `size`              | integer | 是   | 文件大小（字节），最大 20,971,520（20MB）           |
 | `business_ref_type` | string  | 是   | `food` / `footprint` / `checkin` / `avatar`         |
 | `idempotency_key`   | string  | 是   | 幂等键                                              |
 
@@ -236,7 +236,7 @@
 
 **错误码**:
 
-- `UPLOAD_SIZE_EXCEEDED`: 文件大小超出 5MB
+- `UPLOAD_SIZE_EXCEEDED`: 文件大小超出 20MB
 - `UPLOAD_TYPE_NOT_ALLOWED`: 不支持的文件类型
 - `UPLOAD_TOKEN_INVALID`: 七牛 token 颁发失败
 
@@ -312,7 +312,7 @@
 **业务规则**:
 
 - 单次最多 9 个文件
-- 总大小不超过 20MB
+- 总大小不超过 100MB
 - 每个文件生成独立的 file_key 和 token
 
 **错误码**:
@@ -1492,7 +1492,7 @@
 | `DIAMOND_INSUFFICIENT`              | 组钻石不足                             |
 | `ADMIN_DAILY_DIAMOND_LIMIT_REACHED` | 管理员今日钻石发放已达上限             |
 | `SIGN_IN_ALREADY_DONE`              | 今天已经签到过了                       |
-| `UPLOAD_SIZE_EXCEEDED`              | 文件大小超出限制（最大 5MB）           |
+| `UPLOAD_SIZE_EXCEEDED`              | 文件大小超出限制（单张最大 20MB）      |
 | `UPLOAD_TYPE_NOT_ALLOWED`           | 不支持的文件类型                       |
 | `UPLOAD_CONTENT_REJECTED`           | 上传内容审核未通过                     |
 | `IDEMPOTENCY_CONFLICT`              | 幂等键对应请求内容冲突                 |
