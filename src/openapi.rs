@@ -61,6 +61,7 @@ impl Modify for SecurityAddon {
         crate::api::groups::routes::swap_role_check,
         crate::api::groups::routes::settlement_check,
         crate::api::groups::routes::fulfillment_stats,
+        crate::api::groups::routes::get_group_order_stats,
         crate::api::groups::partner_invitations::create_partner_invitation,
         crate::api::groups::partner_invitations::preview_partner_invitation,
         crate::api::groups::partner_invitations::accept_partner_invitation,
@@ -225,6 +226,7 @@ impl Modify for SecurityAddon {
             // -- Groups --
             crate::api::groups::routes::SwapRoleResponse,
             crate::api::groups::routes::FulfillmentStatsListResponse,
+            crate::api::groups::routes::GroupOrderStatsResponse,
             crate::api::groups::routes::CreateGroupOrderResponse,
             crate::api::groups::routes::CreateGroupWishResponse,
             crate::api::groups::routes::GroupOrderInput,

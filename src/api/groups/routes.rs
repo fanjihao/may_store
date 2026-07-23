@@ -140,6 +140,10 @@ pub fn configure(cfg: &mut ServiceConfig) {
             .route(web::get().to(fulfillment_stats)),
     );
     cfg.service(
+        web::resource("/api/groups/{group_id}/order-stats")
+            .route(web::get().to(get_group_order_stats)),
+    );
+    cfg.service(
         web::resource("/api/groups/{group_id}/orders").route(web::post().to(create_group_order)),
     );
     // 注: 之前有 GET/PATCH /api/groups/{group_id}/point-config,允许组员调整积分配置。
@@ -637,6 +641,59 @@ async fn fulfillment_stats(
 pub struct FulfillmentStatsListResponse {
     /// key: user_id; value: 该成员的履约统计
     pub stats: std::collections::HashMap<i64, FulfillmentStats>,
+}
+
+/// 组内清单统计
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct GroupOrderStatsResponse {
+    /// 本组全部清单数量，包含已完成、已取消等所有状态
+    pub total_count: i64,
+    /// 本组真正完成的清单数量
+    pub completed_count: i64,
+}
+
+/// GET /api/groups/{group_id}/order-stats
+#[utoipa::path(
+    get,
+    path = "/api/groups/{group_id}/order-stats",
+    tag = "双人组",
+    params(("group_id" = i64, Path, description = "组 ID")),
+    responses(
+        (status = 200, description = "获取成功", body = GroupOrderStatsResponse),
+        (status = 403, description = "无权访问该组")
+    ),
+    security(("bearer_auth" = []))
+)]
+async fn get_group_order_stats(
+    token: UserToken,
+    _require: RequireGroup,
+    state: State<Arc<AppState>>,
+    group_id: Path<i64>,
+) -> Result<HttpResponse, CustomError> {
+    let group_id = group_id.into_inner();
+    require_active_target_group_member(&state.db_pool, token.user_id, group_id).await?;
+
+    let (total_count, completed_count): (i64, i64) = sqlx::query_as(
+        r#"SELECT
+               COUNT(*)::BIGINT,
+               COUNT(*) FILTER (
+                   WHERE status IN (
+                       'CONFIRMED_COMPLETED'::order_status_enum,
+                       'COMPLETED'::order_status_enum
+                   )
+               )::BIGINT
+           FROM orders
+           WHERE group_id = $1"#,
+    )
+    .bind(group_id)
+    .fetch_one(&state.db_pool)
+    .await?;
+
+    Ok(ApiResponse::success(GroupOrderStatsResponse {
+        total_count,
+        completed_count,
+    }))
 }
 
 // ============== FSD v2 额外端点 ==============
