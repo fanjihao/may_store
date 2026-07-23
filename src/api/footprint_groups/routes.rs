@@ -36,9 +36,10 @@ pub fn configure(cfg: &mut ServiceConfig) {
 #[serde(rename_all = "camelCase")]
 pub struct FootprintGroupOut {
     pub id: i64,
-    pub group_id: i64,
+    pub group_id: Option<i64>,
     pub group_name: String,
     pub group_type: i16, // 0=美食 1=约会 2=旅行 3=纪念日 4=其他
+    pub is_global: bool,
     /// 组的全局足迹容量，不是单个 record_group 的列。
     pub max_capacity: i32,
     /// 由 footprints 动态聚合，不是 record_group 的列。
@@ -99,7 +100,7 @@ pub async fn list_footprint_groups(
     let status = query.status.unwrap_or(1);
 
     let rows = sqlx::query(
-        r#"SELECT rg.id, rg.group_id, rg.group_name, rg.group_type, rg.status, rg.create_time,
+        r#"SELECT rg.id, rg.group_id, rg.group_name, rg.group_type, rg.status, rg.is_global, rg.create_time,
                   COALESCE(fc.footprint_count, 0)::INT AS footprint_count,
                   COALESCE(ag.footprint_capacity, gc.footprint_capacity, 50)::INT AS capacity
            FROM record_group rg
@@ -113,8 +114,9 @@ pub async fn list_footprint_groups(
                  AND status <> 'DELETED'
                GROUP BY record_group_id
            ) fc ON fc.record_group_id = rg.id
-           WHERE rg.group_id = $1 AND rg.status = $2 AND rg.is_global = FALSE
-           ORDER BY rg.id ASC"#,
+           WHERE rg.status = $2
+             AND (rg.is_global = TRUE OR rg.group_id = $1)
+           ORDER BY rg.is_global DESC, rg.id ASC"#,
     )
     .bind(group_id)
     .bind(status)
@@ -128,6 +130,7 @@ pub async fn list_footprint_groups(
             group_id: r.get("group_id"),
             group_name: r.get("group_name"),
             group_type: r.get("group_type"),
+            is_global: r.get("is_global"),
             max_capacity: r.get("capacity"),
             current_count: r.get("footprint_count"),
             status: r.get("status"),
@@ -171,9 +174,9 @@ pub async fn create_footprint_group(
         r#"WITH created AS (
                INSERT INTO record_group (group_id, group_name, group_type, status, is_global)
                VALUES ($1, $2, $3, 1, FALSE)
-               RETURNING id, group_id, group_name, group_type, status, create_time
+               RETURNING id, group_id, group_name, group_type, status, is_global, create_time
            )
-           SELECT c.id, c.group_id, c.group_name, c.group_type, c.status, c.create_time,
+           SELECT c.id, c.group_id, c.group_name, c.group_type, c.status, c.is_global, c.create_time,
                   0::INT AS footprint_count,
                   COALESCE(ag.footprint_capacity, gc.footprint_capacity, 50)::INT AS capacity
            FROM created c
@@ -197,6 +200,7 @@ pub async fn create_footprint_group(
         group_id: row.get("group_id"),
         group_name: row.get("group_name"),
         group_type: row.get("group_type"),
+        is_global: row.get("is_global"),
         max_capacity: row.get("capacity"),
         current_count: row.get("footprint_count"),
         status: row.get("status"),
@@ -253,9 +257,9 @@ pub async fn update_footprint_group(
                    status = COALESCE($5, status),
                    update_time = NOW()
                WHERE id = $1 AND group_id = $2 AND is_global = FALSE
-               RETURNING id, group_id, group_name, group_type, status, create_time
+               RETURNING id, group_id, group_name, group_type, status, is_global, create_time
            )
-           SELECT u.id, u.group_id, u.group_name, u.group_type, u.status, u.create_time,
+           SELECT u.id, u.group_id, u.group_name, u.group_type, u.status, u.is_global, u.create_time,
                   COALESCE((
                       SELECT COUNT(*)::INT
                       FROM footprints f
@@ -286,6 +290,7 @@ pub async fn update_footprint_group(
         group_id: row.get("group_id"),
         group_name: row.get("group_name"),
         group_type: row.get("group_type"),
+        is_global: row.get("is_global"),
         max_capacity: row.get("capacity"),
         current_count: row.get("footprint_count"),
         status: row.get("status"),

@@ -494,6 +494,16 @@ impl WishService {
         input: &WishCreateInput,
     ) -> Result<WishRecord, CustomError> {
         ensure_valid_wish_cost(input.wish_cost)?;
+        let mut tx = db.begin().await?;
+
+        // 同组创建请求串行化，避免多个不同幂等键并发穿透“仅一条协商中”检查。
+        sqlx::query_scalar::<_, i64>(
+            "SELECT group_id FROM association_groups WHERE group_id = $1 FOR UPDATE",
+        )
+        .bind(group_id)
+        .fetch_optional(&mut *tx)
+        .await?
+        .ok_or_else(|| CustomError::NotFound("关联组不存在".into()))?;
 
         // FSD v2 心愿商城: 创建即进入 NEGOTIATING，跳过 DRAFT，省去"邀请协商"步骤
         //
@@ -510,7 +520,7 @@ impl WishService {
         )
         .bind(group_id)
         .bind(user_id)
-        .fetch_optional(db)
+        .fetch_optional(&mut *tx)
         .await?;
         let fulfiller_id = other_id
             .ok_or_else(|| CustomError::BadRequest("组内需要至少 2 名成员才能创建心愿".into()))?;
@@ -521,7 +531,7 @@ impl WishService {
              WHERE group_id = $1 AND status IN ('DRAFT'::wish_status_enum, 'NEGOTIATING'::wish_status_enum)",
         )
         .bind(group_id)
-        .fetch_one(db)
+        .fetch_one(&mut *tx)
         .await?;
         if existing_count > 0 {
             return Err(CustomError::BadRequest(
@@ -541,9 +551,10 @@ impl WishService {
         .bind(user_id as i64)
         .bind(group_id)
         .bind(fulfiller_id)
-        .fetch_one(db)
+        .fetch_one(&mut *tx)
         .await?;
 
+        tx.commit().await?;
         Ok(rec)
     }
 

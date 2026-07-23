@@ -14,6 +14,7 @@ use utoipa::ToSchema;
 use crate::config::AppState;
 use crate::errors::CustomError;
 use crate::middlewares::auth::UserToken;
+use crate::middlewares::idempotency::{self, IdempotencyKey, ReservationOutcome};
 use crate::middlewares::require_group::RequireGroup;
 use crate::middlewares::target_group::require_active_target_group_member;
 use crate::utils::response::ApiResponse;
@@ -260,6 +261,7 @@ pub async fn create_food(
     state: State<Arc<AppState>>,
     token: UserToken,
     _require: RequireGroup,
+    idempotency_key: IdempotencyKey,
     path: Path<i64>,
     body: Json<FoodCreateInput>,
 ) -> Result<impl Responder, CustomError> {
@@ -299,49 +301,86 @@ pub async fn create_food(
         return Err(CustomError::invalid_parameter("tag_id 不存在或不属于本组"));
     }
 
-    let food_id = idgenerator::IdInstance::next_id();
-    let images_json =
-        serde_json::to_value(input.images.unwrap_or_default()).unwrap_or(serde_json::json!([]));
-    let ingredients_text = input
-        .ingredients
-        .as_ref()
-        .map(|v| serde_json::to_string(v).unwrap_or_default());
-    let steps_text = input
-        .steps
-        .as_ref()
-        .map(|v| serde_json::to_string(v).unwrap_or_default());
-
-    // 默认状态:NORMAL + APPROVED(简化,跳过审核流程);若 FSD §24.7 要走审核,改成 AUDITING + PENDING
-    sqlx::query(
-        r#"INSERT INTO foods (food_id, food_name, description, images, tag_id, ingredients, steps,
-                              food_status, submit_role, apply_status, created_by, group_id,
-                              created_at, updated_at)
-           VALUES ($1, $2, $3, $4::jsonb, $5, $6, $7, 'NORMAL'::food_status_enum, 'RECEIVING_CREATE'::submit_role_enum, 'APPROVED'::apply_status_enum, $8, $9, NOW(), NOW())"#,
+    // 同一表单会话使用 body.idempotency_key；旧客户端则退回请求头。
+    // 前端连点产生的多个 HTTP 请求因此会复用同一个业务幂等键。
+    let request_key = input.idempotency_key.clone().or(idempotency_key.0);
+    let route = format!("/api/groups/{group_id}/foods");
+    let reservation = match idempotency::reserve(
+        &state.redis_cache,
+        token.user_id,
+        "POST",
+        &route,
+        request_key.as_deref(),
     )
-    .bind(food_id)
-    .bind(name)
-    .bind(&input.description)
-    .bind(&images_json)
-    .bind(input.tag_id)
-    .bind(&ingredients_text)
-    .bind(&steps_text)
-    .bind(token.user_id)
-    .bind(group_id)
-    .execute(&state.db_pool)
-    .await?;
+    .await?
+    {
+        ReservationOutcome::Bypass => None,
+        ReservationOutcome::Acquired(reservation) => Some(reservation),
+        ReservationOutcome::Completed(cached) => {
+            return Ok(ApiResponse::success(cached.body));
+        }
+    };
 
-    // 回查
-    let row = sqlx::query(
-        r#"SELECT f.food_id, f.food_name, f.description, f.images, f.ingredients, f.steps,
-                  f.tag_id, t.tag_name, t.icon AS tag_icon,
-                  f.food_status::text AS food_status, f.is_del, f.created_by, f.group_id, f.created_at, f.updated_at
-           FROM foods f LEFT JOIN tags t ON t.tag_id = f.tag_id WHERE f.food_id = $1"#,
-    )
-    .bind(food_id)
-    .fetch_one(&state.db_pool)
-    .await?;
+    let create_result: Result<FoodDetail, CustomError> = async {
+        let food_id = idgenerator::IdInstance::next_id();
+        let images_json = serde_json::to_value(input.images.unwrap_or_default())
+            .unwrap_or(serde_json::json!([]));
+        let ingredients_text = input
+            .ingredients
+            .as_ref()
+            .map(|v| serde_json::to_string(v).unwrap_or_default());
+        let steps_text = input
+            .steps
+            .as_ref()
+            .map(|v| serde_json::to_string(v).unwrap_or_default());
 
-    Ok(ApiResponse::success(row_to_detail(&row)))
+        // 默认状态:NORMAL + APPROVED(简化,跳过审核流程);若 FSD §24.7 要走审核,改成 AUDITING + PENDING
+        sqlx::query(
+            r#"INSERT INTO foods (food_id, food_name, description, images, tag_id, ingredients, steps,
+                                  food_status, submit_role, apply_status, created_by, group_id,
+                                  created_at, updated_at)
+               VALUES ($1, $2, $3, $4::jsonb, $5, $6, $7, 'NORMAL'::food_status_enum, 'RECEIVING_CREATE'::submit_role_enum, 'APPROVED'::apply_status_enum, $8, $9, NOW(), NOW())"#,
+        )
+        .bind(food_id)
+        .bind(name)
+        .bind(&input.description)
+        .bind(&images_json)
+        .bind(input.tag_id)
+        .bind(&ingredients_text)
+        .bind(&steps_text)
+        .bind(token.user_id)
+        .bind(group_id)
+        .execute(&state.db_pool)
+        .await?;
+
+        let row = sqlx::query(
+            r#"SELECT f.food_id, f.food_name, f.description, f.images, f.ingredients, f.steps,
+                      f.tag_id, t.tag_name, t.icon AS tag_icon,
+                      f.food_status::text AS food_status, f.is_del, f.created_by, f.group_id, f.created_at, f.updated_at
+               FROM foods f LEFT JOIN tags t ON t.tag_id = f.tag_id WHERE f.food_id = $1"#,
+        )
+        .bind(food_id)
+        .fetch_one(&state.db_pool)
+        .await?;
+        Ok(row_to_detail(&row))
+    }
+    .await;
+
+    let detail = match create_result {
+        Ok(detail) => detail,
+        Err(error) => {
+            if let Some(reservation) = reservation.as_ref() {
+                reservation.release().await;
+            }
+            return Err(error);
+        }
+    };
+    let payload = serde_json::to_value(detail)
+        .map_err(|error| CustomError::internal(format!("菜品响应序列化失败: {error}")))?;
+    if let Some(reservation) = reservation.as_ref() {
+        reservation.complete(201, &payload).await?;
+    }
+    Ok(ApiResponse::success(payload))
 }
 
 // ========== 5.2 GET /api/groups/{group_id}/foods —— 列表 ==========
