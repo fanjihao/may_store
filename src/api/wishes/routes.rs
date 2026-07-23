@@ -7,7 +7,7 @@ use ntex::web::{
     Responder, ServiceConfig,
 };
 use serde::{Deserialize, Serialize};
-use sqlx::Row;
+use sqlx::{types::Json as SqlxJson, Row};
 use std::sync::Arc;
 use utoipa::ToSchema;
 
@@ -55,6 +55,7 @@ pub fn configure(cfg: &mut ServiceConfig) {
     cfg.service(
         web::resource("/api/wishes/{wish_id}/select").route(web::post().to(wish_select)), // FSD v2 7.8 选择心愿
     );
+    cfg.service(web::resource("/api/wishes/{wish_id}/release").route(web::post().to(wish_release)));
     cfg.service(
         web::resource("/api/wishes/{wish_id}/feedback").route(web::post().to(submit_feedback)), // FSD v2 7.9 提交打卡反馈
     );
@@ -208,6 +209,7 @@ pub async fn list_group_wishes(
     let limit = query.limit.unwrap_or(20).min(100);
 
     require_active_target_group_member(db, user_token.user_id, gid).await?;
+    WishService::auto_process_overdue_group_wishes(db, gid).await?;
 
     // 参数化查询:状态/角色/游标全部使用占位符 + 枚举白名单
     let status_filter: Option<&str> = match query.status.as_deref() {
@@ -658,6 +660,42 @@ pub async fn list_group_wishes(
     };
 
     let has_more = rows.len() > limit as usize;
+    let visible_ids: Vec<i64> = rows
+        .iter()
+        .take(limit as usize)
+        .map(|row| row.get::<i64, _>("wish_id"))
+        .collect();
+    let mut feedback_map: std::collections::HashMap<
+        i64,
+        Vec<crate::domain::wish::entities::WishFeedbackOut>,
+    > = std::collections::HashMap::new();
+    if !visible_ids.is_empty() {
+        let feedback_rows = sqlx::query(
+            "SELECT feedback_id, wish_id, user_id, role_snapshot, content, images, created_at, updated_at \
+             FROM wish_feedbacks WHERE wish_id = ANY($1) ORDER BY created_at ASC",
+        )
+        .bind(&visible_ids)
+        .fetch_all(db)
+        .await?;
+        for feedback_row in feedback_rows {
+            let wish_id: i64 = feedback_row.get("wish_id");
+            feedback_map.entry(wish_id).or_default().push(
+                crate::domain::wish::entities::WishFeedbackOut {
+                    feedback_id: feedback_row.get("feedback_id"),
+                    user_id: feedback_row.get("user_id"),
+                    role: feedback_row.try_get("role_snapshot").ok(),
+                    content: feedback_row.try_get("content").ok(),
+                    images: feedback_row
+                        .try_get::<Option<SqlxJson<Vec<String>>>, _>("images")
+                        .ok()
+                        .flatten()
+                        .map(|images| images.0),
+                    created_at: feedback_row.get("created_at"),
+                    updated_at: feedback_row.get("updated_at"),
+                },
+            );
+        }
+    }
 
     let wishes_list: Vec<crate::domain::wish::entities::WishOut> = rows
         .iter()
@@ -676,19 +714,36 @@ pub async fn list_group_wishes(
                 _ => WishStatus::Created,
             };
             let created_at: chrono::DateTime<chrono::Utc> = r.get("created_at");
+            let wish_id = r.get::<i64, _>("wish_id");
+            let feedbacks = feedback_map.remove(&wish_id).unwrap_or_default();
+            let fulfilled_at = feedbacks
+                .iter()
+                .find(|item| item.role.as_deref() == Some("FULFILLER"))
+                .map(|item| item.created_at);
             crate::domain::wish::entities::WishOut {
-                wish_id: r.get::<i64, _>("wish_id"),
+                wish_id,
                 wish_name: r.get::<String, _>("wish_name"),
                 wish_cost,
                 status,
                 created_by: r.get::<i64, _>("created_by"),
                 group_id: gid,
-                claimed_by: None,
-                claimed_at: None,
-                claim_cost: None,
+                claimed_by: r.try_get::<Option<i64>, _>("selected_by").ok().flatten(),
+                claimed_at: r
+                    .try_get::<Option<chrono::DateTime<chrono::Utc>>, _>("selected_at")
+                    .ok()
+                    .flatten(),
+                claim_cost: if status == WishStatus::Claimed {
+                    Some(r.get::<i32, _>("wish_cost"))
+                } else {
+                    None
+                },
                 created_at,
                 updated_at: created_at,
-                feedback: None,
+                feedback: feedbacks.first().cloned(),
+                feedbacks,
+                fulfilled_at,
+                creator_checkin_due_at: None,
+                auto_completed_at: None,
                 requester_id: r.get::<Option<i64>, _>("requester_id"),
                 fulfiller_id: r.get::<Option<i64>, _>("fulfiller_id"),
                 negotiation_status: None,
@@ -787,9 +842,15 @@ pub async fn get_wish(
     state: State<Arc<AppState>>,
     id: Path<i64>,
 ) -> Result<impl Responder, CustomError> {
-    let (rec, negotiations) =
+    let (rec, negotiations, feedbacks) =
         WishService::get_wish(&state.db_pool, user_token.user_id, *id).await?;
-    let wish_out = WishOut::from_record(rec, None);
+    let wish_out = WishOut::from_record_with_feedbacks(
+        rec,
+        feedbacks
+            .into_iter()
+            .map(crate::domain::wish::entities::WishFeedbackOut::from)
+            .collect(),
+    );
     Ok(ApiResponse::success(
         crate::domain::wish::entities::WishOutWithNegotiations {
             wish: wish_out,
@@ -866,7 +927,7 @@ pub async fn wish_deadline(
     tag = "心愿",
     params(("wish_id" = i64, Path, description = "心愿ID")),
     responses(
-        (status = 200, description = "确认成功，心愿进入心愿池"),
+        (status = 200, description = "确认成功；双方同意时冻结积分并进入心愿池", body = WishOut),
         (status = 400, description = "心愿状态不允许确认"),
         (status = 404, description = "心愿不存在")
     ),
@@ -914,7 +975,7 @@ pub async fn wish_reject(
     Ok(ApiResponse::success(out))
 }
 
-/// 选择心愿并冻结积分
+/// 履约人领取心愿（积分已在进入心愿池时冻结）
 /// POST /api/wishes/{wish_id}/select
 /// FSD v2 7.8
 #[utoipa::path(
@@ -923,8 +984,8 @@ pub async fn wish_reject(
     tag = "心愿",
     params(("wish_id" = i64, Path, description = "心愿ID")),
     responses(
-        (status = 200, description = "选择成功，积分已冻结"),
-        (status = 400, description = "积分不足或心愿状态不允许"),
+        (status = 200, description = "领取成功", body = WishOut),
+        (status = 400, description = "已有履约中的心愿或状态不允许"),
         (status = 404, description = "心愿不存在")
     ),
     security(("bearer_auth" = []))
@@ -971,7 +1032,31 @@ pub async fn wish_select(
     Ok(ApiResponse::success(payload))
 }
 
-/// 接单人确认履约完成 — 心愿从 CLAIMED 推到 FINISHED
+/// 履约人在未打卡前放弃领取，心愿重新回到心愿池
+#[utoipa::path(
+    post,
+    path = "/api/wishes/{wish_id}/release",
+    tag = "心愿",
+    params(("wish_id" = i64, Path, description = "心愿ID")),
+    responses(
+        (status = 200, description = "已放弃领取，心愿回到心愿池", body = WishOut),
+        (status = 400, description = "已有打卡或状态不允许"),
+        (status = 403, description = "只有当前履约人可以操作"),
+        (status = 404, description = "心愿不存在")
+    ),
+    security(("bearer_auth" = []))
+)]
+pub async fn wish_release(
+    user_token: UserToken,
+    _require: RequireGroup,
+    state: State<Arc<AppState>>,
+    id: Path<i64>,
+) -> Result<impl Responder, CustomError> {
+    let rec = WishService::release_claim(&state.db_pool, user_token.user_id, *id).await?;
+    Ok(ApiResponse::success(WishOut::from_record(rec, None)))
+}
+
+/// 兼容旧客户端：新流程由双方打卡自动完成
 /// POST /api/wishes/{wish_id}/confirm-completion
 /// FSD v2 7.12
 #[utoipa::path(
@@ -980,9 +1065,9 @@ pub async fn wish_select(
     tag = "心愿",
     params(("wish_id" = i64, Path, description = "心愿ID")),
     responses(
-        (status = 200, description = "确认完成", body = WishOut),
-        (status = 400, description = "状态不允许或履约人未提交打卡"),
-        (status = 403, description = "只有接单人可以确认完成"),
+        (status = 200, description = "心愿已完成时幂等返回", body = WishOut),
+        (status = 400, description = "请通过双方打卡完成心愿"),
+        (status = 403, description = "非心愿参与方"),
         (status = 404, description = "心愿不存在")
     ),
     security(("bearer_auth" = []))
@@ -999,7 +1084,7 @@ pub async fn wish_confirm_completion(
     Ok(ApiResponse::success(out))
 }
 
-/// 提交打卡反馈
+/// 提交或编辑自己的打卡反馈；双方都打卡后自动完成
 /// POST /api/wishes/{wish_id}/feedback
 /// FSD v2 7.9
 #[utoipa::path(
@@ -1009,7 +1094,7 @@ pub async fn wish_confirm_completion(
     params(("wish_id" = i64, Path, description = "心愿ID")),
     request_body = WishFeedbackInput,
     responses(
-        (status = 200, description = "提交成功", body = WishOut),
+        (status = 200, description = "提交成功；双方完成时状态自动变为 FINISHED", body = WishOut),
         (status = 400, description = "心愿状态不允许"),
         (status = 404, description = "心愿不存在")
     ),
@@ -1022,13 +1107,19 @@ pub async fn submit_feedback(
     id: Path<i64>,
     data: Json<WishFeedbackInput>,
 ) -> Result<impl Responder, CustomError> {
-    let (rec, feedback) =
+    let (rec, feedbacks) =
         WishService::submit_feedback(&state.db_pool, user_token.user_id, *id, &data.into_inner())
             .await?;
-    Ok(ApiResponse::success(WishOut::from_record(rec, feedback)))
+    Ok(ApiResponse::success(WishOut::from_record_with_feedbacks(
+        rec,
+        feedbacks
+            .into_iter()
+            .map(crate::domain::wish::entities::WishFeedbackOut::from)
+            .collect(),
+    )))
 }
 
-/// 关闭心愿（双方协商一致）
+/// 创建人关闭尚未领取的心愿并解冻积分
 /// POST /api/wishes/{wish_id}/close
 /// FSD v2 7.11
 #[utoipa::path(
@@ -1038,7 +1129,7 @@ pub async fn submit_feedback(
     params(("wish_id" = i64, Path, description = "心愿ID")),
     request_body = WishCloseInput,
     responses(
-        (status = 200, description = "关闭成功"),
+        (status = 200, description = "关闭成功，冻结积分已退回"),
         (status = 400, description = "心愿状态不允许关闭"),
         (status = 404, description = "心愿不存在")
     ),

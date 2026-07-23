@@ -78,7 +78,10 @@ fn validate_wish_closure_policy(
 
     let status_allowed = match action {
         WishClosureAction::Reject => status == WishStatus::Negotiating,
-        WishClosureAction::Close => status.can_transition(WishStatus::Closed),
+        // 已领取后不能单方关闭；履约人应先走 release 回到心愿池。
+        WishClosureAction::Close => {
+            matches!(status, WishStatus::Negotiating | WishStatus::Created)
+        }
     };
     if !status_allowed {
         return Err(WishClosurePolicyError::InvalidStatus);
@@ -133,6 +136,356 @@ pub struct WishExpireResult {
 }
 
 impl WishService {
+    async fn freeze_wish_points_in_tx(
+        tx: &mut Transaction<'_, Postgres>,
+        wish_id: i64,
+        group_id: i64,
+        requester_id: i64,
+        points_cost: i32,
+    ) -> Result<(), CustomError> {
+        let idempotency_key = format!("wish_pool_{wish_id}");
+        let already_frozen: bool = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM love_point_transactions WHERE idempotency_key = $1)",
+        )
+        .bind(&idempotency_key)
+        .fetch_one(&mut **tx)
+        .await?;
+        if already_frozen {
+            return Ok(());
+        }
+
+        let available_before: i32 =
+            sqlx::query_scalar("SELECT love_point FROM users WHERE user_id = $1 FOR UPDATE")
+                .bind(requester_id)
+                .fetch_optional(&mut **tx)
+                .await?
+                .ok_or_else(|| CustomError::NotFound("心愿创建人不存在".into()))?;
+        if available_before < points_cost {
+            return Err(CustomError::love_point_insufficient("爱心积分不足"));
+        }
+        let available_after = available_before - points_cost;
+
+        let frozen_before: i64 = sqlx::query_scalar(
+            "SELECT COALESCE(frozen_love_point, 0) FROM user_group_points \
+             WHERE user_id = $1 AND group_id = $2 FOR UPDATE",
+        )
+        .bind(requester_id)
+        .bind(group_id)
+        .fetch_optional(&mut **tx)
+        .await?
+        .unwrap_or(0);
+        let frozen_after = frozen_before
+            .checked_add(i64::from(points_cost))
+            .ok_or_else(|| CustomError::internal("冻结积分溢出"))?;
+
+        sqlx::query("UPDATE users SET love_point = $2 WHERE user_id = $1")
+            .bind(requester_id)
+            .bind(available_after)
+            .execute(&mut **tx)
+            .await?;
+        sqlx::query(
+            "INSERT INTO user_group_points \
+                 (user_id, group_id, available_love_point, love_point, frozen_love_point, updated_at) \
+             VALUES ($1, $2, $3, $3, $4, NOW()) \
+             ON CONFLICT (user_id, group_id) DO UPDATE \
+             SET available_love_point = $3, love_point = $3, frozen_love_point = $4, updated_at = NOW()",
+        )
+        .bind(requester_id)
+        .bind(group_id)
+        .bind(i64::from(available_after))
+        .bind(frozen_after)
+        .execute(&mut **tx)
+        .await?;
+        sqlx::query(
+            r#"INSERT INTO love_point_transactions
+                   (user_id, group_id, type, amount, available_before, available_after,
+                    frozen_before, frozen_after, biz_type, biz_id, idempotency_key, created_at)
+               VALUES
+                   ($1, $2, 'FREEZE'::love_point_tx_type_enum, $3, $4, $5,
+                    $6, $7, 'wish', $8, $9, NOW())"#,
+        )
+        .bind(requester_id)
+        .bind(group_id)
+        .bind(points_cost)
+        .bind(available_before)
+        .bind(available_after)
+        .bind(frozen_before)
+        .bind(frozen_after)
+        .bind(wish_id)
+        .bind(idempotency_key)
+        .execute(&mut **tx)
+        .await?;
+        Ok(())
+    }
+
+    async fn settle_wish_points_in_tx(
+        tx: &mut Transaction<'_, Postgres>,
+        wish_id: i64,
+        group_id: i64,
+        requester_id: i64,
+    ) -> Result<i64, CustomError> {
+        let idempotency_key = format!("wish_finish_{wish_id}");
+        let already_settled: bool = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM love_point_transactions WHERE idempotency_key = $1)",
+        )
+        .bind(&idempotency_key)
+        .fetch_one(&mut **tx)
+        .await?;
+        if already_settled {
+            return Ok(0);
+        }
+
+        let frozen_amount: i64 = sqlx::query_scalar(
+            r#"SELECT COALESCE(
+                   SUM(CASE
+                       WHEN type = 'FREEZE'::love_point_tx_type_enum THEN amount
+                       WHEN type IN (
+                           'UNFREEZE'::love_point_tx_type_enum,
+                           'DEDUCT'::love_point_tx_type_enum
+                       ) THEN -amount
+                       ELSE 0
+                   END),
+                   0
+               )::BIGINT
+               FROM love_point_transactions
+               WHERE user_id = $1 AND group_id = $2 AND biz_id = $3 AND biz_type = 'wish'"#,
+        )
+        .bind(requester_id)
+        .bind(group_id)
+        .bind(wish_id)
+        .fetch_one(&mut **tx)
+        .await?;
+        if frozen_amount <= 0 {
+            return Ok(0);
+        }
+
+        let available: i32 =
+            sqlx::query_scalar("SELECT love_point FROM users WHERE user_id = $1 FOR UPDATE")
+                .bind(requester_id)
+                .fetch_one(&mut **tx)
+                .await?;
+        let frozen_before: i64 = sqlx::query_scalar(
+            "SELECT COALESCE(frozen_love_point, 0) FROM user_group_points \
+             WHERE user_id = $1 AND group_id = $2 FOR UPDATE",
+        )
+        .bind(requester_id)
+        .bind(group_id)
+        .fetch_optional(&mut **tx)
+        .await?
+        .unwrap_or(frozen_amount);
+        let frozen_after = frozen_before.saturating_sub(frozen_amount).max(0);
+
+        sqlx::query(
+            r#"INSERT INTO love_point_transactions
+                   (user_id, group_id, type, amount, available_before, available_after,
+                    frozen_before, frozen_after, biz_type, biz_id, idempotency_key, created_at)
+               VALUES
+                   ($1, $2, 'DEDUCT'::love_point_tx_type_enum, $3, $4, $4,
+                    $5, $6, 'wish', $7, $8, NOW())"#,
+        )
+        .bind(requester_id)
+        .bind(group_id)
+        .bind(frozen_amount)
+        .bind(available)
+        .bind(frozen_before)
+        .bind(frozen_after)
+        .bind(wish_id)
+        .bind(idempotency_key)
+        .execute(&mut **tx)
+        .await?;
+        sqlx::query(
+            "UPDATE user_group_points SET frozen_love_point = $3, updated_at = NOW() \
+             WHERE user_id = $1 AND group_id = $2",
+        )
+        .bind(requester_id)
+        .bind(group_id)
+        .bind(frozen_after)
+        .execute(&mut **tx)
+        .await?;
+        Ok(frozen_amount)
+    }
+
+    async fn load_feedbacks(
+        db: &PgPool,
+        wish_id: i64,
+    ) -> Result<Vec<WishFeedbackRecord>, CustomError> {
+        Ok(sqlx::query_as::<_, WishFeedbackRecord>(
+            "SELECT feedback_id, wish_id, user_id, role_snapshot, content, images, created_at, updated_at \
+             FROM wish_feedbacks WHERE wish_id = $1 ORDER BY created_at ASC",
+        )
+        .bind(wish_id)
+        .fetch_all(db)
+        .await?)
+    }
+
+    /// 履约人已打卡、创建方超过 48 小时未处理时，下一次读取惰性自动完成。
+    pub async fn auto_finish_overdue_wish(db: &PgPool, wish_id: i64) -> Result<bool, CustomError> {
+        let mut tx = db.begin().await?;
+        let snapshot: Option<(String, i64, i64, i64, i32, Option<DateTime<Utc>>)> = sqlx::query_as(
+            "SELECT status::text, COALESCE(requester_id, created_by), \
+                        COALESCE(fulfiller_id, claimed_by), group_id, \
+                        COALESCE(final_cost, wish_cost), creator_checkin_due_at \
+                 FROM wishes WHERE wish_id = $1 FOR UPDATE",
+        )
+        .bind(wish_id)
+        .fetch_optional(&mut *tx)
+        .await?;
+        let Some((status, requester_id, fulfiller_id, group_id, cost, due_at)) = snapshot else {
+            return Ok(false);
+        };
+        if status != "CLAIMED" || due_at.is_none_or(|due| due > Utc::now()) {
+            tx.commit().await?;
+            return Ok(false);
+        }
+
+        let fulfiller_checked: bool = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM wish_feedbacks WHERE wish_id = $1 AND user_id = $2)",
+        )
+        .bind(wish_id)
+        .bind(fulfiller_id)
+        .fetch_one(&mut *tx)
+        .await?;
+        let requester_checked: bool = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM wish_feedbacks WHERE wish_id = $1 AND user_id = $2)",
+        )
+        .bind(wish_id)
+        .bind(requester_id)
+        .fetch_one(&mut *tx)
+        .await?;
+        if !fulfiller_checked || requester_checked {
+            tx.commit().await?;
+            return Ok(false);
+        }
+
+        Self::settle_wish_points_in_tx(&mut tx, wish_id, group_id, requester_id).await?;
+        let updated = sqlx::query(
+            "UPDATE wishes SET status = 'FINISHED'::wish_status_enum, finished_at = NOW(), \
+                    auto_completed_at = NOW(), creator_checkin_due_at = NULL, updated_at = NOW() \
+             WHERE wish_id = $1 AND status = 'CLAIMED'::wish_status_enum",
+        )
+        .bind(wish_id)
+        .execute(&mut *tx)
+        .await?;
+        tx.commit().await?;
+        if updated.rows_affected() != 1 {
+            return Ok(false);
+        }
+
+        let _ = EventPublisher::publish(
+            db,
+            EventType::WishFinished,
+            WishFinishedPayload {
+                wish_id,
+                requester_id,
+                fulfiller_id,
+                group_id,
+                deducted_amount: cost,
+                trace_id: None,
+            },
+            None,
+            Some(group_id),
+            Some("wish"),
+            Some(wish_id),
+        )
+        .await;
+        Ok(true)
+    }
+
+    /// 履约截止后仍没有履约方打卡时，下一次读取惰性过期并退回冻结积分。
+    pub async fn auto_expire_overdue_wish(db: &PgPool, wish_id: i64) -> Result<bool, CustomError> {
+        let mut tx = db.begin().await?;
+        let snapshot: Option<(String, i64, i64, i64, Option<DateTime<Utc>>)> = sqlx::query_as(
+            "SELECT status::text, COALESCE(requester_id, created_by), \
+                    COALESCE(fulfiller_id, claimed_by), group_id, fulfillment_due_at \
+             FROM wishes WHERE wish_id = $1 FOR UPDATE",
+        )
+        .bind(wish_id)
+        .fetch_optional(&mut *tx)
+        .await?;
+        let Some((status, requester_id, fulfiller_id, group_id, due_at)) = snapshot else {
+            return Ok(false);
+        };
+        if status != "CLAIMED" || due_at.is_none_or(|due| due > Utc::now()) {
+            tx.commit().await?;
+            return Ok(false);
+        }
+
+        let fulfiller_checked: bool = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM wish_feedbacks WHERE wish_id = $1 AND user_id = $2)",
+        )
+        .bind(wish_id)
+        .bind(fulfiller_id)
+        .fetch_one(&mut *tx)
+        .await?;
+        if fulfiller_checked {
+            tx.commit().await?;
+            return Ok(false);
+        }
+
+        let updated = sqlx::query(
+            "UPDATE wishes SET status = 'EXPIRED'::wish_status_enum, expired_at = NOW(), \
+                    updated_at = NOW() \
+             WHERE wish_id = $1 AND status = 'CLAIMED'::wish_status_enum",
+        )
+        .bind(wish_id)
+        .execute(&mut *tx)
+        .await?;
+        if updated.rows_affected() != 1 {
+            tx.commit().await?;
+            return Ok(false);
+        }
+        let idempotency_key = format!("wish_expire_{wish_id}");
+        let unfrozen_amount = Self::unfreeze_wish_points_in_tx(
+            &mut tx,
+            wish_id,
+            group_id,
+            requester_id,
+            &idempotency_key,
+        )
+        .await?;
+        tx.commit().await?;
+
+        let _ = EventPublisher::publish(
+            db,
+            EventType::WishExpired,
+            WishExpiredPayload {
+                wish_id,
+                requester_id,
+                fulfiller_id,
+                group_id,
+                unfrozen_amount: i32::try_from(unfrozen_amount)
+                    .map_err(|_| CustomError::internal("心愿解冻积分超出支持范围"))?,
+                trace_id: None,
+            },
+            None,
+            Some(group_id),
+            Some("wish"),
+            Some(wish_id),
+        )
+        .await;
+        Ok(true)
+    }
+
+    pub async fn auto_process_overdue_group_wishes(
+        db: &PgPool,
+        group_id: i64,
+    ) -> Result<(), CustomError> {
+        let wish_ids: Vec<i64> = sqlx::query_scalar(
+            "SELECT wish_id FROM wishes \
+             WHERE group_id = $1 AND status = 'CLAIMED'::wish_status_enum \
+               AND ((creator_checkin_due_at IS NOT NULL AND creator_checkin_due_at <= NOW()) \
+                    OR (fulfillment_due_at IS NOT NULL AND fulfillment_due_at <= NOW()))",
+        )
+        .bind(group_id)
+        .fetch_all(db)
+        .await?;
+        for wish_id in wish_ids {
+            Self::auto_finish_overdue_wish(db, wish_id).await?;
+            Self::auto_expire_overdue_wish(db, wish_id).await?;
+        }
+        Ok(())
+    }
+
     /// 创建心愿
     pub async fn create_wish(
         db: &PgPool,
@@ -238,10 +591,20 @@ impl WishService {
         db: &PgPool,
         user_id: i64,
         wish_id: i64,
-    ) -> Result<(WishRecord, Vec<WishNegotiationRecord>), CustomError> {
+    ) -> Result<
+        (
+            WishRecord,
+            Vec<WishNegotiationRecord>,
+            Vec<WishFeedbackRecord>,
+        ),
+        CustomError,
+    > {
+        Self::auto_finish_overdue_wish(db, wish_id).await?;
+        Self::auto_expire_overdue_wish(db, wish_id).await?;
         let rec = sqlx::query_as::<_, WishRecord>(
             "SELECT wish_id, wish_name, wish_cost, status, created_by, group_id, \
-             claimed_by, claimed_at, claim_cost, created_at, updated_at \
+             claimed_by, claimed_at, claim_cost, created_at, updated_at, requester_id, fulfiller_id, \
+             fulfilled_at, creator_checkin_due_at, auto_completed_at, points_frozen_at, finished_at \
              FROM wishes w \
              WHERE wish_id = $1 \
                AND (COALESCE(requester_id, created_by) = $2 OR fulfiller_id = $2 OR EXISTS ( \
@@ -269,7 +632,8 @@ impl WishService {
         .fetch_all(db)
         .await?;
 
-        Ok((rec, negotiations))
+        let feedbacks = Self::load_feedbacks(db, wish_id).await?;
+        Ok((rec, negotiations, feedbacks))
     }
 
     /// 更新心愿
@@ -365,11 +729,11 @@ impl WishService {
         user_id: i64,
         wish_id: i64,
         input: &WishFeedbackInput,
-    ) -> Result<(WishRecord, Option<WishFeedbackRecord>), CustomError> {
+    ) -> Result<(WishRecord, Vec<WishFeedbackRecord>), CustomError> {
         let mut tx = db.begin().await?;
-        // 获取并锁定心愿
         let existing = sqlx::query_as::<_, WishRecord>(
-            "SELECT wish_id, wish_name, wish_cost, status, created_by, group_id, claimed_by, claimed_at, claim_cost, created_at, updated_at \
+            "SELECT wish_id, wish_name, wish_cost, status, created_by, group_id, claimed_by, claimed_at, claim_cost, created_at, updated_at, \
+                    requester_id, fulfiller_id, fulfilled_at, creator_checkin_due_at, auto_completed_at \
              FROM wishes WHERE wish_id = $1 FOR UPDATE"
         )
         .bind(wish_id)
@@ -378,57 +742,133 @@ impl WishService {
         .ok_or_else(|| CustomError::NotFound("心愿不存在".into()))?;
         ensure_active_wish_actor_in_tx(&mut tx, existing.group_id, user_id).await?;
 
-        // 检查权限（创建者或认领者可以提交反馈）
-        if existing.created_by != user_id as i64
-            && existing
-                .claimed_by
-                .map(|c| c != user_id as i64)
-                .unwrap_or(true)
-        {
+        let requester_id = existing.requester_id.unwrap_or(existing.created_by);
+        let fulfiller_id = existing
+            .fulfiller_id
+            .or(existing.claimed_by)
+            .ok_or_else(|| CustomError::BadRequest("心愿缺少履约方信息".into()))?;
+        let role_snapshot = if user_id == requester_id {
+            "REQUESTER"
+        } else if user_id == fulfiller_id {
+            "FULFILLER"
+        } else {
             return Err(CustomError::Forbidden("无权提交此心愿反馈".into()));
-        }
+        };
 
-        // 检查心愿状态
-        if existing.status != WishStatus::Claimed {
+        if !matches!(existing.status, WishStatus::Claimed | WishStatus::Finished) {
             return Err(CustomError::BadRequest("当前状态不允许提交反馈".into()));
         }
 
-        // 插入或更新反馈
-        let images_json = input.images.as_ref().map(|imgs| Json(imgs.clone()));
+        // 创建方必须在履约方打卡之后才能验收打卡；FINISHED 后双方仍可编辑自己的记录。
+        if existing.status == WishStatus::Claimed && role_snapshot == "REQUESTER" {
+            let fulfiller_checked_in: bool = sqlx::query_scalar(
+                "SELECT EXISTS(SELECT 1 FROM wish_feedbacks \
+                 WHERE wish_id = $1 AND user_id = $2 AND role_snapshot = 'FULFILLER')",
+            )
+            .bind(wish_id)
+            .bind(fulfiller_id)
+            .fetch_one(&mut *tx)
+            .await?;
+            if !fulfiller_checked_in {
+                return Err(CustomError::BadRequest(
+                    "请等待履约人完成打卡后再验收".into(),
+                ));
+            }
+        }
 
+        let images_json = input.images.as_ref().map(|imgs| Json(imgs.clone()));
         sqlx::query(
-            "INSERT INTO wish_feedbacks (wish_id, user_id, content, images) \
-             VALUES ($1, $2, $3, $4) \
-             ON CONFLICT (wish_id) DO UPDATE SET content = $3, images = $4",
+            "INSERT INTO wish_feedbacks (wish_id, user_id, role_snapshot, content, images) \
+             VALUES ($1, $2, $3, $4, $5) \
+             ON CONFLICT (wish_id, user_id) DO UPDATE \
+             SET content = EXCLUDED.content, images = EXCLUDED.images, \
+                 role_snapshot = EXCLUDED.role_snapshot, updated_at = NOW()",
         )
         .bind(wish_id)
-        .bind(user_id as i64)
+        .bind(user_id)
+        .bind(role_snapshot)
         .bind(&input.content)
         .bind(images_json)
         .execute(&mut *tx)
         .await?;
 
-        // 状态保持 CLAIMED —— 由接单人 confirm-completion 才推进到 FINISHED
-        // 这里只读心愿最新状态返回,不改任何字段
+        let mut completed_now = false;
+        if existing.status == WishStatus::Claimed && role_snapshot == "FULFILLER" {
+            sqlx::query(
+                "UPDATE wishes SET fulfilled_at = COALESCE(fulfilled_at, NOW()), \
+                        creator_checkin_due_at = COALESCE(creator_checkin_due_at, NOW() + INTERVAL '48 hours'), \
+                        updated_at = NOW() WHERE wish_id = $1",
+            )
+            .bind(wish_id)
+            .execute(&mut *tx)
+            .await?;
+        }
+
+        if existing.status == WishStatus::Claimed {
+            let feedback_count: i64 = sqlx::query_scalar(
+                "SELECT COUNT(DISTINCT user_id) FROM wish_feedbacks \
+                 WHERE wish_id = $1 AND user_id IN ($2, $3)",
+            )
+            .bind(wish_id)
+            .bind(requester_id)
+            .bind(fulfiller_id)
+            .fetch_one(&mut *tx)
+            .await?;
+            if feedback_count == 2 {
+                Self::settle_wish_points_in_tx(&mut tx, wish_id, existing.group_id, requester_id)
+                    .await?;
+                sqlx::query(
+                    "UPDATE wishes SET status = 'FINISHED'::wish_status_enum, \
+                            finished_at = NOW(), creator_checkin_due_at = NULL, updated_at = NOW() \
+                     WHERE wish_id = $1 AND status = 'CLAIMED'::wish_status_enum",
+                )
+                .bind(wish_id)
+                .execute(&mut *tx)
+                .await?;
+                completed_now = true;
+            }
+        }
+
         let rec = sqlx::query_as::<_, WishRecord>(
-            "SELECT wish_id, wish_name, wish_cost, status, created_by, group_id, claimed_by, claimed_at, claim_cost, created_at, updated_at \
+            "SELECT wish_id, wish_name, wish_cost, status, created_by, group_id, claimed_by, claimed_at, claim_cost, created_at, updated_at, \
+                    requester_id, fulfiller_id, fulfilled_at, creator_checkin_due_at, auto_completed_at, points_frozen_at, finished_at \
              FROM wishes WHERE wish_id = $1"
         )
         .bind(wish_id)
         .fetch_one(&mut *tx)
         .await?;
 
-        // 获取反馈记录
-        let feedback = sqlx::query_as::<_, WishFeedbackRecord>(
-            "SELECT feedback_id, wish_id, user_id, content, images, created_at, updated_at \
-             FROM wish_feedbacks WHERE wish_id = $1",
+        let feedbacks = sqlx::query_as::<_, WishFeedbackRecord>(
+            "SELECT feedback_id, wish_id, user_id, role_snapshot, content, images, created_at, updated_at \
+             FROM wish_feedbacks WHERE wish_id = $1 ORDER BY created_at ASC",
         )
         .bind(wish_id)
-        .fetch_optional(&mut *tx)
+        .fetch_all(&mut *tx)
         .await?;
 
         tx.commit().await?;
-        Ok((rec, feedback))
+
+        if completed_now {
+            let _ = EventPublisher::publish(
+                db,
+                EventType::WishFinished,
+                WishFinishedPayload {
+                    wish_id,
+                    requester_id,
+                    fulfiller_id,
+                    group_id: existing.group_id,
+                    deducted_amount: existing.final_cost.unwrap_or(existing.wish_cost),
+                    trace_id: None,
+                },
+                Some(user_id),
+                Some(existing.group_id),
+                Some("wish"),
+                Some(wish_id),
+            )
+            .await;
+        }
+
+        Ok((rec, feedbacks))
     }
 
     // ============== FSD v2 心愿协商与选择接口 ==============
@@ -813,11 +1253,23 @@ impl WishService {
             return Ok(out);
         }
 
-        // 4) 双方都 ACCEPT → 进 CREATED,wish_cost 同步为 final_cost
+        // 4) 双方都 ACCEPT → 冻结创建人的积分并进入心愿池。
+        Self::freeze_wish_points_in_tx(
+            &mut tx,
+            wish_id,
+            existing.group_id,
+            requester_id,
+            final_cost,
+        )
+        .await?;
+
         let rec = sqlx::query_as::<_, WishRecord>(
-            "UPDATE wishes SET status = 'CREATED'::wish_status_enum, wish_cost = $2, updated_at = NOW() WHERE wish_id = $1 \
+            "UPDATE wishes SET status = 'CREATED'::wish_status_enum, wish_cost = $2, \
+                    points_frozen_at = COALESCE(points_frozen_at, NOW()), updated_at = NOW() \
+             WHERE wish_id = $1 \
              RETURNING wish_id, wish_name, wish_cost, status, created_by, group_id, claimed_by, claimed_at, claim_cost, created_at, updated_at, \
-             requester_id, fulfiller_id, initial_cost, final_cost, fulfillment_deadline_hours"
+             requester_id, fulfiller_id, initial_cost, final_cost, fulfillment_deadline_hours, \
+             points_frozen_at, creator_checkin_due_at, auto_completed_at, fulfilled_at"
         )
         .bind(wish_id)
         .bind(final_cost)
@@ -902,6 +1354,14 @@ impl WishService {
         let fulfiller_id = existing
             .fulfiller_id
             .ok_or_else(|| CustomError::BadRequest("心愿缺少履约方信息".into()))?;
+        if action == WishClosureAction::Close
+            && existing.status == WishStatus::Created
+            && user_id != requester_id
+        {
+            return Err(CustomError::Forbidden(
+                "只有心愿创建人可以关闭尚未领取的心愿".into(),
+            ));
+        }
         let role_snapshot = match validate_wish_closure_policy(
             existing.status,
             action,
@@ -942,9 +1402,9 @@ impl WishService {
             CustomError::BadRequest("心愿状态已变化,请刷新后重试".into())
         })?;
 
-        let was_claimed =
-            action == WishClosureAction::Close && existing.status == WishStatus::Claimed;
-        if was_claimed {
+        let should_unfreeze =
+            action == WishClosureAction::Close && existing.status == WishStatus::Created;
+        if should_unfreeze {
             let idempotency_key = format!("wish_close_{wish_id}");
             Self::unfreeze_wish_points_in_tx(
                 &mut tx,
@@ -979,7 +1439,7 @@ impl WishService {
                 operator_id: user_id,
                 group_id: existing.group_id,
                 reason: input.reason.clone(),
-                unfrozen_if_any: was_claimed,
+                unfrozen_if_any: should_unfreeze,
                 trace_id: None,
             },
             Some(user_id),
@@ -1024,7 +1484,10 @@ impl WishService {
             r#"SELECT COALESCE(
                    SUM(CASE
                        WHEN type = 'FREEZE'::love_point_tx_type_enum THEN amount
-                       WHEN type = 'UNFREEZE'::love_point_tx_type_enum THEN -amount
+                       WHEN type IN (
+                           'UNFREEZE'::love_point_tx_type_enum,
+                           'DEDUCT'::love_point_tx_type_enum
+                       ) THEN -amount
                        ELSE 0
                    END),
                    0
@@ -1062,7 +1525,10 @@ impl WishService {
                     r#"SELECT COALESCE(
                            SUM(CASE
                                WHEN type = 'FREEZE'::love_point_tx_type_enum THEN amount
-                               WHEN type = 'UNFREEZE'::love_point_tx_type_enum THEN -amount
+                               WHEN type IN (
+                                   'UNFREEZE'::love_point_tx_type_enum,
+                                   'DEDUCT'::love_point_tx_type_enum
+                               ) THEN -amount
                                ELSE 0
                            END),
                            0
@@ -1157,6 +1623,11 @@ impl WishService {
         user_id: i64,
         wish_id: i64,
     ) -> Result<WishExpireResult, CustomError> {
+        if Self::auto_finish_overdue_wish(db, wish_id).await? {
+            return Err(CustomError::BadRequest(
+                "履约人已打卡，心愿已自动完成".into(),
+            ));
+        }
         let mut tx = db.begin().await?;
         let existing: (
             String,
@@ -1197,6 +1668,19 @@ impl WishService {
         }
         if status != "CLAIMED" {
             return Err(CustomError::BadRequest("心愿状态不允许逾期处理".into()));
+        }
+        let fulfiller_checked_in: bool = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM wish_feedbacks \
+             WHERE wish_id = $1 AND user_id = $2 AND role_snapshot = 'FULFILLER')",
+        )
+        .bind(wish_id)
+        .bind(fulfiller_id)
+        .fetch_one(&mut *tx)
+        .await?;
+        if fulfiller_checked_in {
+            return Err(CustomError::BadRequest(
+                "履约人已打卡，正在等待创建人验收".into(),
+            ));
         }
         if fulfillment_due_at.is_none() || !is_due {
             return Err(CustomError::BadRequest("心愿履约期限尚未到期".into()));
@@ -1255,7 +1739,7 @@ impl WishService {
         })
     }
 
-    /// 选择心愿并冻结积分（发起人操作）
+    /// 履约人从心愿池领取心愿；积分已在双方同意进入心愿池时冻结。
     pub async fn select_wish(
         db: &PgPool,
         user_id: i64,
@@ -1264,7 +1748,8 @@ impl WishService {
         let mut tx = db.begin().await?;
         let existing = sqlx::query_as::<_, WishRecord>(
             "SELECT wish_id, wish_name, wish_cost, status, created_by, group_id, claimed_by, claimed_at, claim_cost, created_at, updated_at, \
-             requester_id, fulfiller_id, fulfillment_due_at, fulfillment_deadline_hours FROM wishes WHERE wish_id = $1 FOR UPDATE"
+             requester_id, fulfiller_id, fulfillment_due_at, fulfillment_deadline_hours, points_frozen_at \
+             FROM wishes WHERE wish_id = $1 FOR UPDATE"
         )
         .bind(wish_id)
         .fetch_optional(&mut *tx)
@@ -1280,73 +1765,47 @@ impl WishService {
             return Err(CustomError::BadRequest("心愿已被选择".into()));
         }
 
-        // 心愿商城模型:心愿的「实现」由履约方线下满足,
-        // 兑换心愿(出积分)的只能是创建方(requester_id),不能是履约方乱兑
         let requester_id = existing.requester_id.unwrap_or(existing.created_by);
-        if user_id != requester_id {
-            return Err(CustomError::Forbidden("只有心愿创建方可以兑换".into()));
+        let fulfiller_id = existing
+            .fulfiller_id
+            .ok_or_else(|| CustomError::BadRequest("心愿缺少履约方信息".into()))?;
+        if user_id != fulfiller_id {
+            return Err(CustomError::Forbidden("只有指定履约人可以领取心愿".into()));
         }
 
         let points_cost = existing.final_cost.unwrap_or(existing.wish_cost);
         ensure_valid_wish_cost(points_cost)?;
 
-        // SELECT FOR UPDATE 锁住 users 行,确保后续 UPDATE 看到的余额是最新值
-        let current_points: i32 =
-            sqlx::query_scalar("SELECT love_point FROM users WHERE user_id = $1 FOR UPDATE")
-                .bind(user_id)
-                .fetch_one(&mut *tx)
-                .await?;
-
-        if current_points < points_cost {
-            return Err(CustomError::BadRequest("爱心积分不足".into()));
+        // 兼容升级前已在心愿池、但尚未冻结积分的历史 CREATED 数据。
+        if existing.points_frozen_at.is_none() {
+            Self::freeze_wish_points_in_tx(
+                &mut tx,
+                wish_id,
+                existing.group_id,
+                requester_id,
+                points_cost,
+            )
+            .await?;
         }
 
-        // 冻结积分：可用减少,冻结增加(冻结字段由事务内计算,不再依赖外部读)
-        let frozen_before = 0i32;
-        let available_after = current_points - points_cost;
-        let frozen_after = points_cost;
-
-        sqlx::query("UPDATE users SET love_point = $2 WHERE user_id = $1")
-            .bind(user_id)
-            .bind(available_after)
-            .execute(&mut *tx)
+        // 同一履约人的领取请求串行化，配合部分唯一索引避免并发领取两条。
+        sqlx::query_scalar::<_, i64>("SELECT user_id FROM users WHERE user_id = $1 FOR UPDATE")
+            .bind(fulfiller_id)
+            .fetch_one(&mut *tx)
             .await?;
-
-        // 同步 user_group_points —— 冻结语义:
-        //   available_love_point 减少(等于新的 users.love_point)
-        //   frozen_love_point    增加 (= 本次冻结金额)
-        //   love_point (legacy)  = available_love_point
-        sqlx::query(
-            "INSERT INTO user_group_points (user_id, group_id, available_love_point, love_point, frozen_love_point, updated_at) \
-             VALUES ($1, $2, $3, $3, $4, NOW()) \
-             ON CONFLICT (user_id, group_id) DO UPDATE \
-             SET available_love_point = $3, \
-                 love_point = $3, \
-                 frozen_love_point = user_group_points.frozen_love_point + $4, \
-                 updated_at = NOW()"
+        let has_active_claim: bool = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM wishes \
+             WHERE group_id = $1 AND claimed_by = $2 AND status = 'CLAIMED'::wish_status_enum)",
         )
-        .bind(user_id)
         .bind(existing.group_id)
-        .bind(available_after as i64)
-        .bind(points_cost as i64)
-        .execute(&mut *tx)
+        .bind(fulfiller_id)
+        .fetch_one(&mut *tx)
         .await?;
-
-        // 写积分流水(冻结) - biz_type 统一为 'wish'
-        sqlx::query(
-            "INSERT INTO love_point_transactions (user_id, group_id, type, amount, available_before, available_after, frozen_before, frozen_after, biz_type, biz_id, trace_id, created_at) \
-             VALUES ($1, $2, 'FREEZE'::love_point_tx_type_enum, $3, $4, $5, $6, $7, 'wish', $8, '', NOW())"
-        )
-        .bind(user_id)
-        .bind(existing.group_id)
-        .bind(points_cost)
-        .bind(current_points)
-        .bind(available_after)
-        .bind(frozen_before)
-        .bind(frozen_after)
-        .bind(wish_id)
-        .execute(&mut *tx)
-        .await?;
+        if has_active_claim {
+            return Err(CustomError::BadRequest(
+                "你已有履约中的心愿，请先完成或放弃领取".into(),
+            ));
+        }
 
         // 计算履约截止时间
         let deadline_hours = existing.fulfillment_deadline_hours.unwrap_or(72);
@@ -1354,10 +1813,14 @@ impl WishService {
 
         // 更新心愿状态为 CLAIMED(条件 UPDATE 防止 TOCTOU 重复 select)
         let rec = sqlx::query_as::<_, WishRecord>(
-            "UPDATE wishes SET status = 'CLAIMED'::wish_status_enum, selected_by = $2, selected_at = NOW(), claimed_by = $2, fulfillment_due_at = $3, claim_cost = $4, updated_at = NOW() \
+            "UPDATE wishes SET status = 'CLAIMED'::wish_status_enum, selected_by = $2, \
+                    selected_at = NOW(), claimed_by = $2, claimed_at = NOW(), \
+                    fulfillment_due_at = $3, claim_cost = $4, \
+                    points_frozen_at = COALESCE(points_frozen_at, NOW()), updated_at = NOW() \
              WHERE wish_id = $1 AND status = 'CREATED'::wish_status_enum AND claimed_by IS NULL \
              RETURNING wish_id, wish_name, wish_cost, status, created_by, group_id, claimed_by, claimed_at, claim_cost, created_at, updated_at, \
-             requester_id, fulfiller_id, fulfillment_due_at, fulfillment_deadline_hours"
+             requester_id, fulfiller_id, fulfillment_due_at, fulfillment_deadline_hours, \
+             points_frozen_at, creator_checkin_due_at, auto_completed_at, fulfilled_at"
         )
         .bind(wish_id)
         .bind(user_id)
@@ -1375,10 +1838,10 @@ impl WishService {
             EventType::WishSelected,
             WishSelectedPayload {
                 wish_id,
-                requester_id: user_id,
-                fulfiller_id: existing.fulfiller_id.unwrap_or(0),
+                requester_id,
+                fulfiller_id,
                 group_id: existing.group_id,
-                frozen_amount: points_cost as i32,
+                frozen_amount: points_cost,
                 fulfillment_due_at: fulfillment_due_at.to_rfc3339(),
                 trace_id: None,
             },
@@ -1392,14 +1855,8 @@ impl WishService {
         Ok(rec)
     }
 
-    /// 接单人确认履约完成 — 把心愿从 CLAIMED 推到 FINISHED
-    ///
-    /// 业务流:履约人提交打卡后(状态保持 CLAIMED),由接单人(requester_id)
-    /// 在 wishDetail 页面点「确认完成」,才推进到 FINISHED。
-    ///
-    /// 积分在 select_wish 阶段已 FREEZE,FINISHED 不再扣减 —— 走 reject_wish 的
-    /// UNFREEZE 路径会让积分回到余额;FINISHED 不走 UNFREEZE,相当于「正式扣下」。
-    pub async fn confirm_wish_completion(
+    /// 履约人在尚未打卡时放弃领取，心愿回到池中；创建人的积分继续保持冻结。
+    pub async fn release_claim(
         db: &PgPool,
         user_id: i64,
         wish_id: i64,
@@ -1407,70 +1864,71 @@ impl WishService {
         let mut tx = db.begin().await?;
         let existing = sqlx::query_as::<_, WishRecord>(
             "SELECT wish_id, wish_name, wish_cost, status, created_by, group_id, claimed_by, claimed_at, claim_cost, created_at, updated_at, \
-             requester_id, fulfiller_id, initial_cost, final_cost, fulfillment_deadline_hours FROM wishes WHERE wish_id = $1 FOR UPDATE"
+             requester_id, fulfiller_id FROM wishes WHERE wish_id = $1 FOR UPDATE",
         )
         .bind(wish_id)
         .fetch_optional(&mut *tx)
         .await?
-        .ok_or_else(|| CustomError::NotFound("心愿不存在".into()))?;
+        .ok_or_else(|| CustomError::wish_not_found("心愿不存在"))?;
         ensure_active_wish_actor_in_tx(&mut tx, existing.group_id, user_id).await?;
 
-        // 权限:只有接单人(requester_id)能确认完成
-        let requester_id = existing.requester_id.unwrap_or(existing.created_by);
-        if user_id != requester_id {
-            return Err(CustomError::Forbidden("只有接单人可以确认完成".into()));
+        if existing.status != WishStatus::Claimed || existing.claimed_by != Some(user_id) {
+            return Err(CustomError::Forbidden("只有当前履约人可以放弃领取".into()));
         }
-
-        // 状态:必须是 CLAIMED
-        if existing.status != WishStatus::Claimed {
-            return Err(CustomError::BadRequest(
-                "只有履约中的心愿可以确认完成".into(),
-            ));
-        }
-
-        // 必须有打卡记录(履约人必须先提交打卡)
-        let feedback_exists: bool =
-            sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM wish_feedbacks WHERE wish_id = $1)")
+        let feedback_count: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM wish_feedbacks WHERE wish_id = $1")
                 .bind(wish_id)
                 .fetch_one(&mut *tx)
                 .await?;
-        if !feedback_exists {
-            return Err(CustomError::BadRequest(
-                "履约人尚未提交打卡,无法确认完成".into(),
-            ));
+        if feedback_count > 0 {
+            return Err(CustomError::BadRequest("已有打卡记录，不能放弃领取".into()));
         }
 
         let rec = sqlx::query_as::<_, WishRecord>(
-            "UPDATE wishes SET status = 'FINISHED'::wish_status_enum, updated_at = NOW() WHERE wish_id = $1 AND status = 'CLAIMED'::wish_status_enum \
+            "UPDATE wishes SET status = 'CREATED'::wish_status_enum, \
+                    selected_by = NULL, selected_at = NULL, claimed_by = NULL, claimed_at = NULL, \
+                    claim_cost = NULL, fulfillment_due_at = NULL, fulfilled_at = NULL, \
+                    creator_checkin_due_at = NULL, updated_at = NOW() \
+             WHERE wish_id = $1 AND status = 'CLAIMED'::wish_status_enum \
              RETURNING wish_id, wish_name, wish_cost, status, created_by, group_id, claimed_by, claimed_at, claim_cost, created_at, updated_at, \
-             requester_id, fulfiller_id, initial_cost, final_cost, fulfillment_deadline_hours"
+             requester_id, fulfiller_id, points_frozen_at, creator_checkin_due_at, auto_completed_at, fulfilled_at",
         )
         .bind(wish_id)
         .fetch_one(&mut *tx)
         .await?;
-
         tx.commit().await?;
-
-        let deducted_amount = existing.final_cost.unwrap_or(existing.wish_cost);
-        let _ = EventPublisher::publish(
-            db,
-            EventType::WishFinished,
-            WishFinishedPayload {
-                wish_id,
-                requester_id,
-                fulfiller_id: existing.fulfiller_id.unwrap_or(0),
-                group_id: existing.group_id,
-                deducted_amount,
-                trace_id: None,
-            },
-            Some(user_id),
-            Some(existing.group_id),
-            Some("wish"),
-            Some(wish_id),
-        )
-        .await;
-
         Ok(rec)
+    }
+
+    /// 兼容旧客户端的确认端点。新流程由双方反馈自动完成，不再允许单独确认。
+    pub async fn confirm_wish_completion(
+        db: &PgPool,
+        user_id: i64,
+        wish_id: i64,
+    ) -> Result<WishRecord, CustomError> {
+        Self::auto_finish_overdue_wish(db, wish_id).await?;
+        Self::auto_expire_overdue_wish(db, wish_id).await?;
+        let existing = sqlx::query_as::<_, WishRecord>(
+            "SELECT wish_id, wish_name, wish_cost, status, created_by, group_id, claimed_by, claimed_at, claim_cost, created_at, updated_at, \
+             requester_id, fulfiller_id, initial_cost, final_cost, fulfillment_deadline_hours, \
+             fulfilled_at, creator_checkin_due_at, auto_completed_at, points_frozen_at, finished_at \
+             FROM wishes WHERE wish_id = $1"
+        )
+        .bind(wish_id)
+        .fetch_optional(db)
+        .await?
+        .ok_or_else(|| CustomError::NotFound("心愿不存在".into()))?;
+        let requester_id = existing.requester_id.unwrap_or(existing.created_by);
+        let fulfiller_id = existing.fulfiller_id.or(existing.claimed_by).unwrap_or(0);
+        if user_id != requester_id && user_id != fulfiller_id {
+            return Err(CustomError::Forbidden("无权操作此心愿".into()));
+        }
+        if existing.status == WishStatus::Finished {
+            return Ok(existing);
+        }
+        Err(CustomError::BadRequest(
+            "新流程需要双方完成打卡后自动完成心愿".into(),
+        ))
     }
 }
 
@@ -1580,12 +2038,8 @@ mod tests {
     }
 
     #[test]
-    fn close_policy_only_allows_non_terminal_states() {
-        for status in [
-            WishStatus::Negotiating,
-            WishStatus::Created,
-            WishStatus::Claimed,
-        ] {
+    fn close_policy_disallows_unilateral_close_after_claim() {
+        for status in [WishStatus::Negotiating, WishStatus::Created] {
             assert!(validate_wish_closure_policy(
                 status,
                 WishClosureAction::Close,
@@ -1596,6 +2050,7 @@ mod tests {
             .is_ok());
         }
         for status in [
+            WishStatus::Claimed,
             WishStatus::Finished,
             WishStatus::Expired,
             WishStatus::Closed,

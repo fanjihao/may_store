@@ -141,6 +141,7 @@ impl Modify for SecurityAddon {
         crate::api::wishes::routes::wish_confirm_agreement,
         crate::api::wishes::routes::wish_reject,
         crate::api::wishes::routes::wish_select,
+        crate::api::wishes::routes::wish_release,
         crate::api::wishes::routes::submit_feedback,
         crate::api::wishes::routes::wish_close,
         crate::api::wishes::routes::wish_expire,

@@ -49,6 +49,12 @@ pub struct WishRecord {
     #[sqlx(default)]
     pub expired_at: Option<DateTime<Utc>>,
     #[sqlx(default)]
+    pub points_frozen_at: Option<DateTime<Utc>>,
+    #[sqlx(default)]
+    pub creator_checkin_due_at: Option<DateTime<Utc>>,
+    #[sqlx(default)]
+    pub auto_completed_at: Option<DateTime<Utc>>,
+    #[sqlx(default)]
     pub quality_review_status: Option<WishQualityStatus>,
     #[sqlx(default)]
     pub quality_reviewer_id: Option<i64>,
@@ -101,6 +107,8 @@ pub struct WishFeedbackRecord {
     pub feedback_id: i64,
     pub wish_id: i64,
     pub user_id: i64,
+    #[sqlx(default)]
+    pub role_snapshot: Option<String>,
     pub content: Option<String>,
     pub images: Option<Json<Vec<String>>>,
     pub created_at: DateTime<Utc>,
@@ -113,6 +121,7 @@ pub struct WishFeedbackRecord {
 pub struct WishFeedbackOut {
     pub feedback_id: i64,
     pub user_id: i64,
+    pub role: Option<String>,
     pub content: Option<String>,
     pub images: Option<Vec<String>>,
     pub created_at: DateTime<Utc>,
@@ -124,6 +133,7 @@ impl From<WishFeedbackRecord> for WishFeedbackOut {
         Self {
             feedback_id: r.feedback_id,
             user_id: r.user_id,
+            role: r.role_snapshot,
             content: r.content,
             images: r.images.map(|j| j.0),
             created_at: r.created_at,
@@ -196,7 +206,14 @@ pub struct WishOut {
     pub claim_cost: Option<i32>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
+    /// 兼容旧客户端：第一条打卡反馈
     pub feedback: Option<WishFeedbackOut>,
+    /// 双方各自的打卡反馈
+    #[serde(default)]
+    pub feedbacks: Vec<WishFeedbackOut>,
+    pub fulfilled_at: Option<DateTime<Utc>>,
+    pub creator_checkin_due_at: Option<DateTime<Utc>>,
+    pub auto_completed_at: Option<DateTime<Utc>>,
     /// 协商双方:创建人(也是请求人/出积分的人)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub requester_id: Option<i64>,
@@ -224,6 +241,11 @@ pub struct WishNegotiationStatus {
 
 impl WishOut {
     pub fn from_record(r: WishRecord, f: Option<WishFeedbackRecord>) -> Self {
+        let feedbacks = f.into_iter().map(WishFeedbackOut::from).collect::<Vec<_>>();
+        Self::from_record_with_feedbacks(r, feedbacks)
+    }
+
+    pub fn from_record_with_feedbacks(r: WishRecord, feedbacks: Vec<WishFeedbackOut>) -> Self {
         Self {
             wish_id: r.wish_id,
             wish_name: r.wish_name,
@@ -236,7 +258,11 @@ impl WishOut {
             claim_cost: r.claim_cost,
             created_at: r.created_at,
             updated_at: r.updated_at,
-            feedback: f.map(WishFeedbackOut::from),
+            feedback: feedbacks.first().cloned(),
+            feedbacks,
+            fulfilled_at: r.fulfilled_at,
+            creator_checkin_due_at: r.creator_checkin_due_at,
+            auto_completed_at: r.auto_completed_at,
             requester_id: r.requester_id,
             fulfiller_id: r.fulfiller_id,
             negotiation_status: None,

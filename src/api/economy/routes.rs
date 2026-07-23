@@ -178,8 +178,8 @@ async fn get_points_balance(
     // availableLovePoint: 取自 users.love_point —— 这是订单完成/退款时真正变动的字段
     //                  (user_group_points.available_love_point 当前未在任何更新路径里写入,
     //                   是个老的历史字段,不能作为可用余额的权威值)
-    // frozenLovePoint: 仍取自 user_group_points.frozen_love_point —— 冻结语义独立
-    //                  (虽然 select_wish 也没正确同步它,但这次不修冻结路径,先保持现状)
+    // frozenLovePoint: 取自 user_group_points.frozen_love_point；
+    //                  心愿双方同意时增加，关闭/逾期退款或完成结算时减少。
     let available: i64 = sqlx::query_scalar("SELECT love_point FROM users WHERE user_id = $1")
         .bind(user_id)
         .fetch_optional(db)

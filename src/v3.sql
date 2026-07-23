@@ -173,9 +173,9 @@ CREATE TYPE risk_status_enum AS ENUM ('PASS', 'SUSPECT', 'BLOCKED');
 CREATE TYPE wish_status_enum AS ENUM (
     'DRAFT',           -- 发起人创建草稿
     'NEGOTIATING',     -- 双方协商积分和履约期限
-    'CREATED',         -- 双方已确认，进入组内心愿池
-    'CLAIMED',         -- 发起人已选择，积分已冻结，待履约
-    'FINISHED',        -- 已履约并打卡，积分正式扣减
+    'CREATED',         -- 双方已确认，积分已冻结，进入组内心愿池
+    'CLAIMED',         -- 履约人已领取，等待双方依次打卡
+    'FINISHED',        -- 双方已打卡或验收超时，积分正式结算
     'EXPIRED',         -- 履约人逾期未履约，积分已退还
     'CLOSED'           -- 双方关闭或作废
 );
@@ -745,6 +745,9 @@ CREATE TABLE wishes (
     fulfillment_due_at TIMESTAMPTZ,
     fulfilled_at TIMESTAMPTZ,
     expired_at TIMESTAMPTZ,
+    points_frozen_at TIMESTAMPTZ,
+    creator_checkin_due_at TIMESTAMPTZ,
+    auto_completed_at TIMESTAMPTZ,
     -- Quality review
     quality_review_status wish_quality_status_enum DEFAULT 'NONE',
     quality_level wish_quality_level_enum DEFAULT 'NONE',
@@ -775,18 +778,21 @@ COMMENT ON COLUMN wishes.wish_cost IS '心愿所需积分';
 COMMENT ON COLUMN wishes.status IS '心愿状态: DRAFT/NEGOTIATING/CREATED/CLAIMED/FINISHED/EXPIRED/CLOSED';
 COMMENT ON COLUMN wishes.created_by IS '创建者用户ID';
 COMMENT ON COLUMN wishes.group_id IS '所属关联组ID';
-COMMENT ON COLUMN wishes.requester_id IS '发起人(选择心愿和支付积分的人)';
+COMMENT ON COLUMN wishes.requester_id IS '创建人(提出心愿和支付积分的人)';
 COMMENT ON COLUMN wishes.fulfiller_id IS '履约人(线下完成心愿的人)';
 COMMENT ON COLUMN wishes.creator_role_snapshot IS '创建时角色快照';
 COMMENT ON COLUMN wishes.initial_cost IS '初始报价';
 COMMENT ON COLUMN wishes.final_cost IS '双方确认后的爱心积分价格';
 COMMENT ON COLUMN wishes.fulfillment_deadline_hours IS '履约期限小时数';
-COMMENT ON COLUMN wishes.selected_by IS '选择心愿的人(通常等于requester_id)';
+COMMENT ON COLUMN wishes.selected_by IS '从心愿池领取心愿的履约人';
 COMMENT ON COLUMN wishes.selected_at IS '选择时间';
 COMMENT ON COLUMN wishes.claim_cost IS '兑换时消耗积分';
 COMMENT ON COLUMN wishes.fulfillment_due_at IS '履约截止时间';
-COMMENT ON COLUMN wishes.fulfilled_at IS '发起人打卡确认履约时间';
+COMMENT ON COLUMN wishes.fulfilled_at IS '履约人首次打卡时间';
 COMMENT ON COLUMN wishes.expired_at IS '逾期时间';
+COMMENT ON COLUMN wishes.points_frozen_at IS '双方同意后积分成功冻结时间';
+COMMENT ON COLUMN wishes.creator_checkin_due_at IS '履约人打卡后创建方验收打卡截止时间';
+COMMENT ON COLUMN wishes.auto_completed_at IS '创建方超时未处理时惰性自动完成时间';
 COMMENT ON COLUMN wishes.quality_review_status IS '质量查看状态';
 COMMENT ON COLUMN wishes.quality_reviewer_id IS '质量查看管理员';
 COMMENT ON COLUMN wishes.quality_remark IS '质量备注';
@@ -803,6 +809,9 @@ CREATE INDEX idx_wish_requester ON wishes(requester_id);
 CREATE INDEX idx_wish_fulfiller ON wishes(fulfiller_id);
 CREATE INDEX idx_wish_selected_by ON wishes(selected_by);
 CREATE INDEX idx_wish_claimed_by ON wishes(claimed_by);
+CREATE UNIQUE INDEX uniq_active_claim_per_fulfiller
+    ON wishes(group_id, claimed_by)
+    WHERE status = 'CLAIMED'::wish_status_enum AND claimed_by IS NOT NULL;
 
 -- ================= WISH NEGOTIATIONS =================
 CREATE TABLE wish_negotiations (
@@ -828,6 +837,7 @@ CREATE TABLE wish_checkins (
     id BIGSERIAL PRIMARY KEY,
     wish_id BIGINT NOT NULL REFERENCES wishes(wish_id) ON DELETE CASCADE,
     user_id BIGINT NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+    role_snapshot VARCHAR(32) NOT NULL,
     content TEXT,
     location VARCHAR(256),
     images JSONB,
@@ -848,11 +858,13 @@ CREATE TABLE wish_feedbacks (
     content TEXT,
     images JSONB,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    UNIQUE(wish_id)
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
-COMMENT ON TABLE wish_feedbacks IS '心愿反馈记录';
+COMMENT ON TABLE wish_feedbacks IS '心愿双方打卡反馈记录，每位参与方每个心愿一条';
+COMMENT ON COLUMN wish_feedbacks.role_snapshot IS 'REQUESTER=创建方 / FULFILLER=履约方';
 CREATE INDEX idx_wf_wish ON wish_feedbacks(wish_id);
+CREATE UNIQUE INDEX uniq_wish_feedback_user ON wish_feedbacks(wish_id, user_id);
+CREATE INDEX idx_wish_feedback_role ON wish_feedbacks(wish_id, role_snapshot);
 
 -- ================= LOVE POINT TRANSACTIONS =================
 CREATE TABLE love_point_transactions (
@@ -878,6 +890,11 @@ COMMENT ON TABLE love_point_transactions IS '爱心积分流水 - 所有积分�
 -- 代码里 ON CONFLICT (idempotency_key) 必须带 WHERE idempotency_key IS NOT NULL,否则报 42P10
 -- 详见 CLAUDE.md「PostgreSQL 部分唯一索引 + ON CONFLICT 强制对齐」
 CREATE UNIQUE INDEX idx_lpt_idempotency ON love_point_transactions(idempotency_key) WHERE idempotency_key IS NOT NULL;
+CREATE UNIQUE INDEX uniq_wish_point_settlement
+    ON love_point_transactions(biz_id)
+    WHERE biz_type = 'wish'
+      AND type = 'DEDUCT'::love_point_tx_type_enum
+      AND biz_id IS NOT NULL;
 CREATE INDEX idx_lpt_user_group_created ON love_point_transactions(user_id, group_id, created_at);
 
 -- ================= GROUP EXP TRANSACTIONS =================

@@ -8,6 +8,7 @@ use sqlx::Row;
 use std::sync::Arc;
 use utoipa::ToSchema;
 
+use crate::application::wish_service::WishService;
 use crate::config::AppState;
 use crate::errors::CustomError;
 use crate::middlewares::auth::UserToken;
@@ -22,7 +23,9 @@ pub enum TodoType {
     OrderAccept,
     OrderComplete,
     OrderConfirm,
+    WishClaim,
     WishFulfill,
+    WishConfirm,
     WishNegotiate,
     UnreadNotifications,
 }
@@ -119,6 +122,17 @@ pub async fn get_today_todos(
     let today = Local::now().date_naive();
     let today_str = today.to_string();
 
+    let group_ids: Vec<i64> = sqlx::query_scalar(
+        "SELECT group_id FROM association_group_members \
+         WHERE user_id = $1 AND member_status = 'ACTIVE'::group_member_status_enum",
+    )
+    .bind(user_id)
+    .fetch_all(db)
+    .await?;
+    for group_id in group_ids {
+        WishService::auto_process_overdue_group_wishes(db, group_id).await?;
+    }
+
     let (sign_in_rows, order_rows, wish_rows, unread_count): (
         Vec<SignInRow>,
         Vec<OrderRow>,
@@ -203,7 +217,7 @@ pub async fn get_today_todos(
             title: title.to_string(),
             subtitle: Some(r.title.clone()),
             ref_id: Some(r.ref_id),
-            action_url: format!("/pages/wishes/detail?id={}", r.ref_id),
+            action_url: format!("/pages/wishDetail/wishDetail?id={}", r.ref_id),
             is_my_action: true, // 履约/协商 (按 SQL 过滤后) 永远是用户该操作的
         });
     }
@@ -321,10 +335,40 @@ async fn fetch_orders(db: &sqlx::PgPool, user_id: i64) -> Result<Vec<OrderRow>, 
 async fn fetch_wishes(db: &sqlx::PgPool, user_id: i64) -> Result<Vec<WishRow>, sqlx::Error> {
     let rows = sqlx::query(
         r#"
-        SELECT 'FULFILL' AS kind, w.wish_id AS ref_id, w.group_id, g.group_name,
+        SELECT 'CLAIM' AS kind, w.wish_id AS ref_id, w.group_id, g.group_name,
+               w.wish_name AS title, w.created_at AS sort_at
+        FROM wishes w JOIN association_groups g ON g.group_id = w.group_id
+        WHERE w.fulfiller_id = $1 AND w.status = 'CREATED'::wish_status_enum
+          AND NOT EXISTS (
+              SELECT 1 FROM wishes active
+              WHERE active.group_id = w.group_id
+                AND active.claimed_by = $1
+                AND active.status = 'CLAIMED'::wish_status_enum
+          )
+        UNION ALL
+        SELECT 'FULFILL' AS kind, w.wish_id, w.group_id, g.group_name,
                w.wish_name AS title, w.fulfillment_due_at AS sort_at
         FROM wishes w JOIN association_groups g ON g.group_id = w.group_id
-        WHERE w.fulfiller_id = $1 AND w.status = 'CLAIMED'::wish_status_enum
+        WHERE w.claimed_by = $1 AND w.status = 'CLAIMED'::wish_status_enum
+          AND NOT EXISTS (
+              SELECT 1 FROM wish_feedbacks wf
+              WHERE wf.wish_id = w.wish_id AND wf.user_id = $1
+          )
+        UNION ALL
+        SELECT 'CONFIRM' AS kind, w.wish_id, w.group_id, g.group_name,
+               w.wish_name, w.creator_checkin_due_at
+        FROM wishes w JOIN association_groups g ON g.group_id = w.group_id
+        WHERE COALESCE(w.requester_id, w.created_by) = $1
+          AND w.status = 'CLAIMED'::wish_status_enum
+          AND EXISTS (
+              SELECT 1 FROM wish_feedbacks wf
+              WHERE wf.wish_id = w.wish_id
+                AND wf.user_id = COALESCE(w.fulfiller_id, w.claimed_by)
+          )
+          AND NOT EXISTS (
+              SELECT 1 FROM wish_feedbacks wf
+              WHERE wf.wish_id = w.wish_id AND wf.user_id = $1
+          )
         UNION ALL
         SELECT 'NEGOTIATE' AS kind, w.wish_id, w.group_id, g.group_name, w.wish_name, w.created_at
         FROM wishes w JOIN association_groups g ON g.group_id = w.group_id
@@ -364,9 +408,11 @@ fn order_kind_to_todo(kind: &str) -> (TodoType, &'static str) {
 
 fn wish_kind_to_todo(kind: &str) -> (TodoType, &'static str) {
     match kind {
+        "CLAIM" => (TodoType::WishClaim, "1 个心愿待领取"),
         "FULFILL" => (TodoType::WishFulfill, "1 个心愿待履约"),
+        "CONFIRM" => (TodoType::WishConfirm, "1 个心愿待验收"),
         "NEGOTIATE" => (TodoType::WishNegotiate, "1 个心愿待协商"),
-        _ => unreachable!("WishRow.kind must be one of FULFILL/NEGOTIATE"),
+        _ => unreachable!("WishRow.kind must be one of CLAIM/FULFILL/CONFIRM/NEGOTIATE"),
     }
 }
 
@@ -391,13 +437,15 @@ mod tests {
 
     #[test]
     fn wish_kind_mapping_covers_all_variants() {
+        assert_eq!(wish_kind_to_todo("CLAIM").0, TodoType::WishClaim);
         assert_eq!(wish_kind_to_todo("FULFILL").0, TodoType::WishFulfill);
+        assert_eq!(wish_kind_to_todo("CONFIRM").0, TodoType::WishConfirm);
         assert_eq!(wish_kind_to_todo("NEGOTIATE").0, TodoType::WishNegotiate);
     }
 
     #[test]
     fn wish_kind_titles_are_non_empty() {
-        for kind in &["FULFILL", "NEGOTIATE"] {
+        for kind in &["CLAIM", "FULFILL", "CONFIRM", "NEGOTIATE"] {
             let (_, title) = wish_kind_to_todo(kind);
             assert!(!title.is_empty(), "title for {} must not be empty", kind);
         }

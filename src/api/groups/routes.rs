@@ -70,7 +70,7 @@ async fn read_frozen_points(
             .ok_or_else(|| CustomError::internal_error("冻结积分余额异常"));
     }
 
-    // 兼容尚未建立 user_group_points 行的历史数据；解冻流水必须从冻结流水中扣除。
+    // 兼容尚未建立 user_group_points 行的历史数据；解冻或正式结算都要从冻结额扣除。
     let (freeze_total, unfreeze_total): (i64, i64) = sqlx::query_as(
         r#"SELECT
                COALESCE(
@@ -82,6 +82,10 @@ async fn read_frozen_points(
                COALESCE(
                    SUM(amount) FILTER (
                        WHERE type = 'UNFREEZE'::love_point_tx_type_enum
+                          OR (
+                              type = 'DEDUCT'::love_point_tx_type_enum
+                              AND LOWER(biz_type) = 'wish'
+                          )
                    ),
                    0
                )::BIGINT
@@ -341,7 +345,7 @@ async fn swap_role(
         let pending_wishes: i64 = sqlx::query_scalar::<_, i64>(
             r#"SELECT COUNT(*) FROM wishes
                WHERE group_id=$1 AND status='CLAIMED'::wish_status_enum
-               AND (selected_by=$2 OR fulfiller_id=$2)"#,
+               AND (COALESCE(requester_id, created_by)=$2 OR fulfiller_id=$2)"#,
         )
         .bind(gid)
         .bind(token.user_id)
@@ -474,7 +478,8 @@ async fn settlement_check(
     // 检查自己发起且未完结的心愿
     let pending_initiated: i64 = sqlx::query_scalar::<_, Option<i64>>(
         r#"SELECT COUNT(*) FROM wishes
-           WHERE group_id=$1 AND selected_by=$2 AND status NOT IN ('FINISHED', 'EXPIRED', 'CLOSED')"#
+           WHERE group_id=$1 AND COALESCE(requester_id, created_by)=$2
+             AND status NOT IN ('FINISHED', 'EXPIRED', 'CLOSED')"#,
     )
     .bind(gid)
     .bind(token.user_id)
@@ -493,7 +498,7 @@ async fn settlement_check(
     .await?
     .unwrap_or(0);
 
-    // 优先使用当前冻结余额；无余额行时才按 FREEZE - UNFREEZE 回放历史流水。
+    // 优先使用当前冻结余额；无余额行时按冻结、退款和结算流水回放。
     let frozen_points = read_frozen_points(db, token.user_id, gid).await?;
 
     let can_exit = pending_initiated == 0 && pending_as_fulfiller == 0 && frozen_points == 0;
@@ -1083,7 +1088,7 @@ async fn settlement_check_impl(
     .await?
     .unwrap_or(0);
 
-    // 优先使用当前冻结余额；无余额行时才按 FREEZE - UNFREEZE 回放历史流水。
+    // 优先使用当前冻结余额；无余额行时按冻结、退款和结算流水回放。
     let frozen_points = read_frozen_points(db, user_id, group_id).await?;
 
     let can_exit = pending_initiated == 0 && pending_as_fulfiller == 0 && frozen_points == 0;
@@ -1289,7 +1294,7 @@ async fn swap_role_check(
                 return Ok::<i64, sqlx::Error>(0);
             }
             // 与 swap_role 对齐:既要查「协商中」(全组 DRAFT/NEGOTIATING),
-            // 也要查「在途心愿」(自己作为 selected_by/fulfiller_id 的 CLAIMED)
+            // 也要查「在途心愿」(自己作为创建人或履约人的 CLAIMED)
             let n_negotiating: i64 = sqlx::query_scalar(
                 r#"SELECT COUNT(*) FROM wishes
                    WHERE group_id = $1 AND status IN ('DRAFT'::wish_status_enum, 'NEGOTIATING'::wish_status_enum)"#,
@@ -1300,7 +1305,7 @@ async fn swap_role_check(
             let n_claimed: i64 = sqlx::query_scalar(
                 r#"SELECT COUNT(*) FROM wishes
                    WHERE group_id = $1 AND status = 'CLAIMED'::wish_status_enum
-                     AND (selected_by = $2 OR fulfiller_id = $2)"#,
+                     AND (COALESCE(requester_id, created_by) = $2 OR fulfiller_id = $2)"#,
             )
             .bind(gid)
             .bind(user_id)
@@ -1341,7 +1346,7 @@ async fn swap_role_check(
         let claimed_n: i64 = sqlx::query_scalar(
             r#"SELECT COUNT(*) FROM wishes
                WHERE group_id = $1 AND status = 'CLAIMED'::wish_status_enum
-                 AND (selected_by = $2 OR fulfiller_id = $2)"#,
+                 AND (COALESCE(requester_id, created_by) = $2 OR fulfiller_id = $2)"#,
         )
         .bind(gid)
         .bind(user_id)

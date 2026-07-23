@@ -406,3 +406,60 @@ fn wish_cost_constraints_match_canonical_and_forward_schemas() {
         );
     }
 }
+
+#[test]
+fn wish_dual_feedback_contract_matches_canonical_and_forward_schemas() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let normalize = |path: &Path| {
+        fs::read_to_string(path)
+            .expect("schema SQL must be readable")
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ")
+            .to_ascii_lowercase()
+    };
+    let canonical = normalize(&root.join("src/v3.sql"));
+    let migration = normalize(&root.join("migrations/202607230001_wish_dual_feedback.sql"));
+
+    for column in [
+        "points_frozen_at timestamptz",
+        "creator_checkin_due_at timestamptz",
+        "auto_completed_at timestamptz",
+        "role_snapshot varchar(32)",
+    ] {
+        assert!(
+            canonical.contains(column),
+            "canonical schema missing {column}"
+        );
+        assert!(
+            migration.contains(column),
+            "forward migration missing {column}"
+        );
+    }
+    for index in [
+        "uniq_wish_feedback_user on wish_feedbacks(wish_id, user_id)",
+        "uniq_active_claim_per_fulfiller on wishes(group_id, claimed_by)",
+        "uniq_wish_point_settlement on love_point_transactions(biz_id)",
+    ] {
+        assert!(
+            canonical.contains(index),
+            "canonical schema missing {index}"
+        );
+        assert!(
+            migration.contains(index),
+            "forward migration missing {index}"
+        );
+    }
+    assert!(
+        migration.contains("drop constraint if exists wish_feedbacks_wish_id_key"),
+        "forward migration must remove the historical one-feedback constraint"
+    );
+    assert!(
+        migration.contains("'wish_finish_' || o.wish_id"),
+        "forward migration must settle historical FINISHED freezes idempotently"
+    );
+    assert!(
+        migration.contains("set claimed_by = fulfiller_id, selected_by = fulfiller_id"),
+        "forward migration must normalize legacy claim ownership"
+    );
+}

@@ -30,13 +30,13 @@ pub enum WishStatus {
     /// 协商中 - 双方协商积分价格和履约期限
     #[serde(rename = "NEGOTIATING")]
     Negotiating,
-    /// 已创建 - 双方已确认，进入组内心愿池
+    /// 心愿池 - 双方已确认且积分已冻结，等待履约人领取
     #[serde(rename = "CREATED")]
     Created,
-    /// 已选择 - 发起人已选择，积分已冻结，待履约
+    /// 已领取 - 履约人已领取，等待双方依次打卡
     #[serde(rename = "CLAIMED")]
     Claimed,
-    /// 已完成 - 已履约并打卡，积分正式扣减
+    /// 已完成 - 双方已打卡（或验收超时兜底），冻结积分已正式结算
     #[serde(rename = "FINISHED")]
     Finished,
     /// 已逾期 - 履约人逾期未履约，积分已退还
