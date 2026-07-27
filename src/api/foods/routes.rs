@@ -55,6 +55,8 @@ pub struct FoodImage {
 pub struct FoodIngredient {
     pub name: String,
     pub amount: String,
+    #[serde(default)]
+    pub icon: Option<String>,
 }
 
 /// 步骤项 (FSD §5.1)
@@ -240,6 +242,36 @@ fn row_to_detail(r: &sqlx::postgres::PgRow) -> FoodDetail {
         last_completed_at: r.try_get("last_completed_at").ok().flatten(),
         is_favorited: r.try_get("is_favorited").unwrap_or(false),
     }
+}
+
+async fn enrich_ingredient_icons(
+    db: &sqlx::PgPool,
+    group_id: i64,
+    ingredients: &mut [FoodIngredient],
+) -> Result<(), CustomError> {
+    if ingredients.is_empty() {
+        return Ok(());
+    }
+    let names: Vec<String> = ingredients
+        .iter()
+        .map(|ingredient| ingredient.name.clone())
+        .collect();
+    let rows =
+        sqlx::query("SELECT name, icon FROM ingredients WHERE group_id = $1 AND name = ANY($2)")
+            .bind(group_id)
+            .bind(&names)
+            .fetch_all(db)
+            .await?;
+    let icons: std::collections::HashMap<String, Option<String>> = rows
+        .into_iter()
+        .map(|row| (row.get("name"), row.try_get("icon").ok().flatten()))
+        .collect();
+    for ingredient in ingredients {
+        if let Some(icon) = icons.get(&ingredient.name) {
+            ingredient.icon = icon.clone();
+        }
+    }
+    Ok(())
 }
 
 // ========== 5.1 POST /api/groups/{group_id}/foods —— 创建菜品 ==========
@@ -604,7 +636,14 @@ pub async fn get_food(
     .await?
     .ok_or_else(|| CustomError::food_not_found("菜品不存在"))?;
 
-    Ok(ApiResponse::success(row_to_detail(&row)))
+    let mut detail = row_to_detail(&row);
+    enrich_ingredient_icons(
+        &state.db_pool,
+        detail.group_id.unwrap_or(group_id),
+        &mut detail.ingredients,
+    )
+    .await?;
+    Ok(ApiResponse::success(detail))
 }
 
 // ========== 5.4 PATCH /api/groups/{group_id}/foods/{food_id} —— 更新 ==========

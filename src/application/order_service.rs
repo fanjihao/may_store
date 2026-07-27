@@ -43,6 +43,12 @@ enum OrderActorPolicyError {
     UnsupportedTargetStatus,
 }
 
+fn apply_nonnegative_love_point_delta(current: i32, requested_delta: i32) -> (i32, i32) {
+    let balance_after =
+        (i64::from(current) + i64::from(requested_delta)).clamp(0, i64::from(i32::MAX)) as i32;
+    (balance_after, balance_after - current)
+}
+
 /// 订单状态 actor 纯策略；数据库身份与时间快照由事务内调用方传入。
 fn check_order_actor_policy(
     context: &OrderActorPolicyContext,
@@ -1164,58 +1170,54 @@ impl OrderService {
                             .await
                     {
                         let current_lp: i32 = user_row.get("love_point");
-                        let balance_after = current_lp + effective_delta;
-                        // love_point_tx_type_enum 合法值: EARN / FREEZE / UNFREEZE / DEDUCT / ADJUST
-                        // 订单完成: 正值用 EARN, 负值用 DEDUCT
-                        // 字符串到自定义 enum PG 不会隐式转换, 必须 ::love_point_tx_type_enum
-                        let tx_type = if effective_delta >= 0 {
-                            "EARN"
-                        } else {
-                            "DEDUCT"
-                        };
-                        sqlx::query(
-                            r#"INSERT INTO love_point_transactions
-                               (user_id, group_id, type, amount, available_before, available_after, frozen_before, frozen_after, biz_type, biz_id)
-                               VALUES ($1, $2, $7::love_point_tx_type_enum, $3, $4, $5, 0, 0, 'ORDER', $6)"#
-                        )
+                        // 扣分最低到 0；以实际变化量写流水，禁止任何订单状态制造负积分。
+                        let (balance_after, applied_delta) =
+                            apply_nonnegative_love_point_delta(current_lp, effective_delta);
+                        if applied_delta != 0 {
+                            // love_point_tx_type_enum 合法值: EARN / FREEZE / UNFREEZE / DEDUCT / ADJUST
+                            let tx_type = if applied_delta >= 0 { "EARN" } else { "DEDUCT" };
+                            sqlx::query(
+                                r#"INSERT INTO love_point_transactions
+                                   (user_id, group_id, type, amount, available_before, available_after, frozen_before, frozen_after, biz_type, biz_id)
+                                   VALUES ($1, $2, $7::love_point_tx_type_enum, $3, $4, $5, 0, 0, 'ORDER', $6)"#
+                            )
                             .bind(receiver_user_id)
                             .bind(group_id)
-                            .bind(effective_delta)
+                            .bind(applied_delta)
                             .bind(current_lp as i64)
                             .bind(balance_after as i64)
                             .bind(order.order_id)
                             .bind(tx_type)
                             .execute(&mut *tx)
                             .await?;
-                        sqlx::query("UPDATE users SET love_point=$2 WHERE user_id=$1")
+                            sqlx::query("UPDATE users SET love_point=$2 WHERE user_id=$1")
+                                .bind(receiver_user_id)
+                                .bind(balance_after)
+                                .execute(&mut *tx)
+                                .await?;
+                            // 同步 user_group_points —— 1v1 模型下,可用余额应与 users.love_point 一致
+                            // frozen 暂时不动(冻结路径单独处理)
+                            sqlx::query(
+                                "INSERT INTO user_group_points (user_id, group_id, available_love_point, love_point, frozen_love_point, updated_at) \
+                                 VALUES ($1, $2, $3, $3, 0, NOW()) \
+                                 ON CONFLICT (user_id, group_id) DO UPDATE \
+                                 SET available_love_point = $3, love_point = $3, updated_at = NOW()"
+                            )
                             .bind(receiver_user_id)
-                            .bind(balance_after)
+                            .bind(group_id)
+                            .bind(balance_after as i64)
                             .execute(&mut *tx)
                             .await?;
-                        // 同步 user_group_points —— 1v1 模型下,可用余额应与 users.love_point 一致
-                        // frozen 暂时不动(冻结路径单独处理)
-                        sqlx::query(
-                            "INSERT INTO user_group_points (user_id, group_id, available_love_point, love_point, frozen_love_point, updated_at) \
-                             VALUES ($1, $2, $3, $3, 0, NOW()) \
-                             ON CONFLICT (user_id, group_id) DO UPDATE \
-                             SET available_love_point = $3, love_point = $3, updated_at = NOW()"
-                        )
-                        .bind(receiver_user_id)
-                        .bind(group_id)
-                        .bind(balance_after as i64)
-                        .execute(&mut *tx)
-                        .await?;
-                        if actual_completion_reward.is_some() {
-                            actual_completion_reward = Some(effective_delta);
+                            push_love_point = Some((
+                                receiver_user_id,
+                                applied_delta,
+                                love_point_reason.to_string(),
+                                Some(order.order_id),
+                            ));
                         }
-
-                        // 2026-07-08: 记录待推送的 love_point 变化 (commit 后调用)
-                        push_love_point = Some((
-                            receiver_user_id,
-                            effective_delta,
-                            love_point_reason.to_string(),
-                            Some(order.order_id),
-                        ));
+                        if actual_completion_reward.is_some() {
+                            actual_completion_reward = Some(applied_delta);
+                        }
                     }
                 }
                 // 把本次的截断信息(若有)累加到外层 warning
@@ -2007,5 +2009,12 @@ mod tests {
             order_rating_idempotency_key(42),
             "order:42:rating".to_string()
         );
+    }
+
+    #[test]
+    fn love_point_penalty_never_crosses_zero() {
+        assert_eq!(apply_nonnegative_love_point_delta(0, -5), (0, 0));
+        assert_eq!(apply_nonnegative_love_point_delta(2, -5), (0, -2));
+        assert_eq!(apply_nonnegative_love_point_delta(10, -5), (5, -5));
     }
 }

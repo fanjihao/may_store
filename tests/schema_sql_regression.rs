@@ -463,3 +463,34 @@ fn wish_dual_feedback_contract_matches_canonical_and_forward_schemas() {
         "forward migration must normalize legacy claim ownership"
     );
 }
+
+#[test]
+fn love_point_nonnegative_constraints_match_canonical_and_forward_schemas() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let normalize = |path: &Path| {
+        fs::read_to_string(path)
+            .expect("schema SQL must be readable")
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ")
+            .to_ascii_lowercase()
+    };
+    let canonical = normalize(&root.join("src/v3.sql"));
+    let migration = normalize(&root.join("migrations/202607270001_nonnegative_love_points.sql"));
+
+    for constraint in [
+        "users_love_point_nonnegative_check",
+        "ugp_available_love_point_nonnegative_check",
+        "ugp_frozen_love_point_nonnegative_check",
+        "ugp_love_point_nonnegative_check",
+    ] {
+        assert!(
+            canonical.contains(constraint),
+            "canonical schema missing {constraint}"
+        );
+        assert!(
+            migration.contains(constraint),
+            "forward migration missing {constraint}"
+        );
+    }
+}

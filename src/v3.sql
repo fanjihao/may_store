@@ -322,7 +322,8 @@ CREATE TABLE users (
     push_id VARCHAR(255),
     last_role_switch_at TIMESTAMPTZ,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CONSTRAINT users_love_point_nonnegative_check CHECK (love_point >= 0)
 );
 COMMENT ON TABLE users IS '用户信息';
 COMMENT ON COLUMN users.user_id IS '用户主键ID';
@@ -483,11 +484,14 @@ CREATE TABLE user_group_points (
     -- 兼容老代码:旧版本用 `love_point` 单字段,新版本用 available/frozen 分账户
     love_point BIGINT NOT NULL DEFAULT 0,
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    UNIQUE(user_id, group_id)
+    UNIQUE(user_id, group_id),
+    CONSTRAINT ugp_available_love_point_nonnegative_check CHECK (available_love_point >= 0),
+    CONSTRAINT ugp_frozen_love_point_nonnegative_check CHECK (frozen_love_point >= 0),
+    CONSTRAINT ugp_love_point_nonnegative_check CHECK (love_point >= 0)
 );
 COMMENT ON TABLE user_group_points IS '用户组内爱心积分 - 按user_id+group_id独立计算';
 COMMENT ON COLUMN user_group_points.available_love_point IS '可用爱心积分';
-COMMENT ON COLUMN user_group_points.frozen_love_point IS '冻结爱心积分（心愿选择后待打卡扣减）';
+COMMENT ON COLUMN user_group_points.frozen_love_point IS '冻结爱心积分（心愿双方同意后冻结，完成时结算）';
 CREATE INDEX idx_ugp_user_group ON user_group_points(user_id, group_id);
 
 -- ================= ASSOCIATION GROUP REQUESTS =================

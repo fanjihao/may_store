@@ -154,16 +154,34 @@ impl WishService {
             return Ok(());
         }
 
-        let available_before: i32 =
-            sqlx::query_scalar("SELECT love_point FROM users WHERE user_id = $1 FOR UPDATE")
-                .bind(requester_id)
-                .fetch_optional(&mut **tx)
-                .await?
-                .ok_or_else(|| CustomError::NotFound("心愿创建人不存在".into()))?;
-        if available_before < points_cost {
-            return Err(CustomError::love_point_insufficient("爱心积分不足"));
-        }
-        let available_after = available_before - points_cost;
+        // 用条件 UPDATE 原子校验并冻结，任何并发路径都不能把可用积分扣成负数。
+        let balances: Option<(i32, i32)> = sqlx::query_as(
+            "UPDATE users \
+             SET love_point = love_point - $2 \
+             WHERE user_id = $1 AND love_point >= $2 \
+             RETURNING love_point + $2 AS available_before, love_point AS available_after",
+        )
+        .bind(requester_id)
+        .bind(points_cost)
+        .fetch_optional(&mut **tx)
+        .await?;
+        let (available_before, available_after) = match balances {
+            Some(balances) => balances,
+            None => {
+                let current: Option<i32> =
+                    sqlx::query_scalar("SELECT love_point FROM users WHERE user_id = $1")
+                        .bind(requester_id)
+                        .fetch_optional(&mut **tx)
+                        .await?;
+                let current =
+                    current.ok_or_else(|| CustomError::NotFound("心愿创建人不存在".into()))?;
+                return Err(CustomError::love_point_insufficient(format!(
+                    "可用爱心积分不足：当前 {}，心愿需要 {}",
+                    current.max(0),
+                    points_cost
+                )));
+            }
+        };
 
         let frozen_before: i64 = sqlx::query_scalar(
             "SELECT COALESCE(frozen_love_point, 0) FROM user_group_points \
@@ -178,11 +196,6 @@ impl WishService {
             .checked_add(i64::from(points_cost))
             .ok_or_else(|| CustomError::internal("冻结积分溢出"))?;
 
-        sqlx::query("UPDATE users SET love_point = $2 WHERE user_id = $1")
-            .bind(requester_id)
-            .bind(available_after)
-            .execute(&mut **tx)
-            .await?;
         sqlx::query(
             "INSERT INTO user_group_points \
                  (user_id, group_id, available_love_point, love_point, frozen_love_point, updated_at) \
