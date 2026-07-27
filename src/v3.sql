@@ -420,6 +420,40 @@ COMMENT ON COLUMN association_group_members.is_primary IS '是否主成员标记
 COMMENT ON COLUMN association_group_members.joined_at IS '添加时间';
 CREATE INDEX idx_gm_user_status ON association_group_members(user_id, member_status);
 CREATE INDEX idx_gm_group_status ON association_group_members(group_id, member_status);
+CREATE OR REPLACE FUNCTION sync_group_member_count()
+RETURNS TRIGGER AS $$
+DECLARE
+    affected_group_id BIGINT;
+BEGIN
+    affected_group_id := CASE WHEN TG_OP = 'DELETE' THEN OLD.group_id ELSE NEW.group_id END;
+    UPDATE association_groups g
+    SET member_count = (
+        SELECT COUNT(*)::INT
+        FROM association_group_members m
+        WHERE m.group_id = affected_group_id
+          AND m.member_status = 'ACTIVE'::group_member_status_enum
+    )
+    WHERE g.group_id = affected_group_id;
+    IF TG_OP = 'UPDATE' AND OLD.group_id <> NEW.group_id THEN
+        UPDATE association_groups g
+        SET member_count = (
+            SELECT COUNT(*)::INT
+            FROM association_group_members m
+            WHERE m.group_id = OLD.group_id
+              AND m.member_status = 'ACTIVE'::group_member_status_enum
+        )
+        WHERE g.group_id = OLD.group_id;
+    END IF;
+    IF TG_OP = 'DELETE' THEN
+        RETURN OLD;
+    END IF;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+CREATE TRIGGER trg_sync_group_member_count
+AFTER INSERT OR UPDATE OF group_id, member_status OR DELETE
+ON association_group_members
+FOR EACH ROW EXECUTE FUNCTION sync_group_member_count();
 
 -- ================= PARTNER INVITATIONS =================
 -- 伙伴绑定邀请仅保存 token 的 SHA-256，不落原始凭证。
@@ -699,6 +733,12 @@ CREATE INDEX idx_orders_group_status ON orders(group_id, status);
 CREATE INDEX idx_orders_assignee ON orders(assignee_id);
 CREATE INDEX idx_orders_guest_user ON orders(guest_user_id);
 CREATE INDEX idx_orders_guest_invite ON orders(guest_invite_id);
+CREATE INDEX idx_orders_pending_grant_review
+    ON orders(created_at DESC, order_id DESC)
+    WHERE point_grant_status = 'PENDING_REVIEW'::point_grant_status_enum
+       OR exp_grant_status = 'PENDING_REVIEW'::exp_grant_status_enum;
+CREATE INDEX idx_orders_risk_created
+    ON orders(risk_status, created_at DESC, order_id DESC);
 
 CREATE TABLE order_items (
     id BIGSERIAL PRIMARY KEY,
@@ -816,6 +856,10 @@ CREATE INDEX idx_wish_claimed_by ON wishes(claimed_by);
 CREATE UNIQUE INDEX uniq_active_claim_per_fulfiller
     ON wishes(group_id, claimed_by)
     WHERE status = 'CLAIMED'::wish_status_enum AND claimed_by IS NOT NULL;
+CREATE INDEX idx_wishes_pending_quality
+    ON wishes(finished_at DESC, wish_id DESC)
+    WHERE status = 'FINISHED'::wish_status_enum
+      AND quality_review_status = 'NONE'::wish_quality_status_enum;
 
 -- ================= WISH NEGOTIATIONS =================
 CREATE TABLE wish_negotiations (
@@ -1258,6 +1302,8 @@ COMMENT ON COLUMN audit_logs.action_type IS 'USER_BAN/CONFIG_UPDATE/POINT_COMPEN
 COMMENT ON COLUMN audit_logs.detail IS '操作详情 (前后值/原因)';
 CREATE INDEX idx_audit_operator_created ON audit_logs(operator_id, created_at DESC);
 CREATE INDEX idx_audit_action_created ON audit_logs(action_type, created_at DESC);
+CREATE INDEX idx_audit_created_id ON audit_logs(created_at DESC, id DESC);
+CREATE INDEX idx_audit_target_created ON audit_logs(target_type, target_id, created_at DESC);
 
 -- ================= ACHIEVEMENTS (§11.21) =================
 CREATE TABLE achievements (

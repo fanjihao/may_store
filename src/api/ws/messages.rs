@@ -150,6 +150,18 @@ pub struct WsLovePointChangeData {
     pub order_id: Option<i64>,
 }
 
+#[allow(dead_code)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WsWishUpdateData {
+    pub wish_id: i64,
+    pub group_id: i64,
+    pub action: String,
+    pub quality_level: Option<String>,
+    pub diamond_reward: Option<i32>,
+    pub message: String,
+}
+
 /// 组经验变化数据 (2026-07-08 新增)
 ///
 /// 触发场景:
@@ -244,6 +256,13 @@ impl WsEnvelope {
     pub fn love_point_change(change: &WsLovePointChangeData) -> Self {
         Self {
             msg_type: "love_point_change".to_string(),
+            data: serde_json::json!(change),
+        }
+    }
+
+    pub fn wish_update(change: &WsWishUpdateData) -> Self {
+        Self {
+            msg_type: "wish_update".to_string(),
             data: serde_json::json!(change),
         }
     }

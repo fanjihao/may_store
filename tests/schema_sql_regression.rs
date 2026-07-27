@@ -494,3 +494,67 @@ fn love_point_nonnegative_constraints_match_canonical_and_forward_schemas() {
         );
     }
 }
+
+#[test]
+fn admin_management_indexes_match_canonical_and_forward_schemas() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let normalize = |path: &Path| {
+        fs::read_to_string(path)
+            .expect("schema SQL must be readable")
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ")
+            .to_ascii_lowercase()
+    };
+    let canonical = normalize(&root.join("src/v3.sql"));
+    let migration = normalize(&root.join("migrations/202607270002_admin_management_indexes.sql"));
+
+    for index in [
+        "idx_orders_pending_grant_review",
+        "idx_orders_risk_created",
+        "idx_wishes_pending_quality",
+        "idx_audit_created_id",
+        "idx_audit_target_created",
+    ] {
+        assert!(
+            canonical.contains(index),
+            "canonical schema missing {index}"
+        );
+        assert!(
+            migration.contains(index),
+            "forward migration missing {index}"
+        );
+    }
+}
+
+#[test]
+fn order_reward_backfill_uses_only_reward_transactions() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let migration = fs::read_to_string(
+        root.join("migrations/202607270003_backfill_order_reward_snapshots.sql"),
+    )
+    .expect("order reward backfill must be readable")
+    .to_ascii_uppercase();
+
+    assert!(migration.contains("'ORDER_REWARD_REVIEW'"));
+    assert!(migration.contains("TYPE = 'EARN'"));
+    assert!(!migration.contains("'ORDER_RATING'"));
+}
+
+#[test]
+fn group_member_count_is_derived_and_kept_in_sync() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let canonical = fs::read_to_string(root.join("src/v3.sql"))
+        .expect("canonical schema must be readable")
+        .to_ascii_lowercase();
+    let migration =
+        fs::read_to_string(root.join("migrations/202607270004_sync_group_member_count.sql"))
+            .expect("member count migration must be readable")
+            .to_ascii_lowercase();
+
+    for sql in [&canonical, &migration] {
+        assert!(sql.contains("sync_group_member_count"));
+        assert!(sql.contains("trg_sync_group_member_count"));
+        assert!(sql.contains("member_status = 'active'::group_member_status_enum"));
+    }
+}

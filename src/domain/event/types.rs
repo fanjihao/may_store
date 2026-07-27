@@ -7,8 +7,8 @@ use serde::{Deserialize, Serialize};
 
 /// 事件类型枚举 - 只保留实际有 publish 调用的变体
 ///
-/// 2026-07-15 P1-1 清理:删除了 17 个死代码变体 (OrderRiskDetected / WishCreated /
-/// WishFeedbackSubmitted / WishQualityRewarded / LovePointEarned~Deducted /
+/// 2026-07-15 P1-1 清理:删除了无发布调用的死代码变体 (OrderRiskDetected / WishCreated /
+/// WishFeedbackSubmitted / LovePointEarned~Deducted /
 /// GroupExpEarned / GroupLevelUp / DiamondEarned / RoleSwapped / OrderReviewed /
 /// FootprintPublished / WishFulfilled / DiamondConsumed / PointChanged),
 /// 它们只在自己文件的 as_str/from_str 出现,0 publish 0 订阅
@@ -32,6 +32,7 @@ pub enum EventType {
     WishFinished,
     WishExpired,
     WishClosed,
+    WishQualityRewarded,
     // 签到事件
     SignIn,
 }
@@ -55,6 +56,7 @@ impl EventType {
             EventType::WishFinished => "WishFinishedEvent",
             EventType::WishExpired => "WishExpiredEvent",
             EventType::WishClosed => "WishClosedEvent",
+            EventType::WishQualityRewarded => "WishQualityRewardedEvent",
             EventType::SignIn => "SignInEvent",
         }
     }
@@ -77,6 +79,7 @@ impl EventType {
             "WishFinishedEvent" => Some(EventType::WishFinished),
             "WishExpiredEvent" => Some(EventType::WishExpired),
             "WishClosedEvent" => Some(EventType::WishClosed),
+            "WishQualityRewardedEvent" => Some(EventType::WishQualityRewarded),
             "SignInEvent" => Some(EventType::SignIn),
             _ => None,
         }
@@ -177,6 +180,17 @@ pub struct WishSelectedPayload {
     pub trace_id: Option<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WishQualityRewardedPayload {
+    pub wish_id: i64,
+    pub group_id: i64,
+    pub quality_level: String,
+    pub diamond_reward: i32,
+    pub reviewer_id: i64,
+    pub trace_id: Option<String>,
+}
+
 /// 心愿完成事件 Payload - 打卡完成，积分正式扣减
 #[allow(dead_code)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -227,4 +241,19 @@ pub struct SignInPayload {
     pub consecutive_days: i32,
     pub diamond_reward: i32,
     pub trace_id: Option<String>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::EventType;
+
+    #[test]
+    fn wish_quality_reward_event_round_trips() {
+        let name = EventType::WishQualityRewarded.as_str();
+        assert_eq!(name, "WishQualityRewardedEvent");
+        assert_eq!(
+            EventType::from_str(name),
+            Some(EventType::WishQualityRewarded)
+        );
+    }
 }

@@ -42,6 +42,25 @@ impl AdminRole {
     pub fn is_super(&self) -> bool {
         matches!(self, Self::SuperAdmin)
     }
+
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::SuperAdmin => "SUPER_ADMIN",
+            Self::Ops => "OPS",
+            Self::RiskReviewer => "RISK_REVIEWER",
+        }
+    }
+}
+
+pub fn require_admin_role(admin: &AdminToken, allowed: &[AdminRole]) -> Result<(), CustomError> {
+    if admin.role.is_super() || allowed.contains(&admin.role) {
+        Ok(())
+    } else {
+        Err(CustomError::Forbidden(format!(
+            "当前管理员角色 {} 无权执行此操作",
+            admin.role.as_str()
+        )))
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -114,5 +133,33 @@ impl<E: ErrorRenderer> FromRequest<E> for AdminToken {
                 user,
             })
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn token(role: AdminRole) -> AdminToken {
+        AdminToken {
+            admin_id: 1,
+            user_id: 1,
+            role,
+            user: None,
+        }
+    }
+
+    #[test]
+    fn super_admin_inherits_every_role() {
+        assert!(require_admin_role(&token(AdminRole::SuperAdmin), &[AdminRole::Ops]).is_ok());
+        assert!(
+            require_admin_role(&token(AdminRole::SuperAdmin), &[AdminRole::RiskReviewer]).is_ok()
+        );
+    }
+
+    #[test]
+    fn specialized_admin_cannot_cross_domains() {
+        assert!(require_admin_role(&token(AdminRole::Ops), &[AdminRole::Ops]).is_ok());
+        assert!(require_admin_role(&token(AdminRole::Ops), &[AdminRole::RiskReviewer]).is_err());
     }
 }

@@ -39,7 +39,7 @@ pub struct GroupUpdateInput {
 pub struct GroupOut {
     pub group_id: i64,
     pub group_name: String,
-    pub diamond: i64,
+    pub diamond: i32,
     pub member_count: i32,
     pub created_at: chrono::DateTime<chrono::Utc>,
 }
@@ -84,6 +84,7 @@ pub fn validate_group_update(input: &GroupUpdateInput) -> Result<(), CustomError
 #[utoipa::path(
     patch,
     path = "/api/admin/groups/{group_id}",
+    operation_id = "admin_update_group",
     tag = "后台管理 - 双人组",
     params(("group_id" = i64, Path, description = "组 ID")),
     request_body = GroupUpdateInput,
@@ -147,9 +148,14 @@ pub async fn update_group(
 
     tx.commit().await?;
 
-    let out: (String, i64, i32, chrono::DateTime<chrono::Utc>) = sqlx::query_as(
-        r#"SELECT group_name, diamond, member_count, created_at
-           FROM association_groups WHERE group_id = $1"#,
+    let out: (String, i32, i32, chrono::DateTime<chrono::Utc>) = sqlx::query_as(
+        r#"SELECT g.group_name, g.diamond,
+                  (SELECT COUNT(*)::INT
+                   FROM association_group_members m
+                   WHERE m.group_id = g.group_id
+                     AND m.member_status = 'ACTIVE'::group_member_status_enum) AS member_count,
+                  g.created_at
+           FROM association_groups g WHERE g.group_id = $1"#,
     )
     .bind(group_id)
     .fetch_one(db)
@@ -171,6 +177,7 @@ pub async fn update_group(
 #[utoipa::path(
     get,
     path = "/api/admin/groups/{group_id}/members",
+    operation_id = "admin_get_group_members",
     tag = "后台管理 - 双人组",
     params(("group_id" = i64, Path, description = "组 ID")),
     responses(

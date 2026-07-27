@@ -121,20 +121,37 @@ pub fn configure(cfg: &mut ServiceConfig) {
             )
             // FSD v2: 心愿质量奖励审核
             .route(
+                "/wishes",
+                web::get().to(crate::api::admin::wishes::list_admin_wishes),
+            )
+            .route(
+                "/wishes/{wish_id}",
+                web::get().to(crate::api::admin::wishes::get_admin_wish),
+            )
+            .route(
                 "/wishes/{wish_id}/quality-reward",
-                web::post().to(wish_quality_reward),
+                web::post().to(crate::api::admin::wishes::review_wish_quality),
             )
             // FSD v2: 订单积分/经验审核
             .route(
-                "/orders/{order_id}/reward-review",
-                web::post().to(order_reward_review),
+                "/orders",
+                web::get().to(crate::api::admin::orders::list_admin_orders),
             )
-            // FSD v2: 获取待审核订单列表
+            // 旧待审列表保留兼容；新管理端使用 /orders?pendingOnly=true。
             .route("/orders/pending-review", web::get().to(get_pending_review_orders))
-            // FSD v2: 审核风险订单
-            .route("/orders/{order_id}/review", web::post().to(review_order))
+            .route(
+                "/orders/{order_id}",
+                web::get().to(crate::api::admin::orders::get_admin_order),
+            )
+            .route(
+                "/orders/{order_id}/reward-review",
+                web::post().to(crate::api::admin::orders::review_order_rewards),
+            )
             // FSD v2: 获取审计日志
-            .route("/audit-logs", web::get().to(get_audit_logs))
+            .route(
+                "/audit-logs",
+                web::get().to(crate::api::admin::audit_logs::list_admin_audit_logs),
+            )
             // FSD v2: 组级配置更新
             .route("/groups/{group_id}/configs", web::patch().to(update_group_configs))
             // FSD v2: 积分补偿
@@ -320,7 +337,15 @@ pub async fn list_groups(
     _admin: AdminToken,
 ) -> Result<impl Responder, CustomError> {
     let groups = sqlx::query(
-        "SELECT group_id, group_name, diamond, member_count, created_at FROM association_groups ORDER BY created_at DESC LIMIT 100"
+        r#"SELECT g.group_id, g.group_name, g.diamond,
+                  COUNT(m.user_id)::INT AS member_count, g.created_at
+           FROM association_groups g
+           LEFT JOIN association_group_members m
+             ON m.group_id = g.group_id
+            AND m.member_status = 'ACTIVE'::group_member_status_enum
+           GROUP BY g.group_id, g.group_name, g.diamond, g.created_at
+           ORDER BY g.created_at DESC
+           LIMIT 100"#
     )
     .fetch_all(&state.db_pool)
     .await?;
@@ -779,9 +804,13 @@ pub async fn order_reward_review(
 )]
 pub async fn get_pending_review_orders(
     state: State<Arc<AppState>>,
-    _: AdminToken,
+    admin: AdminToken,
     query: Query<PendingReviewQuery>,
 ) -> Result<impl Responder, CustomError> {
+    crate::middlewares::admin_auth::require_admin_role(
+        &admin,
+        &[crate::middlewares::admin_auth::AdminRole::RiskReviewer],
+    )?;
 
     let db = &state.db_pool;
     let limit = query.limit.unwrap_or(20);
