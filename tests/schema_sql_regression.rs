@@ -436,6 +436,24 @@ fn wish_dual_feedback_contract_matches_canonical_and_forward_schemas() {
             "forward migration missing {column}"
         );
     }
+    let feedback_table = canonical
+        .split("create table wish_feedbacks (")
+        .nth(1)
+        .and_then(|sql| sql.split(");").next())
+        .expect("wish_feedbacks table definition");
+    let checkin_table = canonical
+        .split("create table wish_checkins (")
+        .nth(1)
+        .and_then(|sql| sql.split(");").next())
+        .expect("wish_checkins table definition");
+    assert!(
+        feedback_table.contains("role_snapshot varchar(32) not null"),
+        "role_snapshot must belong to wish_feedbacks"
+    );
+    assert!(
+        !checkin_table.contains("role_snapshot"),
+        "wish_checkins must not accidentally own feedback role_snapshot"
+    );
     for index in [
         "uniq_wish_feedback_user on wish_feedbacks(wish_id, user_id)",
         "uniq_active_claim_per_fulfiller on wishes(group_id, claimed_by)",
